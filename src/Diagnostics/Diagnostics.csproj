@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Atelia.Diagnostics</AssemblyName>
+    <RootNamespace>Atelia.Diagnostics</RootNamespace>
+    <PackageId>Atelia.Diagnostics</PackageId>
+    <Description>Atelia 全局调试输出工具库。详见 DebugUtil。</Description>
+  </PropertyGroup>
+</Project>

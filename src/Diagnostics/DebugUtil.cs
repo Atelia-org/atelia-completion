@@ -37,7 +37,8 @@ namespace Atelia.Diagnostics {
                     Directory.CreateDirectory(c);
                     selected = c;
                     break;
-                } catch { }
+                }
+                catch { }
             }
             _logDir = selected ?? cwd;
         }
@@ -71,7 +72,8 @@ namespace Atelia.Diagnostics {
                 if (File.Exists(logFile)) {
                     File.WriteAllText(logFile, string.Empty);
                 }
-            } catch {
+            }
+            catch {
                 // 忽略清空失败
             }
         }
@@ -80,7 +82,8 @@ namespace Atelia.Diagnostics {
             try {
                 var logFile = Path.Combine(_logDir, $"{category.ToLowerInvariant()}.log");
                 File.AppendAllText(logFile, message + Environment.NewLine);
-            } catch {
+            }
+            catch {
                 // 忽略写入失败，避免影响主流程
             }
         }

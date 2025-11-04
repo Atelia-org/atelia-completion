@@ -9,7 +9,7 @@ public sealed class ToolParamSpec {
     public ToolParamSpec(
         string name,
         string description,
-        ToolParamValueKind valueKind,
+        ToolParamType valueKind,
         bool isNullable = false,
         ParamDefault? defaultValue = default,
         string? example = null
@@ -37,7 +37,7 @@ public sealed class ToolParamSpec {
     public string Description { get; }
 
     // 类型，包括是否可空
-    public ToolParamValueKind ValueKind { get; }
+    public ToolParamType ValueKind { get; }
     public bool IsNullable { get; }
 
     // 默认值
@@ -60,7 +60,7 @@ public sealed class ToolParamSpec {
 
     private static void ValidateDefaultCombination(
         string parameterName,
-        ToolParamValueKind valueKind,
+        ToolParamType valueKind,
         bool isNullable,
         ParamDefault? defaultValue
     ) {
@@ -82,45 +82,45 @@ public sealed class ToolParamSpec {
         if (!TryValidateValueKindCompatibility(valueKind, rawDefault, out var errorMessage)) { throw new ArgumentException(errorMessage, nameof(defaultValue)); }
     }
 
-    private static bool TryValidateValueKindCompatibility(ToolParamValueKind valueKind, object value, out string errorMessage) {
+    private static bool TryValidateValueKindCompatibility(ToolParamType valueKind, object value, out string errorMessage) {
         switch (valueKind) {
-            case ToolParamValueKind.String:
+            case ToolParamType.String:
                 if (value is string) {
                     errorMessage = string.Empty;
                     return true;
                 }
                 break;
-            case ToolParamValueKind.Boolean:
+            case ToolParamType.Boolean:
                 if (value is bool) {
                     errorMessage = string.Empty;
                     return true;
                 }
                 break;
-            case ToolParamValueKind.Int32:
+            case ToolParamType.Int32:
                 if (IsIntegerInRange(value, int.MinValue, int.MaxValue)) {
                     errorMessage = string.Empty;
                     return true;
                 }
                 break;
-            case ToolParamValueKind.Int64:
+            case ToolParamType.Int64:
                 if (IsIntegerInRange(value, long.MinValue, long.MaxValue)) {
                     errorMessage = string.Empty;
                     return true;
                 }
                 break;
-            case ToolParamValueKind.Float32:
+            case ToolParamType.Float32:
                 if (value is float) {
                     errorMessage = string.Empty;
                     return true;
                 }
                 break;
-            case ToolParamValueKind.Float64:
+            case ToolParamType.Float64:
                 if (value is double) {
                     errorMessage = string.Empty;
                     return true;
                 }
                 break;
-            case ToolParamValueKind.Decimal:
+            case ToolParamType.Decimal:
                 if (value is decimal) {
                     errorMessage = string.Empty;
                     return true;
@@ -148,21 +148,21 @@ public sealed class ToolParamSpec {
         };
     }
 
-    private static string GetExpectedTypeName(ToolParamValueKind valueKind) {
+    private static string GetExpectedTypeName(ToolParamType valueKind) {
         return valueKind switch {
-            ToolParamValueKind.String => typeof(string).FullName!,
-            ToolParamValueKind.Boolean => typeof(bool).FullName!,
-            ToolParamValueKind.Int32 => typeof(int).FullName!,
-            ToolParamValueKind.Int64 => typeof(long).FullName!,
-            ToolParamValueKind.Float32 => typeof(float).FullName!,
-            ToolParamValueKind.Float64 => typeof(double).FullName!,
-            ToolParamValueKind.Decimal => typeof(decimal).FullName!,
+            ToolParamType.String => typeof(string).FullName!,
+            ToolParamType.Boolean => typeof(bool).FullName!,
+            ToolParamType.Int32 => typeof(int).FullName!,
+            ToolParamType.Int64 => typeof(long).FullName!,
+            ToolParamType.Float32 => typeof(float).FullName!,
+            ToolParamType.Float64 => typeof(double).FullName!,
+            ToolParamType.Decimal => typeof(decimal).FullName!,
             _ => valueKind.ToString()
         };
     }
 }
 
-public enum ToolParamValueKind {
+public enum ToolParamType {
     String,
     Boolean,
     Int32,

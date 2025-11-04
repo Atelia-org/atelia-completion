@@ -132,13 +132,13 @@ internal static class JsonArgumentParser {
         }
 
         var result = parameter.ValueKind switch {
-            ToolParamValueKind.String => ParseString(element),
-            ToolParamValueKind.Boolean => ParseBoolean(element),
-            ToolParamValueKind.Int32 => ParseInt32(element),
-            ToolParamValueKind.Int64 => ParseInt64(element),
-            ToolParamValueKind.Float32 => ParseFloat32(element),
-            ToolParamValueKind.Float64 => ParseFloat64(element),
-            ToolParamValueKind.Decimal => ParseDecimal(element),
+            ToolParamType.String => ParseString(element),
+            ToolParamType.Boolean => ParseBoolean(element),
+            ToolParamType.Int32 => ParseInt32(element),
+            ToolParamType.Int64 => ParseInt64(element),
+            ToolParamType.Float32 => ParseFloat32(element),
+            ToolParamType.Float64 => ParseFloat64(element),
+            ToolParamType.Decimal => ParseDecimal(element),
             _ => ParseResult.CreateError("unsupported_value_kind")
         };
 

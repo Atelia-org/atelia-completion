@@ -11,8 +11,9 @@ public interface ICompletionClient {
     string Name { get; }
 
     /// <summary>
-    /// 所使用的协议名称。例如"openai-v1"或"openai-responses"。
+    /// 描述客户端所实现的 API 规范。
+    /// 这是一个开放的不透明的标识符。例如: "openai-chat-v1", "openai-responses", "anthropic-messages-v1"。
     /// </summary>
-    string ProtocolVersion { get; }
+    string ApiSpecId { get; }
     IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken);
 }

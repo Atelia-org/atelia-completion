@@ -21,8 +21,8 @@ internal static class AnthropicMessageConverter {
         foreach (var contextMessage in request.Context) {
             var blocks = new List<AnthropicContentBlock>();
             switch (contextMessage) {
-                case PromptMessage input:
-                    if (contextMessage is ToolMessage toolResults) {
+                case ObservationMessage input:
+                    if (contextMessage is ToolResultsMessage toolResults) {
                         BuildToolResultsOwnContent(toolResults, blocks);
                     }
                     BuildModelInputOwnContent(input, blocks);
@@ -34,7 +34,7 @@ internal static class AnthropicMessageConverter {
                     );
                     break;
 
-                case IModelMessage output:
+                case IActionMessage output:
                     BuildAssistantContent(output, blocks);
                     messages.Add(
                         new AnthropicMessage {
@@ -65,7 +65,7 @@ internal static class AnthropicMessageConverter {
         return apiRequest;
     }
 
-    private static void BuildToolResultsOwnContent(ToolMessage toolResults, List<AnthropicContentBlock> blocks) {
+    private static void BuildToolResultsOwnContent(ToolResultsMessage toolResults, List<AnthropicContentBlock> blocks) {
         // Anthropic 要求将多个工具结果聚合到一条 user 消息中
         foreach (var result in toolResults.Results) {
             var isError = result.Status != ToolExecutionStatus.Success;
@@ -89,7 +89,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildModelInputOwnContent(PromptMessage input, List<AnthropicContentBlock> blocks) {
+    private static void BuildModelInputOwnContent(ObservationMessage input, List<AnthropicContentBlock> blocks) {
         // 处理事件内容分段
         {
             var events = input.Notifications;
@@ -112,7 +112,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildAssistantContent(IModelMessage output, List<AnthropicContentBlock> blocks) {
+    private static void BuildAssistantContent(IActionMessage output, List<AnthropicContentBlock> blocks) {
         // 文本内容
         var content = output.Contents;
         if (!string.IsNullOrWhiteSpace(content)) {

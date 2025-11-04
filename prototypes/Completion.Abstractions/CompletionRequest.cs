@@ -6,6 +6,6 @@ namespace Atelia.Completion.Abstractions;
 public sealed record CompletionRequest(
     string ModelId,
     string SystemPrompt,
-    IReadOnlyList<IContextMessage> Context,
+    IReadOnlyList<IHistoryMessage> Context,
     ImmutableArray<ToolDefinition> Tools
 );

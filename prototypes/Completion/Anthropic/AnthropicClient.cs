@@ -32,7 +32,7 @@ public sealed class AnthropicClient : ICompletionClient {
     private readonly string _apiVersion;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "anthropic";
-    public string ProtocolVersion => "messages-v1";
+    public string ApiSpecId => "messages-v1";
 
     public AnthropicClient(string? apiKey, HttpClient? httpClient = null, string? apiVersion = null, Uri? baseAddress = null) {
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;

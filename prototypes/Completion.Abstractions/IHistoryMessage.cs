@@ -2,17 +2,17 @@ using System.Collections.Immutable;
 
 namespace Atelia.Completion.Abstractions;
 
-public interface IContextMessage {
-    MessageRole Role { get; }
+public interface IHistoryMessage {
+    HistoryMessageKind Kind { get; }
     DateTimeOffset Timestamp { get; }
 }
 
-public interface IModelMessage : IContextMessage {
+public interface IActionMessage : IHistoryMessage {
     string Contents { get; }
     IReadOnlyList<ParsedToolCall> ToolCalls { get; }
 }
 
-public record class PromptMessage(
+public record class ObservationMessage(
     DateTimeOffset Timestamp,
     /// <summary>
     /// 描述变化，来自于AgentState.History。
@@ -25,24 +25,24 @@ public record class PromptMessage(
     /// </summary>
     string? Windows
 
-) : IContextMessage {
-    public virtual MessageRole Role => MessageRole.Prompt;
+) : IHistoryMessage {
+    public virtual HistoryMessageKind Kind => HistoryMessageKind.Observation;
 }
 
-public record ToolMessage(
+public record ToolResultsMessage(
     DateTimeOffset Timestamp,
     string? Notifications,
     string? Windows,
     IReadOnlyList<ToolResult> Results,
     string? ExecuteError
-) : PromptMessage(Timestamp, Notifications, Windows) {
-    public override MessageRole Role => MessageRole.Tool;
+) : ObservationMessage(Timestamp, Notifications, Windows) {
+    public override HistoryMessageKind Kind => HistoryMessageKind.ToolResults;
 }
 
-public enum MessageRole {
-    Prompt,
-    Model,
-    Tool
+public enum HistoryMessageKind {
+    Observation,
+    Action,
+    ToolResults
 }
 
 // TODO: Thinking/Reasoning模型的CompletionTokens语义问题，不同厂商的原始值语义略有不同。需要明确：1. 计费相关的总补全长度。2. 后续输入相关的剔除Thinking/Reasoning部分后的正文长度

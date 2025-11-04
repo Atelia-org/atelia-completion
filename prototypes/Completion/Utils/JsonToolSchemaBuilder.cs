@@ -41,29 +41,29 @@ internal static class JsonToolSchemaBuilder {
         var schema = new JsonObject();
 
         switch (parameter.ValueKind) {
-            case ToolParamValueKind.String:
+            case ToolParamType.String:
                 schema["type"] = "string";
                 break;
-            case ToolParamValueKind.Boolean:
+            case ToolParamType.Boolean:
                 schema["type"] = "boolean";
                 break;
-            case ToolParamValueKind.Int32:
+            case ToolParamType.Int32:
                 schema["type"] = "integer";
                 schema["format"] = "int32";
                 break;
-            case ToolParamValueKind.Int64:
+            case ToolParamType.Int64:
                 schema["type"] = "integer";
                 schema["format"] = "int64";
                 break;
-            case ToolParamValueKind.Float32:
+            case ToolParamType.Float32:
                 schema["type"] = "number";
                 schema["format"] = "float32";
                 break;
-            case ToolParamValueKind.Float64:
+            case ToolParamType.Float64:
                 schema["type"] = "number";
                 schema["format"] = "float64";
                 break;
-            case ToolParamValueKind.Decimal:
+            case ToolParamType.Decimal:
                 schema["type"] = "number";
                 schema["format"] = "decimal";
                 break;

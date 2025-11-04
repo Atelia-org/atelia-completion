@@ -31,24 +31,16 @@ public interface IActionMessage : IHistoryMessage {
 
 /// <summary>
 /// 观测消息的基础形态。它将环境反馈（RL 术语）与聊天/助手（Chat/Assistant）场景中的系统或工具消息进行统一编码。
-/// 采用分层字段设计，以便未来扩展至多模态或结构化观测。
+/// 为兼容不同来源的观测内容，引入统一的文本字段，可按需拼接通知增量与窗口状态等信息。
 /// </summary>
 /// <param name="Timestamp">观测生成的时间戳，用于维持历史序列的顺序。</param>
-/// <param name="Notifications">强调增量变化的通知视图，有助于策略模型关注新信息。</param>
-/// <param name="Windows">相对稳定的窗口渲染视图，用于呈现完整的状态快照。</param>
+/// <param name="Contents">统一后的观测文本内容。</param>
 public record class ObservationMessage(
     DateTimeOffset Timestamp,
     /// <summary>
-    /// 描述状态变化，通常源自 Agent 状态历史的更新。
-    /// 在首版实现中，暂时使用拼接字符串以简化，未来可扩展为支持多模态和保留元素边界的结构化类型。
+    /// 统一后的观测文本内容，按需拼接通知增量与窗口状态等来源。
     /// </summary>
-    string? Notifications,
-
-    /// <summary>
-    /// 描述当前状态，通常来自于对应用程序（Apps）界面的渲染。
-    /// </summary>
-    string? Windows
-
+    string? Contents
 ) : IHistoryMessage {
     /// <inheritdoc />
     public virtual HistoryMessageKind Kind => HistoryMessageKind.Observation;
@@ -58,17 +50,15 @@ public record class ObservationMessage(
 /// 在基础观测之上增加了工具执行结果。此消息兼容聊天（Chat）范式中的 "tool" 角色，同时在强化学习（RL）语境下仍被视为环境反馈的一部分。
 /// </summary>
 /// <param name="Timestamp">工具执行结果返回的时间戳。</param>
-/// <param name="Notifications">可选的、描述增量变化的通知文本。</param>
-/// <param name="Windows">用于上下文渲染的窗口视图。</param>
+/// <param name="Contents">与工具执行相关的观测文本内容。</param>
 /// <param name="Results">工具执行产生的结构化结果列表。</param>
 /// <param name="ExecuteError">若工具执行失败，此字段用于承载相关的错误信息。</param>
 public record ToolResultsMessage(
     DateTimeOffset Timestamp,
-    string? Notifications,
-    string? Windows,
+    string? Contents,
     IReadOnlyList<ToolResult> Results,
     string? ExecuteError
-) : ObservationMessage(Timestamp, Notifications, Windows) {
+) : ObservationMessage(Timestamp, Contents) {
     /// <inheritdoc />
     public override HistoryMessageKind Kind => HistoryMessageKind.ToolResults;
 }

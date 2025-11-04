@@ -25,7 +25,7 @@ internal static class AnthropicMessageConverter {
                     if (contextMessage is ToolResultsMessage toolResults) {
                         BuildToolResultsOwnContent(toolResults, blocks);
                     }
-                    BuildModelInputOwnContent(input, blocks);
+                    BuildObservationOwnContent(input, blocks);
                     messages.Add(
                         new AnthropicMessage {
                             Role = "user",
@@ -35,7 +35,7 @@ internal static class AnthropicMessageConverter {
                     break;
 
                 case IActionMessage output:
-                    BuildAssistantContent(output, blocks);
+                    BuildActionContent(output, blocks);
                     messages.Add(
                         new AnthropicMessage {
                             Role = "assistant",
@@ -87,22 +87,15 @@ internal static class AnthropicMessageConverter {
                 }
             );
         }
+
+        // 此处无需再把toolResults作为ObservationMessage重复检查Contents属性，因为每个类型派生层次仅需序列化自身声明的数据。
     }
 
-    private static void BuildModelInputOwnContent(ObservationMessage input, List<AnthropicContentBlock> blocks) {
-        // 处理事件内容分段
+    private static void BuildObservationOwnContent(ObservationMessage input, List<AnthropicContentBlock> blocks) {
         {
-            var events = input.Notifications;
-            if (!string.IsNullOrWhiteSpace(events)) {
-                blocks.Add(new AnthropicTextBlock { Text = events });
-            }
-        }
-
-        // 处理状态内容分段
-        {
-            var states = input.Windows;
-            if (!string.IsNullOrWhiteSpace(states)) {
-                blocks.Add(new AnthropicTextBlock { Text = states });
+            var content = input.Contents;
+            if (!string.IsNullOrWhiteSpace(content)) {
+                blocks.Add(new AnthropicTextBlock { Text = content });
             }
         }
 
@@ -112,7 +105,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildAssistantContent(IActionMessage output, List<AnthropicContentBlock> blocks) {
+    private static void BuildActionContent(IActionMessage output, List<AnthropicContentBlock> blocks) {
         // 文本内容
         var content = output.Contents;
         if (!string.IsNullOrWhiteSpace(content)) {
@@ -121,7 +114,7 @@ internal static class AnthropicMessageConverter {
 
         // 工具调用
         foreach (var toolCall in output.ToolCalls) {
-            var inputJson = BuildToolInput(toolCall);
+            var inputJson = BuildToolCallHistory(toolCall);
 
             blocks.Add(
                 new AnthropicToolUseBlock {
@@ -138,7 +131,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static JsonElement BuildToolInput(ParsedToolCall toolCall) {
+    private static JsonElement BuildToolCallHistory(ParsedToolCall toolCall) {
         var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);
 
         if (!hasParseError && toolCall.Arguments is { } parsedArguments) { return JsonSerializer.SerializeToElement(parsedArguments); }

@@ -1,9 +1,9 @@
 using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
-namespace Atelia.LlmProviders.Utils;
+namespace Atelia.Completion.Utils;
 
 internal static class JsonToolSchemaBuilder {
     public static JsonElement BuildSchema(ToolDefinition definition) {

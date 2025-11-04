@@ -4,10 +4,10 @@ using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
-using Atelia.LlmProviders;
-using Atelia.LlmProviders.Utils;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.Utils;
 
-namespace Atelia.LlmProviders.Anthropic;
+namespace Atelia.Completion.Anthropic;
 
 /// <summary>
 /// 将通用的 IContextMessage 上下文转换为 Anthropic Messages API 所需的格式。
@@ -15,14 +15,14 @@ namespace Atelia.LlmProviders.Anthropic;
 internal static class AnthropicMessageConverter {
     private const string DebugCategory = "Provider";
 
-    public static AnthropicApiRequest ConvertToApiRequest(LlmRequest request) {
+    public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request) {
         var messages = new List<AnthropicMessage>();
 
         foreach (var contextMessage in request.Context) {
             var blocks = new List<AnthropicContentBlock>();
             switch (contextMessage) {
-                case ModelInputMessage input:
-                    if (contextMessage is ToolResultsMessage toolResults) {
+                case PromptMessage input:
+                    if (contextMessage is ToolMessage toolResults) {
                         BuildToolResultsOwnContent(toolResults, blocks);
                     }
                     BuildModelInputOwnContent(input, blocks);
@@ -34,7 +34,7 @@ internal static class AnthropicMessageConverter {
                     );
                     break;
 
-                case IModelOutputMessage output:
+                case IModelMessage output:
                     BuildAssistantContent(output, blocks);
                     messages.Add(
                         new AnthropicMessage {
@@ -53,7 +53,7 @@ internal static class AnthropicMessageConverter {
             Model = request.ModelId,
             MaxTokens = 4096, // 可配置
             Messages = messages,
-            System = string.IsNullOrWhiteSpace(request.SystemInstruction) ? null : request.SystemInstruction,
+            System = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt,
             Stream = true,
             Tools = BuildToolDefinitions(request.Tools)
         };
@@ -65,7 +65,7 @@ internal static class AnthropicMessageConverter {
         return apiRequest;
     }
 
-    private static void BuildToolResultsOwnContent(ToolResultsMessage toolResults, List<AnthropicContentBlock> blocks) {
+    private static void BuildToolResultsOwnContent(ToolMessage toolResults, List<AnthropicContentBlock> blocks) {
         // Anthropic 要求将多个工具结果聚合到一条 user 消息中
         foreach (var result in toolResults.Results) {
             var isError = result.Status != ToolExecutionStatus.Success;
@@ -89,7 +89,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildModelInputOwnContent(ModelInputMessage input, List<AnthropicContentBlock> blocks) {
+    private static void BuildModelInputOwnContent(PromptMessage input, List<AnthropicContentBlock> blocks) {
         // 处理事件内容分段
         {
             var events = input.Notifications;
@@ -112,7 +112,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildAssistantContent(IModelOutputMessage output, List<AnthropicContentBlock> blocks) {
+    private static void BuildAssistantContent(IModelMessage output, List<AnthropicContentBlock> blocks) {
         // 文本内容
         var content = output.Contents;
         if (!string.IsNullOrWhiteSpace(content)) {
@@ -138,7 +138,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static JsonElement BuildToolInput(ToolCallRequest toolCall) {
+    private static JsonElement BuildToolInput(ParsedToolCall toolCall) {
         var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);
 
         if (!hasParseError && toolCall.Arguments is { } parsedArguments) { return JsonSerializer.SerializeToElement(parsedArguments); }

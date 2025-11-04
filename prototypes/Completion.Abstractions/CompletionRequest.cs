@@ -1,11 +1,11 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 
-namespace Atelia.LlmProviders;
+namespace Atelia.Completion.Abstractions;
 
-public sealed record LlmRequest(
+public sealed record CompletionRequest(
     string ModelId,
-    string SystemInstruction,
+    string SystemPrompt,
     IReadOnlyList<IContextMessage> Context,
     ImmutableArray<ToolDefinition> Tools
 );

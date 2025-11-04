@@ -1,4 +1,4 @@
-namespace Atelia.LlmProviders;
+namespace Atelia.Completion.Abstractions;
 
 /// <summary>
 /// Captures a single tool invocation emitted by a provider.
@@ -23,7 +23,7 @@ namespace Atelia.LlmProviders;
 /// <param name="Arguments">Parsed arguments ready for execution. May be <see langword="null"/> when parsing failed.</param>
 /// <param name="ParseError">Fatal parse errors (null when parsing succeeded).</param>
 /// <param name="ParseWarning">Non-fatal issues detected during parsing (null when none).</param>
-public record ToolCallRequest(
+public record ParsedToolCall(
     string ToolName,
     string ToolCallId,
     IReadOnlyDictionary<string, string>? RawArguments,
@@ -38,7 +38,7 @@ public enum ToolExecutionStatus {
     Skipped
 }
 
-public record ToolCallResult(
+public record ToolResult(
     string ToolName,
     string ToolCallId,
     ToolExecutionStatus Status,

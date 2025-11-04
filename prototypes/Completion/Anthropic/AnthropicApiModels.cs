@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Atelia.LlmProviders.Anthropic;
+namespace Atelia.Completion.Anthropic;
 
 /// <summary>
 /// Anthropic Messages API 请求 DTO。

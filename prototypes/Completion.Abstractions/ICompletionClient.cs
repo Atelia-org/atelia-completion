@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using System.Threading;
 
-namespace Atelia.LlmProviders;
+namespace Atelia.Completion.Abstractions;
 
-public interface IProviderClient {
+public interface ICompletionClient {
     /// <summary>
     /// 用以区分多个实例。
     /// 对于使用网络访问的Provider，推荐返回目标端点的Uri.Host。
@@ -13,6 +13,6 @@ public interface IProviderClient {
     /// <summary>
     /// 所使用的协议名称。例如"openai-v1"或"openai-responses"。
     /// </summary>
-    string Specification { get; }
-    IAsyncEnumerable<ModelOutputDelta> CallModelAsync(LlmRequest request, CancellationToken cancellationToken);
+    string ProtocolVersion { get; }
+    IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken);
 }

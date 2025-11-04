@@ -1,9 +1,9 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
-namespace Atelia.LlmProviders.Utils;
+namespace Atelia.Completion.Utils;
 
 /// <summary>
 /// Provides JSON based argument parsing for providers that receive tool calls as structured payloads.

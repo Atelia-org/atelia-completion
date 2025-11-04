@@ -2,10 +2,10 @@ using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
-using Atelia.LlmProviders;
-using Atelia.LlmProviders.Utils;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.Utils;
 
-namespace Atelia.LlmProviders.Anthropic;
+namespace Atelia.Completion.Anthropic;
 
 /// <summary>
 /// 解析 Anthropic SSE 流式响应事件。
@@ -16,7 +16,7 @@ internal sealed class AnthropicStreamParser {
 
     private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
-    private readonly List<ToolCallRequest> _toolCalls = new();
+    private readonly List<ParsedToolCall> _toolCalls = new();
     private TokenUsage? _usage;
 
     public AnthropicStreamParser()
@@ -38,7 +38,7 @@ internal sealed class AnthropicStreamParser {
         }
     }
 
-    public IEnumerable<ModelOutputDelta> ParseEvent(string json) {
+    public IEnumerable<CompletionChunk> ParseEvent(string json) {
         JsonNode? node;
         try {
             node = JsonNode.Parse(json);
@@ -60,7 +60,7 @@ internal sealed class AnthropicStreamParser {
             "content_block_stop" => HandleContentBlockStop(obj),
             "message_delta" => HandleMessageDelta(obj),
             "message_stop" => HandleMessageStop(obj),
-            "ping" => Enumerable.Empty<ModelOutputDelta>(),
+            "ping" => Enumerable.Empty<CompletionChunk>(),
             "error" => HandleError(obj),
             _ => HandleUnknownEvent(eventType)
         }) {
@@ -70,7 +70,7 @@ internal sealed class AnthropicStreamParser {
 
     public TokenUsage? GetFinalUsage() => _usage;
 
-    private IEnumerable<ModelOutputDelta> HandleMessageStart(JsonObject obj) {
+    private IEnumerable<CompletionChunk> HandleMessageStart(JsonObject obj) {
         // message_start 包含初始 usage
         if (obj["message"]?["usage"] is JsonObject usage) {
             UpdateUsage(usage);
@@ -79,7 +79,7 @@ internal sealed class AnthropicStreamParser {
         yield break;
     }
 
-    private IEnumerable<ModelOutputDelta> HandleContentBlockStart(JsonObject obj) {
+    private IEnumerable<CompletionChunk> HandleContentBlockStart(JsonObject obj) {
         var index = obj["index"]?.GetValue<int>() ?? -1;
         if (index < 0) { yield break; }
 
@@ -102,7 +102,7 @@ internal sealed class AnthropicStreamParser {
         yield break;
     }
 
-    private IEnumerable<ModelOutputDelta> HandleContentBlockDelta(JsonObject obj) {
+    private IEnumerable<CompletionChunk> HandleContentBlockDelta(JsonObject obj) {
         var index = obj["index"]?.GetValue<int>() ?? -1;
         if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { yield break; }
 
@@ -114,7 +114,7 @@ internal sealed class AnthropicStreamParser {
         if (deltaType == "text_delta") {
             var text = delta["text"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(text)) {
-                yield return ModelOutputDelta.Content(text);
+                yield return CompletionChunk.FromContent(text);
             }
         }
         else if (deltaType == "input_json_delta") {
@@ -125,7 +125,7 @@ internal sealed class AnthropicStreamParser {
         }
     }
 
-    private IEnumerable<ModelOutputDelta> HandleContentBlockStop(JsonObject obj) {
+    private IEnumerable<CompletionChunk> HandleContentBlockStop(JsonObject obj) {
         var index = obj["index"]?.GetValue<int>() ?? -1;
         if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { yield break; }
 
@@ -133,11 +133,11 @@ internal sealed class AnthropicStreamParser {
         if (state.Type == "tool_use") {
             var toolCall = CreateToolCallRequest(state);
             _toolCalls.Add(toolCall);
-            yield return ModelOutputDelta.ToolCall(toolCall);
+            yield return CompletionChunk.FromToolCall(toolCall);
         }
     }
 
-    private IEnumerable<ModelOutputDelta> HandleMessageDelta(JsonObject obj) {
+    private IEnumerable<CompletionChunk> HandleMessageDelta(JsonObject obj) {
         // message_delta 包含 stop_reason 和增量 usage
         if (obj["usage"] is JsonObject usage) {
             UpdateUsage(usage);
@@ -146,18 +146,18 @@ internal sealed class AnthropicStreamParser {
         yield break;
     }
 
-    private IEnumerable<ModelOutputDelta> HandleMessageStop(JsonObject obj) {
+    private IEnumerable<CompletionChunk> HandleMessageStop(JsonObject obj) {
         // 消息结束，无额外处理
         yield break;
     }
 
-    private IEnumerable<ModelOutputDelta> HandleError(JsonObject obj) {
+    private IEnumerable<CompletionChunk> HandleError(JsonObject obj) {
         var error = obj["error"]?["message"]?.GetValue<string>() ?? "Unknown error";
         DebugUtil.Print(DebugCategory, $"[Anthropic] API error: {error}");
-        yield return ModelOutputDelta.ExecutionError(error);
+        yield return CompletionChunk.FromError(error);
     }
 
-    private IEnumerable<ModelOutputDelta> HandleUnknownEvent(string eventType) {
+    private IEnumerable<CompletionChunk> HandleUnknownEvent(string eventType) {
         DebugUtil.Print(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
         yield break;
     }
@@ -179,13 +179,13 @@ internal sealed class AnthropicStreamParser {
     }
 
     /// <summary>
-    /// Builds a <see cref="ToolCallRequest"/> from a completed Anthropic tool content block.
+    /// Builds a <see cref="ParsedToolCall"/> from a completed Anthropic tool content block.
     /// </summary>
     /// <remarks>
     /// Ensures both parsed arguments and their raw textual counterparts are captured so downstream providers can
     /// reconstruct the invocation even when type conversion fails.
     /// </remarks>
-    private ToolCallRequest CreateToolCallRequest(ContentBlockState state) {
+    private ParsedToolCall CreateToolCallRequest(ContentBlockState state) {
         var rawArgumentsText = string.IsNullOrWhiteSpace(state.ToolInputJson) ? "{}" : state.ToolInputJson;
         IReadOnlyDictionary<string, object?>? arguments = null;
         IReadOnlyDictionary<string, object?>? fallbackArguments = null;
@@ -238,7 +238,7 @@ internal sealed class AnthropicStreamParser {
 
         rawArguments ??= fallbackRawArguments;
 
-        return new ToolCallRequest(
+        return new ParsedToolCall(
             ToolName: state.ToolName,
             ToolCallId: state.ToolUseId,
             RawArguments: rawArguments,

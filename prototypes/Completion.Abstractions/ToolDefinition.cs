@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 
-namespace Atelia.LlmProviders;
+namespace Atelia.Completion.Abstractions;
 public record struct ParamDefault(object? Value);
 
 public sealed class ToolParamSpec {

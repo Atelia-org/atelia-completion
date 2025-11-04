@@ -10,15 +10,15 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Atelia.Diagnostics;
-using Atelia.LlmProviders;
+using Atelia.Completion.Abstractions;
 
-namespace Atelia.LlmProviders.Anthropic;
+namespace Atelia.Completion.Anthropic;
 
 /// <summary>
 /// Anthropic Messages API 客户端实现。
 /// 规范：https://docs.anthropic.com/claude/reference/messages_post
 /// </summary>
-public sealed class AnthropicProviderClient : IProviderClient {
+public sealed class AnthropicClient : ICompletionClient {
     private const string DebugCategory = "Provider";
     private const string DefaultApiVersion = "2023-06-01";
 
@@ -32,9 +32,9 @@ public sealed class AnthropicProviderClient : IProviderClient {
     private readonly string _apiVersion;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "anthropic";
-    public string Specification => "messages-v1";
+    public string ProtocolVersion => "messages-v1";
 
-    public AnthropicProviderClient(string? apiKey, HttpClient? httpClient = null, string? apiVersion = null, Uri? baseAddress = null) {
+    public AnthropicClient(string? apiKey, HttpClient? httpClient = null, string? apiVersion = null, Uri? baseAddress = null) {
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient ?? new HttpClient();
         _httpClient.BaseAddress = baseAddress ?? new Uri("https://api.anthropic.com/");
@@ -44,8 +44,8 @@ public sealed class AnthropicProviderClient : IProviderClient {
         DebugUtil.Print(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}");
     }
 
-    public async IAsyncEnumerable<ModelOutputDelta> CallModelAsync(
-        LlmRequest request,
+    public async IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(
+        CompletionRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken
     ) {
         DebugUtil.Print(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
@@ -79,7 +79,7 @@ public sealed class AnthropicProviderClient : IProviderClient {
 
         // 输出最终统计
         if (parser.GetFinalUsage() is { } usage) {
-            yield return ModelOutputDelta.Usage(usage);
+            yield return CompletionChunk.FromTokenUsage(usage);
         }
 
         DebugUtil.Print(DebugCategory, "[Anthropic] Stream completed");

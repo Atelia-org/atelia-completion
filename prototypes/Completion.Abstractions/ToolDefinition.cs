@@ -33,6 +33,17 @@ public sealed class ToolParamSpec {
     }
 
     // 最基本的信息
+    /// <summary>
+    /// 参数名称，作为工具调用时的参数键。
+    /// <para>
+    /// &lt;strong&gt;大小写敏感：&lt;/strong&gt;调用方传入的参数字典键必须与此名称完全匹配（区分大小写）。
+    /// 这是有意为之的设计约束，目的是保持接口契约清晰，避免因忽略大小写而引入的参数名碰撞检测复杂性。
+    /// </para>
+    /// <para>
+    /// &lt;strong&gt;设计决策：&lt;/strong&gt;团队内部代码风格统一，参数名拼写准确，大小写敏感能更早暴露调用方的拼写错误。
+    /// 若未来确需兼容外部协议的大小写差异或别名，应在具体工具或适配层实现转换逻辑，而非在核心类型层引入通用支持。
+    /// </para>
+    /// </summary>
     public string Name { get; }
     public string Description { get; }
 

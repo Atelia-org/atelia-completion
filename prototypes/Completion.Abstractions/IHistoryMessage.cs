@@ -11,11 +11,6 @@ public interface IHistoryMessage {
     /// 指示该历史事件的类型。其命名遵循强化学习（RL）中的 <c>Observation</c> 和 <c>Action</c> 术语，而非各服务提供商常用的 <c>user</c> 或 <c>assistant</c> 等角色名称。
     /// </summary>
     HistoryMessageKind Kind { get; }
-
-    /// <summary>
-    /// 事件发生的时间戳。可用于对历史事件进行排序、回放以及信号建模。
-    /// </summary>
-    DateTimeOffset Timestamp { get; }
 }
 
 /// <summary>

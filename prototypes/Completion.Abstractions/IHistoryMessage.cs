@@ -21,7 +21,7 @@ public interface IActionMessage : IHistoryMessage {
     /// <summary>
     /// 模型生成的自然语言文本或命令，代表了策略（Policy）在当前历史状态下的决策输出。
     /// </summary>
-    string Contents { get; }
+    string Content { get; }
 
     /// <summary>
     /// 若模型决策中包含工具调用，此属性提供解析后的结构化信息，便于在环境中执行并计算其效果。
@@ -34,13 +34,13 @@ public interface IActionMessage : IHistoryMessage {
 /// 为兼容不同来源的观测内容，引入统一的文本字段，可按需拼接通知增量与窗口状态等信息。
 /// </summary>
 /// <param name="Timestamp">观测生成的时间戳，用于维持历史序列的顺序。</param>
-/// <param name="Contents">统一后的观测文本内容。</param>
+/// <param name="Content">统一后的观测文本内容。</param>
 public record class ObservationMessage(
     DateTimeOffset Timestamp,
     /// <summary>
     /// 统一后的观测文本内容，按需拼接通知增量与窗口状态等来源。
     /// </summary>
-    string? Contents
+    string? Content
 ) : IHistoryMessage {
     /// <inheritdoc />
     public virtual HistoryMessageKind Kind => HistoryMessageKind.Observation;
@@ -50,15 +50,15 @@ public record class ObservationMessage(
 /// 在基础观测之上增加了工具执行结果。此消息兼容聊天（Chat）范式中的 "tool" 角色，同时在强化学习（RL）语境下仍被视为环境反馈的一部分。
 /// </summary>
 /// <param name="Timestamp">工具执行结果返回的时间戳。</param>
-/// <param name="Contents">与工具执行相关的观测文本内容。</param>
+/// <param name="Content">与工具执行相关的观测文本内容。</param>
 /// <param name="Results">工具执行产生的结构化结果列表。</param>
 /// <param name="ExecuteError">若工具执行失败，此字段用于承载相关的错误信息。</param>
 public record ToolResultsMessage(
     DateTimeOffset Timestamp,
-    string? Contents,
+    string? Content,
     IReadOnlyList<ToolResult> Results,
     string? ExecuteError
-) : ObservationMessage(Timestamp, Contents) {
+) : ObservationMessage(Timestamp, Content) {
     /// <inheritdoc />
     public override HistoryMessageKind Kind => HistoryMessageKind.ToolResults;
 }

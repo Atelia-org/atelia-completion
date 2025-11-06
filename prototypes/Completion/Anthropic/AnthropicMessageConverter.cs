@@ -88,12 +88,12 @@ internal static class AnthropicMessageConverter {
             );
         }
 
-        // 此处无需再把toolResults作为ObservationMessage重复检查Contents属性，因为每个类型派生层次仅需序列化自身声明的数据。
+        // 此处无需再把toolResults作为ObservationMessage重复检查Content属性，因为每个类型派生层次仅需序列化自身声明的数据。
     }
 
     private static void BuildObservationOwnContent(ObservationMessage input, List<AnthropicContentBlock> blocks) {
         {
-            var content = input.Contents;
+            var content = input.Content;
             if (!string.IsNullOrWhiteSpace(content)) {
                 blocks.Add(new AnthropicTextBlock { Text = content });
             }
@@ -107,7 +107,7 @@ internal static class AnthropicMessageConverter {
 
     private static void BuildActionContent(IActionMessage output, List<AnthropicContentBlock> blocks) {
         // 文本内容
-        var content = output.Contents;
+        var content = output.Content;
         if (!string.IsNullOrWhiteSpace(content)) {
             blocks.Add(new AnthropicTextBlock { Text = content });
         }

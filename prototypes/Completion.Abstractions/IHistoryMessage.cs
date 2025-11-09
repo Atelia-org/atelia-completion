@@ -33,10 +33,8 @@ public interface IActionMessage : IHistoryMessage {
 /// 观测消息的基础形态。它将环境反馈（RL 术语）与聊天/助手（Chat/Assistant）场景中的系统或工具消息进行统一编码。
 /// 为兼容不同来源的观测内容，引入统一的文本字段，可按需拼接通知增量与窗口状态等信息。
 /// </summary>
-/// <param name="Timestamp">观测生成的时间戳，用于维持历史序列的顺序。</param>
 /// <param name="Content">统一后的观测文本内容。</param>
 public record class ObservationMessage(
-    DateTimeOffset Timestamp,
     /// <summary>
     /// 统一后的观测文本内容，按需拼接通知增量与窗口状态等来源。
     /// </summary>
@@ -49,16 +47,14 @@ public record class ObservationMessage(
 /// <summary>
 /// 在基础观测之上增加了工具执行结果。此消息兼容聊天（Chat）范式中的 "tool" 角色，同时在强化学习（RL）语境下仍被视为环境反馈的一部分。
 /// </summary>
-/// <param name="Timestamp">工具执行结果返回的时间戳。</param>
 /// <param name="Content">与工具执行相关的观测文本内容。</param>
 /// <param name="Results">工具执行产生的结构化结果列表。</param>
 /// <param name="ExecuteError">若工具执行失败，此字段用于承载相关的错误信息。</param>
 public record ToolResultsMessage(
-    DateTimeOffset Timestamp,
     string? Content,
     IReadOnlyList<ToolResult> Results,
     string? ExecuteError
-) : ObservationMessage(Timestamp, Content) {
+) : ObservationMessage(Content) {
     /// <inheritdoc />
     public override HistoryMessageKind Kind => HistoryMessageKind.ToolResults;
 }

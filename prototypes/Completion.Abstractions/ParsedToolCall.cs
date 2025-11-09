@@ -52,6 +52,5 @@ public record ToolResult(
     string ToolName,
     string ToolCallId,
     ToolExecutionStatus Status,
-    string Result,
-    TimeSpan? Elapsed
+    string Result
 );

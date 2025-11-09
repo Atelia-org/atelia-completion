@@ -8,7 +8,7 @@ namespace Atelia.Diagnostics {
     /// 用法：DebugUtil.Print("TypeHash", "内容");
     /// 环境变量 ATELIA_DEBUG_CATEGORIES 支持逗号、分号分隔的类别列表，如：TypeHash,Test,Outline。
     /// 设置为 ALL 可输出所有调试信息。
-    /// 调试信息同时输出到控制台和 .codecortex/logs/{category}.log（默认，用于Agent实时读取），若不可用回退到 gitignore/debug-logs。
+    /// 调试信息同时输出到控制台和 .atelia/debug-logs/{category}.log（默认，用于Agent实时读取），若不可用回退到 gitignore/debug-logs。
     /// </summary>
     public static class DebugUtil {
         private static readonly HashSet<string> _enabledCategories;
@@ -25,11 +25,11 @@ namespace Atelia.Diagnostics {
             _enabledCategories = cats;
             _allEnabled = cats.Contains("ALL");
 
-            // 设置日志目录：优先 .codecortex/logs（便于Agent实时读取），其次 gitignore/debug-logs，最后当前目录
+            // 设置日志目录：优先 .atelia/debug-logs（便于Agent实时读取），其次 gitignore/debug-logs，最后当前目录
             var cwd = Directory.GetCurrentDirectory();
             string selected = null;
             var candidates = new[] {
-                Path.Combine(cwd, ".codecortex", folderName),
+                Path.Combine(cwd, ".atelia", folderName),
                 Path.Combine(cwd, "gitignore", folderName)
             };
             foreach (var c in candidates) {

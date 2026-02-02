@@ -4,21 +4,15 @@ namespace Atelia.Completion.Abstractions;
 /// Captures a single tool invocation emitted by a provider.
 /// </summary>
 /// <remarks>
-/// <para>
 /// Providers are expected to populate <paramref name="Arguments"/> with strongly-typed values when parsing succeeds.
 /// Whenever parsing of a specific parameter fails, the original textual representation should still be present in
 /// <paramref name="RawArguments"/> so that other providers or diagnostics can faithfully reconstruct the call.
-/// </para>
-/// <para>
 /// &lt;b&gt;Contract:&lt;/b&gt; successful parsers must still provide non-null dictionaries. If the model omits all parameters or the tool
 /// defines none, both <paramref name="Arguments"/> and <paramref name="RawArguments"/> should be empty instances rather than
 /// <see langword="null"/>. Reserving <see langword="null"/> for fatal parse failures allows downstream components to reliably
 /// detect and surface provider issues.
-/// </para>
-/// <para>
 /// If the provider cannot even determine the parameter key/value pairs (for example the payload is not an object),
 /// <paramref name="RawArguments"/> should be set to <see langword="null"/> and <paramref name="ParseError"/> must explain the failure.
-/// </para>
 /// </remarks>
 /// <param name="ToolName">Logical tool identifier selected by the model.</param>
 /// <param name="ToolCallId">Provider specific identifier used to correlate execution results.</param>

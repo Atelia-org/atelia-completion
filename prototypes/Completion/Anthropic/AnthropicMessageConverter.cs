@@ -58,7 +58,7 @@ internal static class AnthropicMessageConverter {
             Tools = BuildToolDefinitions(request.Tools)
         };
 
-        DebugUtil.Print(
+        DebugUtil.Info(
             DebugCategory,
             $"[Anthropic] Converted {request.Context.Count} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}"
         );
@@ -138,7 +138,7 @@ internal static class AnthropicMessageConverter {
 
         if (toolCall.RawArguments is { Count: > 0 } rawArguments) {
             if (hasParseError) {
-                DebugUtil.Print(
+                DebugUtil.Warning(
                     DebugCategory,
                     $"[Anthropic] Falling back to raw arguments toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
                 );
@@ -151,7 +151,7 @@ internal static class AnthropicMessageConverter {
         if (toolCall.Arguments is { } fallbackArguments) { return JsonSerializer.SerializeToElement(fallbackArguments); }
 
         if (hasParseError) {
-            DebugUtil.Print(
+            DebugUtil.Warning(
                 DebugCategory,
                 $"[Anthropic] Tool call arguments unavailable toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
             );
@@ -238,7 +238,7 @@ internal static class AnthropicMessageConverter {
             );
         }
 
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Normalized to {messages.Count} messages");
+        DebugUtil.Info(DebugCategory, $"[Anthropic] Normalized to {messages.Count} messages");
     }
 
     private static List<AnthropicTool>? BuildToolDefinitions(ImmutableArray<ToolDefinition> tools) {

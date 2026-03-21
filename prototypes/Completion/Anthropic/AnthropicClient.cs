@@ -41,14 +41,14 @@ public sealed class AnthropicClient : ICompletionClient {
 
         _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
 
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}");
+        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}");
     }
 
     public async IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(
         CompletionRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken
     ) {
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
+        DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
         var httpRequest = CreateHttpRequest(apiRequest);
@@ -82,12 +82,12 @@ public sealed class AnthropicClient : ICompletionClient {
             yield return CompletionChunk.FromTokenUsage(usage);
         }
 
-        DebugUtil.Print(DebugCategory, "[Anthropic] Stream completed");
+        DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");
     }
 
     private HttpRequestMessage CreateHttpRequest(AnthropicApiRequest apiRequest) {
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Request payload length={json.Length}");
+        DebugUtil.Trace(DebugCategory, $"[Anthropic] Request payload length={json.Length}");
 
         var request = new HttpRequestMessage(HttpMethod.Post, "v1/messages") {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))

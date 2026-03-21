@@ -29,7 +29,7 @@ internal sealed class AnthropicStreamParser {
         if (!toolDefinitions.IsDefaultOrEmpty) {
             foreach (var definition in toolDefinitions) {
                 if (_toolDefinitions.ContainsKey(definition.Name)) {
-                    DebugUtil.Print(DebugCategory, $"[Anthropic] Duplicate tool definition ignored name={definition.Name}");
+                    DebugUtil.Warning(DebugCategory, $"[Anthropic] Duplicate tool definition ignored name={definition.Name}");
                     continue;
                 }
 
@@ -44,7 +44,7 @@ internal sealed class AnthropicStreamParser {
             node = JsonNode.Parse(json);
         }
         catch (JsonException ex) {
-            DebugUtil.Print(DebugCategory, $"[Anthropic] Failed to parse event: {ex.Message}");
+            DebugUtil.Warning(DebugCategory, $"[Anthropic] Failed to parse event: {ex.Message}", ex);
             yield break;
         }
 
@@ -153,12 +153,12 @@ internal sealed class AnthropicStreamParser {
 
     private IEnumerable<CompletionChunk> HandleError(JsonObject obj) {
         var error = obj["error"]?["message"]?.GetValue<string>() ?? "Unknown error";
-        DebugUtil.Print(DebugCategory, $"[Anthropic] API error: {error}");
+        DebugUtil.Warning(DebugCategory, $"[Anthropic] API error: {error}");
         yield return CompletionChunk.FromError(error);
     }
 
     private IEnumerable<CompletionChunk> HandleUnknownEvent(string eventType) {
-        DebugUtil.Print(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
+        DebugUtil.Warning(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
         yield break;
     }
 

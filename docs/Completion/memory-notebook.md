@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `prototypes/Completion*` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-04-22
+> **最后更新**：2026-04-23
 
 ---
 
@@ -81,11 +81,12 @@
 - 嵌套对象/数组的 schema 表达有限，主要面向"扁平的标量参数"
 - 默认值、可空性、enum 通过 spec 字段直接表达
 
-### 6. Anthropic 是唯一原生 provider，OpenAI 兼容协议走代理
+### 6. 当前有两套 provider：Anthropic Messages + OpenAI Chat Completions
 
-- `LiveContextProto/Program.cs` 默认 `AnthropicProxyUrl = "http://localhost:8000/"`
-- 该端口是 Anthropic-compatible proxy（如 llama.cpp 或自建 LiteLLM-style proxy 把 Qwen/Llama 等暴露成 Anthropic API）
-- **没有原生 OpenAI Client**——这是当前的实用主义选择，不是架构限制
+- `LiveContextProto/Program.cs` 当前实验入口默认走 `OpenAIChatClient(OpenAIChatDialects.SgLangCompatible)`，并使用 `http://localhost:8000/`
+- 同一台本地 sglang 服务也暴露了 OpenAI-compatible `POST /v1/chat/completions`
+- `Completion` 现已包含原生 `OpenAIChatClient`，面向 chat/completions 流式工具调用（不是 Responses API）
+- OpenAI-compatible 的长期演进遵循 “Strict Core + Quirk Modules”，细则见 `docs/Completion/openai-compatible-evolution.md`
 
 ### 7. SSE 解析是手写状态机，不依赖通用 SSE 库
 
@@ -104,6 +105,19 @@
 
 JSON 解析失败会记 warning 但不中断流。
 
+`OpenAIChatStreamParser` 则直接消费 chat/completions 的 `data: {...}` chunk：
+
+| 字段 | 动作 | 输出 chunk |
+|---|---|---|
+| `choices[].delta.content` | 追加正文增量 | Content |
+| `choices[].delta.tool_calls[]` | 按 `tool_calls[i].index` 聚合 id/name/arguments 片段 | — |
+| `choices[].finish_reason = "tool_calls"` | 将已聚合完成的调用一次性解析为 `ParsedToolCall` | ToolCall |
+| `usage` | 更新累计 token 统计 | — |
+| `reasoning_content` | 忽略，不上浮到抽象层 | — |
+| `[DONE]` | 流结束；若仍有未刷出的工具调用则补刷 | — |
+
+strict 路径默认保留所有 `delta.content`；只有特定 dialect（当前是 `SgLangCompatible`）才会忽略“工具调用已开始后夹带的纯空白 content noise”。
+
 ---
 
 ## 核心数据流（一次 LLM 调用）
@@ -113,21 +127,20 @@ JSON 解析失败会记 warning 但不中断流。
    { ModelId, SystemPrompt, Context: IHistoryMessage[], Tools: ToolDefinition[] }
 
 2. ICompletionClient.StreamCompletionAsync(request)
-   → AnthropicClient 实现：
-      a. AnthropicMessageConverter 把 IHistoryMessage[] → AnthropicMessage[]
-         （含 NormalizeMessageSequence 合并连续同 role）
-      b. JsonToolSchemaBuilder 把 ToolDefinition[] → AnthropicTool[] (含 JsonSchema)
-      c. 序列化为 snake_case JSON，POST v1/messages（带 x-api-key 头）
+   → Provider 实现（AnthropicClient / OpenAIChatClient）：
+      a. Provider-specific MessageConverter 把 IHistoryMessage[] → API messages
+      b. JsonToolSchemaBuilder 把 ToolDefinition[] → provider tools (含 JsonSchema)
+      c. 序列化后 POST 对应 endpoint（Anthropic: `v1/messages`; OpenAI Chat: `v1/chat/completions`）
 
 3. HTTP 流接收
    ├─ ResponseHeadersRead 模式拿到持续开放的 Stream
    ├─ StreamReader 逐行读 SSE
    └─ "data: " 前缀过滤 → 抽出 JSON 行
 
-4. 逐行 JsonNode.Parse → 按 type 分发到 AnthropicStreamParser.HandleXxx
+4. 逐行 JsonNode.Parse → 分发到对应 provider 的 StreamParser
    ├─ text delta → yield Content chunk
-   ├─ tool_use stop → JsonArgumentParser.Parse → yield ToolCall chunk
-   └─ message_delta → 更新 usage（最后 yield TokenUsage）
+   ├─ tool delta 聚合完成 → JsonArgumentParser.Parse → yield ToolCall chunk
+   └─ usage delta → 更新 usage（最后 yield TokenUsage）
 
 5. 上层（CompletionAccumulator）逐块消费，组装成 ActionEntry
 ```
@@ -151,6 +164,12 @@ prototypes/Completion/
 │  ├─ AnthropicApiModels.cs         请求/响应 DTO（snake_case 序列化）
 │  ├─ AnthropicMessageConverter.cs  IHistoryMessage[] → AnthropicMessage[]
 │  └─ AnthropicStreamParser.cs      SSE 事件状态机
+├─ OpenAI/
+│  ├─ OpenAIChatClient.cs           ICompletionClient 实现
+│  ├─ OpenAIChatApiModels.cs        chat/completions 请求 DTO
+│  ├─ OpenAIChatDialect.cs          轻量 dialect（已知兼容差异的组合）
+│  ├─ OpenAIChatMessageConverter.cs IHistoryMessage[] → OpenAI messages[]
+│  └─ OpenAIChatStreamParser.cs     SSE delta 聚合状态机
 └─ Utils/
    ├─ JsonArgumentParser.cs         工具参数 JSON → Dictionary
    ├─ JsonToolSchemaBuilder.cs      ToolParamSpec → JSON Schema
@@ -161,11 +180,13 @@ prototypes/Completion/
 
 ## 已知边界与高风险点
 
-### Provider 单一
+### Provider 差异仍然明显
 
-- 只有 Anthropic 原生实现
-- 通过本地 proxy 适配其他模型（实际上是把它们伪装成 Anthropic API）
-- 真要支持 OpenAI 原生协议需要新增完整的 Client + MessageConverter + StreamParser 三件套
+- 目前已有 Anthropic Messages 与 OpenAI Chat Completions 两套原生实现
+- OpenAI 侧只覆盖 chat/completions，不含 Responses API
+- 对于更广义的 OpenAI-compatible 服务，`finish_reason`、`usage`、tool call 片段顺序仍可能存在方言差异
+- 请求侧会严格校验 `assistant.tool_calls -> tool` 的相邻关系；若 `ToolResultsMessage` 缺少部分结果但提供了 `ExecuteError`，OpenAI converter 会按 pending `tool_call_id` 合成失败 `tool` 消息以维持协议合法性
+- 当前只把已确认的高价值差异收敛进 `OpenAIChatDialect`，不做全量 profile 系统
 
 ### 工具参数表达力有限
 
@@ -200,13 +221,13 @@ Agent.Core (推理循环)
     ↓ depends on
 Completion.Abstractions (本项目)
     ↑ implements
-Completion (本项目，含 Anthropic)
+Completion (本项目，含 Anthropic / OpenAI Chat)
     ↓ HTTP
-Anthropic API / 本地代理（Qwen / Llama 等通过 Anthropic-compatible proxy）
+Anthropic API / OpenAI-compatible API / 本地 sglang 服务
 ```
 
 - Abstractions 不依赖任何 provider DLL
-- Completion 当前只有 Anthropic 一组实现，但分层留出了扩展空间
+- Completion 当前包含 Anthropic 与 OpenAI Chat 两组实现，分层仍允许继续扩展 provider
 - `LlmProfile`（在 Agent.Core）= `ICompletionClient + ModelId + 显示名` 的捆绑
 
 ---
@@ -219,7 +240,7 @@ Anthropic API / 本地代理（Qwen / Llama 等通过 Anthropic-compatible proxy
 > 以下几项在调研过程中发现**代码中已经落地**，列在此处供后续读者快速校准：
 >
 > - **工具执行的归属**：完全在 Agent.Core `ToolExecutor` 中执行，Completion 层只负责解析参数
-> - **OpenAI 原生支持时机**：当前通过 Anthropic-compatible proxy 支持所有模型（包括 Qwen / Llama），原生 OpenAI client 暂定低优先级
+> - **OpenAI 原生支持时机**：代码中已落地 `OpenAIChatClient`，但范围明确限制在 chat/completions；Responses API 仍未做
 
 ---
 

@@ -1,14 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 
@@ -37,7 +30,15 @@ public sealed class AnthropicClient : ICompletionClient {
     public AnthropicClient(string? apiKey, HttpClient? httpClient = null, string? apiVersion = null, Uri? baseAddress = null) {
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient ?? new HttpClient();
-        _httpClient.BaseAddress = baseAddress ?? new Uri("https://api.anthropic.com/");
+
+        // 显式 baseAddress 永远胜出；否则保留外部 HttpClient 已配置的 BaseAddress；都没有时回落到官方端点。
+        // 不要无条件覆盖：共享 HttpClient 的调用方可能已明确配置代理/兼容端点。
+        if (baseAddress is not null) {
+            _httpClient.BaseAddress = baseAddress;
+        }
+        else if (_httpClient.BaseAddress is null) {
+            _httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
+        }
 
         _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
 

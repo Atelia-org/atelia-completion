@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
@@ -16,8 +17,10 @@ internal sealed class AnthropicStreamParser {
 
     private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
-    private readonly List<ParsedToolCall> _toolCalls = new();
-    private TokenUsage? _usage;
+    private int? _promptTokens;
+    private int? _completionTokens;
+    private int? _cacheReadInputTokens;
+    private int? _cacheCreationInputTokens;
 
     public AnthropicStreamParser()
         : this(ImmutableArray<ToolDefinition>.Empty) {
@@ -68,7 +71,19 @@ internal sealed class AnthropicStreamParser {
         }
     }
 
-    public TokenUsage? GetFinalUsage() => _usage;
+    public TokenUsage? GetFinalUsage() {
+        if (_promptTokens is null && _completionTokens is null && _cacheReadInputTokens is null && _cacheCreationInputTokens is null) {
+            return null;
+        }
+
+        var cachedPromptTokens = (_cacheReadInputTokens ?? 0) + (_cacheCreationInputTokens ?? 0);
+
+        return new TokenUsage(
+            PromptTokens: _promptTokens ?? 0,
+            CompletionTokens: _completionTokens ?? 0,
+            CachedPromptTokens: cachedPromptTokens > 0 ? cachedPromptTokens : null
+        );
+    }
 
     private IEnumerable<CompletionChunk> HandleMessageStart(JsonObject obj) {
         // message_start 包含初始 usage
@@ -89,7 +104,6 @@ internal sealed class AnthropicStreamParser {
         var blockType = contentBlock["type"]?.GetValue<string>();
 
         var state = new ContentBlockState {
-            Index = index,
             Type = blockType ?? "unknown"
         };
 
@@ -120,7 +134,7 @@ internal sealed class AnthropicStreamParser {
         else if (deltaType == "input_json_delta") {
             var partial = delta["partial_json"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(partial)) {
-                state.ToolInputJson += partial;
+                state.ToolInputJsonBuilder.Append(partial);
             }
         }
     }
@@ -132,9 +146,10 @@ internal sealed class AnthropicStreamParser {
         // 如果是工具调用块，生成 ToolCallRequest
         if (state.Type == "tool_use") {
             var toolCall = CreateToolCallRequest(state);
-            _toolCalls.Add(toolCall);
             yield return CompletionChunk.FromToolCall(toolCall);
         }
+
+        _contentBlocks.Remove(index);
     }
 
     private IEnumerable<CompletionChunk> HandleMessageDelta(JsonObject obj) {
@@ -163,19 +178,21 @@ internal sealed class AnthropicStreamParser {
     }
 
     private void UpdateUsage(JsonObject usage) {
-        var inputTokens = usage["input_tokens"]?.GetValue<int>() ?? 0;
-        var outputTokens = usage["output_tokens"]?.GetValue<int>() ?? 0;
+        if (TryGetInt32(usage, "input_tokens", out var inputTokens)) {
+            _promptTokens = inputTokens;
+        }
 
-        // Anthropic 的 cache_read_input_tokens 和 cache_creation_input_tokens
-        var cacheReadTokens = usage["cache_read_input_tokens"]?.GetValue<int>();
-        var cacheCreationTokens = usage["cache_creation_input_tokens"]?.GetValue<int>();
-        var cachedTokens = (cacheReadTokens ?? 0) + (cacheCreationTokens ?? 0);
+        if (TryGetInt32(usage, "output_tokens", out var outputTokens)) {
+            _completionTokens = outputTokens;
+        }
 
-        _usage = new TokenUsage(
-            PromptTokens: inputTokens,
-            CompletionTokens: outputTokens,
-            CachedPromptTokens: cachedTokens > 0 ? cachedTokens : null
-        );
+        if (TryGetInt32(usage, "cache_read_input_tokens", out var cacheReadTokens)) {
+            _cacheReadInputTokens = cacheReadTokens;
+        }
+
+        if (TryGetInt32(usage, "cache_creation_input_tokens", out var cacheCreationTokens)) {
+            _cacheCreationInputTokens = cacheCreationTokens;
+        }
     }
 
     /// <summary>
@@ -186,61 +203,56 @@ internal sealed class AnthropicStreamParser {
     /// reconstruct the invocation even when type conversion fails.
     /// </remarks>
     private ParsedToolCall CreateToolCallRequest(ContentBlockState state) {
-        var rawArgumentsText = string.IsNullOrWhiteSpace(state.ToolInputJson) ? "{}" : state.ToolInputJson;
+        var rawArgumentsText = state.ToolInputJsonBuilder.Length == 0
+            ? "{}"
+            : state.ToolInputJsonBuilder.ToString();
+
+        if (_toolDefinitions.TryGetValue(state.ToolName, out var definition)) {
+            var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, rawArgumentsText);
+            return new ParsedToolCall(
+                ToolName: state.ToolName,
+                ToolCallId: state.ToolUseId,
+                RawArguments: parsed.RawArguments,
+                Arguments: parsed.Arguments,
+                ParseError: parsed.ParseError,
+                ParseWarning: parsed.ParseWarning
+            );
+        }
+
+        return BuildToolCallWithoutSchema(state.ToolName, state.ToolUseId, rawArgumentsText);
+    }
+
+    private static ParsedToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText) {
         IReadOnlyDictionary<string, object?>? arguments = null;
-        IReadOnlyDictionary<string, object?>? fallbackArguments = null;
         IReadOnlyDictionary<string, string>? rawArguments = null;
-        ImmutableDictionary<string, string>? fallbackRawArguments = null;
         string? parseError = null;
-        string? parseWarning = null;
-        string? fallbackWarning = null;
+        string? parseWarning = "tool_definition_missing";
 
         try {
             using var document = JsonDocument.Parse(rawArgumentsText);
             if (document.RootElement.ValueKind == JsonValueKind.Object) {
-                var warnings = new List<string>();
                 var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
                 var rawBuilder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var property in document.RootElement.EnumerateObject()) {
-                    var childPath = property.Name;
                     rawBuilder[property.Name] = ExtractRawArgument(property.Value);
-                    dict[property.Name] = ConvertJsonElement(property.Value, childPath, warnings);
+                    dict[property.Name] = ConvertJsonElement(property.Value);
                 }
 
-                fallbackArguments = dict;
-                fallbackRawArguments = rawBuilder.ToImmutable();
-                if (warnings.Count > 0) {
-                    fallbackWarning = string.Join("; ", warnings);
-                }
+                arguments = dict;
+                rawArguments = rawBuilder.ToImmutable();
             }
             else {
-                parseError = CombineMessages(parseError, $"Arguments must be a JSON object but was {document.RootElement.ValueKind}.");
+                parseError = $"Arguments must be a JSON object but was {document.RootElement.ValueKind}.";
             }
         }
         catch (JsonException ex) {
-            parseError = CombineMessages(parseError, $"JSON parse failed: {ex.Message}");
+            parseError = $"JSON parse failed: {ex.Message}";
         }
-
-        if (_toolDefinitions.TryGetValue(state.ToolName, out var definition)) {
-            var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, rawArgumentsText);
-            arguments = parsed.Arguments;
-            rawArguments = parsed.RawArguments;
-            parseError = CombineMessages(parseError, parsed.ParseError);
-            parseWarning = CombineMessages(parseWarning, parsed.ParseWarning);
-        }
-        else {
-            parseWarning = CombineMessages(parseWarning, "tool_definition_missing");
-            arguments = fallbackArguments;
-            rawArguments = fallbackRawArguments ?? rawArguments;
-            parseWarning = CombineMessages(parseWarning, fallbackWarning);
-        }
-
-        rawArguments ??= fallbackRawArguments;
 
         return new ParsedToolCall(
-            ToolName: state.ToolName,
-            ToolCallId: state.ToolUseId,
+            ToolName: toolName,
+            ToolCallId: toolCallId,
             RawArguments: rawArguments,
             Arguments: arguments,
             ParseError: parseError,
@@ -261,46 +273,43 @@ internal sealed class AnthropicStreamParser {
         };
     }
 
-    private static string? CombineMessages(string? first, string? second) {
-        if (string.IsNullOrWhiteSpace(first)) { return second; }
-        if (string.IsNullOrWhiteSpace(second)) { return first; }
-        return string.Concat(first, "; ", second);
+    private static bool TryGetInt32(JsonObject obj, string propertyName, out int value) {
+        value = default;
+
+        if (!obj.TryGetPropertyValue(propertyName, out var node) || node is null) {
+            return false;
+        }
+
+        try {
+            value = node.GetValue<int>();
+            return true;
+        }
+        catch (FormatException) {
+            return false;
+        }
+        catch (InvalidOperationException) {
+            return false;
+        }
     }
 
-    private static object? ConvertJsonElement(JsonElement element, string path, List<string> warnings) {
+    private static object? ConvertJsonElement(JsonElement element) {
         switch (element.ValueKind) {
             case JsonValueKind.Object: {
                 var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
                 foreach (var property in element.EnumerateObject()) {
-                    var childPath = string.IsNullOrEmpty(path)
-                        ? property.Name
-                        : string.Join('.', path, property.Name);
-                    dict[property.Name] = ConvertJsonElement(property.Value, childPath, warnings);
+                    dict[property.Name] = ConvertJsonElement(property.Value);
                 }
                 return dict;
             }
             case JsonValueKind.Array: {
                 var list = new List<object?>();
-                var index = 0;
                 foreach (var item in element.EnumerateArray()) {
-                    var childPath = string.IsNullOrEmpty(path)
-                        ? $"[{index}]"
-                        : $"{path}[{index}]";
-                    list.Add(ConvertJsonElement(item, childPath, warnings));
-                    index++;
+                    list.Add(ConvertJsonElement(item));
                 }
                 return list;
             }
-            case JsonValueKind.String: {
-                var text = element.GetString();
-                if (TryPromoteString(text, out var promoted, out var warning)) {
-                    if (warning is not null) {
-                        warnings.Add($"{path}: {warning}");
-                    }
-                    return promoted;
-                }
-                return text;
-            }
+            case JsonValueKind.String:
+                return element.GetString();
             case JsonValueKind.Number:
                 if (element.TryGetInt64(out var longValue)) { return longValue; }
                 if (element.TryGetDouble(out var doubleValue)) { return doubleValue; }
@@ -316,38 +325,10 @@ internal sealed class AnthropicStreamParser {
         }
     }
 
-    private static bool TryPromoteString(string? value, out object? promoted, out string? warning) {
-        promoted = null;
-        warning = null;
-
-        if (string.IsNullOrWhiteSpace(value)) { return false; }
-
-        if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)) {
-            promoted = true;
-            warning = "string literal converted to boolean true";
-            return true;
-        }
-
-        if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)) {
-            promoted = false;
-            warning = "string literal converted to boolean false";
-            return true;
-        }
-
-        if (string.Equals(value, "null", StringComparison.OrdinalIgnoreCase)) {
-            promoted = null;
-            warning = "string literal converted to null";
-            return true;
-        }
-
-        return false;
-    }
-
     private sealed class ContentBlockState {
-        public int Index { get; set; }
         public string Type { get; set; } = string.Empty;
         public string ToolUseId { get; set; } = string.Empty;
         public string ToolName { get; set; } = string.Empty;
-        public string ToolInputJson { get; set; } = string.Empty;
+        public StringBuilder ToolInputJsonBuilder { get; } = new();
     }
 }

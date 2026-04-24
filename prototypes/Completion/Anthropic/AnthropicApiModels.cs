@@ -48,6 +48,7 @@ internal sealed class AnthropicMessage {
 /// </summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(AnthropicTextBlock), "text")]
+[JsonDerivedType(typeof(AnthropicThinkingBlock), "thinking")]
 [JsonDerivedType(typeof(AnthropicToolUseBlock), "tool_use")]
 [JsonDerivedType(typeof(AnthropicToolResultBlock), "tool_result")]
 internal abstract class AnthropicContentBlock {
@@ -59,6 +60,17 @@ internal abstract class AnthropicContentBlock {
 internal sealed class AnthropicTextBlock : AnthropicContentBlock {
     [JsonPropertyName("text")]
     public required string Text { get; set; }
+}
+
+/// <summary>
+/// Extended thinking 内容块（assistant 消息中）。
+/// </summary>
+internal sealed class AnthropicThinkingBlock : AnthropicContentBlock {
+    [JsonPropertyName("thinking")]
+    public required string Thinking { get; set; }
+
+    [JsonPropertyName("signature")]
+    public string? Signature { get; set; }
 }
 
 /// <summary>

@@ -23,8 +23,10 @@
 `IHistoryMessage` 家族（在 Abstractions 层）：
 
 - `ObservationMessage` — 来自环境/用户的输入
-- `IActionMessage` — Agent/LLM 的输出
+- `IActionMessage` — Agent/LLM 的输出；富接口子型 `IRichActionMessage` 额外暴露 `Blocks: IReadOnlyList<ActionBlock>`
 - `ToolResultsMessage` — 工具执行的结果集合
+
+`ActionBlock` 是封闭 sum type（示例三子型：`Text` / `ToolCall` / `Thinking`），是 provider converter 与 Agent.Core 共享的有序内容语言。抱着换取不丢序列 / Thinking replay 能力的目的，`ActionBlock` / `IRichActionMessage` / `CompletionDescriptor` 都在 Abstractions 层，避免 Completion 反向依赖 Agent.Core。
 
 `HistoryMessageKind` enum 给出统一标记。
 
@@ -44,6 +46,7 @@
 
 - `Content` — 文本片段（增量）
 - `ToolCall` — 一个完整的 `ParsedToolCall`（在 `content_block_stop` 时一次性产出）
+- `Thinking` — `ThinkingChunk(OpaquePayload, PlainTextForDebug?)`；parser 在 `content_block_stop` 时将 provider-native 序列化字节一次性产出，Agent.Core / Accumulator 不解释该字节内容
 - `Error` — 流中错误
 - `TokenUsage` — 累计统计；由 `message_start` / `message_delta` 中的 usage 字段逐步累积，流结束时由上层 `CompletionAccumulator` 一次性 yield
 
@@ -95,9 +98,9 @@
 | 事件 | 动作 | 输出 chunk |
 |---|---|---|
 | `message_start` | 初始化 usage 累计 | — |
-| `content_block_start` | 创建 ContentBlockState（区分 text / tool_use） | — |
-| `content_block_delta` | 累积文本片段或 input_json 片段 | Content（仅 text 时） |
-| `content_block_stop` | tool_use 块完成 → 解析参数 | ToolCall |
+| `content_block_start` | 创建 ContentBlockState（区分 text / tool_use / thinking） | — |
+| `content_block_delta` | 累积文本片段、input_json 片段、或 thinking/signature 片段 | Content（仅 text 时） |
+| `content_block_stop` | tool_use 块完成 → 解析参数；thinking 块完成 → 序列化为 `{type:thinking,thinking,signature}` JSON 字节 | ToolCall 或 Thinking |
 | `message_delta` | 更新累积 usage | — |
 | `message_stop` / `[DONE]` | 流结束（上层 Accumulator 在此后一次性 yield TokenUsage） | — |
 | `error` | 记录错误 | Error |
@@ -217,7 +220,7 @@ prototypes/Completion/
 - Completion 层不感知 "Turn"概念；`ICompletionClient.StreamCompletionAsync` 是无状态的
 - Turn 内 `LlmProfile` 锁定的不变量与校验全部位于 `Agent.Core/AgentEngine.cs`
 - 详见 [docs/Agent/memory-notebook.md](../Agent/memory-notebook.md) 的"Turn 与 LlmProfile 锁定"小节
-- 该约束为后续 thinking/reasoning 内容的"窗口化注入"奠定前提（仅当前 Turn 注入加密 thinking，旧 Turn 仅作历史真相记录）
+- 该约束为 thinking/reasoning replay 奠定前提：`ActionBlock.Thinking.Origin` 与 Turn lock 同构，`ProjectInvocationContext` 仅在 `Origin == TargetInvocation` 且存在显式 Turn 起点时在 ActiveTurnTail 保留 thinking，Stable Prefix 始终剩离。Anthropic 路径已端到端落地；OpenAI reasoning_content 仍丢弃。
 
 ---
 

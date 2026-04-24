@@ -28,6 +28,10 @@ internal static class AnthropicMessageConverter {
                     BuildObservationMessage(input, messages, pendingToolCallIds);
                     break;
 
+                case IRichActionMessage richOutput:
+                    BuildActionMessage(richOutput, messages, pendingToolCallIds);
+                    break;
+
                 case IActionMessage output:
                     BuildActionMessage(output, messages, pendingToolCallIds);
                     break;
@@ -224,6 +228,54 @@ internal static class AnthropicMessageConverter {
         );
     }
 
+    private static void BuildActionMessage(IRichActionMessage output, List<AnthropicMessage> messages, List<string> pendingToolCallIds) {
+        EnsureNoPendingToolCalls(pendingToolCallIds, $"assistant rich action before tool results blockCount={output.Blocks.Count}");
+
+        var blocks = new List<AnthropicContentBlock>(output.Blocks.Count);
+
+        foreach (var block in output.Blocks) {
+            switch (block) {
+                case ActionBlock.Text textBlock when !string.IsNullOrWhiteSpace(textBlock.Content):
+                    blocks.Add(new AnthropicTextBlock { Text = textBlock.Content });
+                    break;
+
+                case ActionBlock.ToolCall toolCallBlock:
+                    blocks.Add(
+                        new AnthropicToolUseBlock {
+                            Id = toolCallBlock.Call.ToolCallId,
+                            Name = toolCallBlock.Call.ToolName,
+                            Input = BuildToolCallHistory(toolCallBlock.Call)
+                        }
+                    );
+                    pendingToolCallIds.Add(toolCallBlock.Call.ToolCallId);
+                    break;
+
+                case ActionBlock.Thinking thinkingBlock:
+                    blocks.Add(BuildThinkingBlock(thinkingBlock));
+                    break;
+
+                case ActionBlock.Text:
+                    break;
+
+                default:
+                    throw new InvalidOperationException($"Unsupported action block kind '{block.Kind}' for Anthropic projection.");
+            }
+        }
+
+        if (blocks.Count == 0) {
+            throw new InvalidOperationException(
+                "Action message has no non-whitespace text content and no tool calls; nothing to send as assistant turn."
+            );
+        }
+
+        messages.Add(
+            new AnthropicMessage {
+                Role = "assistant",
+                Content = blocks
+            }
+        );
+    }
+
     private static JsonElement BuildToolCallHistory(ParsedToolCall toolCall) {
         var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);
 
@@ -251,6 +303,10 @@ internal static class AnthropicMessageConverter {
         }
 
         return JsonSerializer.SerializeToElement(new JsonObject());
+    }
+
+    private static AnthropicThinkingBlock BuildThinkingBlock(ActionBlock.Thinking thinkingBlock) {
+        return AnthropicThinkingPayloadCodec.Decode(thinkingBlock.OpaquePayload);
     }
 
     private static JsonObject BuildFallbackFromRawArguments(IReadOnlyDictionary<string, string> rawArguments) {

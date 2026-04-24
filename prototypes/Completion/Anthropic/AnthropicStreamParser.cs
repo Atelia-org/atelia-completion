@@ -111,6 +111,14 @@ internal sealed class AnthropicStreamParser {
             state.ToolUseId = contentBlock["id"]?.GetValue<string>() ?? string.Empty;
             state.ToolName = contentBlock["name"]?.GetValue<string>() ?? string.Empty;
         }
+        else if (blockType == "thinking") {
+            // 偶尔 content_block_start 已携带初始 thinking/signature 文本（尽管常见为空），
+            // 一并预填，后续 thinking_delta / signature_delta 继续追加。
+            var initialThinking = contentBlock["thinking"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(initialThinking)) { state.ThinkingTextBuilder.Append(initialThinking); }
+            var initialSignature = contentBlock["signature"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(initialSignature)) { state.ThinkingSignatureBuilder.Append(initialSignature); }
+        }
 
         _contentBlocks[index] = state;
         yield break;
@@ -137,6 +145,18 @@ internal sealed class AnthropicStreamParser {
                 state.ToolInputJsonBuilder.Append(partial);
             }
         }
+        else if (deltaType == "thinking_delta") {
+            var thinkingText = delta["thinking"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(thinkingText)) {
+                state.ThinkingTextBuilder.Append(thinkingText);
+            }
+        }
+        else if (deltaType == "signature_delta") {
+            var signature = delta["signature"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(signature)) {
+                state.ThinkingSignatureBuilder.Append(signature);
+            }
+        }
     }
 
     private IEnumerable<CompletionChunk> HandleContentBlockStop(JsonObject obj) {
@@ -147,6 +167,18 @@ internal sealed class AnthropicStreamParser {
         if (state.Type == "tool_use") {
             var toolCall = CreateToolCallRequest(state);
             yield return CompletionChunk.FromToolCall(toolCall);
+        }
+        else if (state.Type == "thinking") {
+            var thinkingText = state.ThinkingTextBuilder.ToString();
+            var signature = state.ThinkingSignatureBuilder.ToString();
+            var payloadBytes = AnthropicThinkingPayloadCodec.Encode(thinkingText, string.IsNullOrEmpty(signature) ? null : signature);
+
+            yield return CompletionChunk.FromThinking(
+                new ThinkingChunk(
+                    OpaquePayload: payloadBytes,
+                    PlainTextForDebug: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
+                )
+            );
         }
 
         _contentBlocks.Remove(index);
@@ -330,5 +362,7 @@ internal sealed class AnthropicStreamParser {
         public string ToolUseId { get; set; } = string.Empty;
         public string ToolName { get; set; } = string.Empty;
         public StringBuilder ToolInputJsonBuilder { get; } = new();
+        public StringBuilder ThinkingTextBuilder { get; } = new();
+        public StringBuilder ThinkingSignatureBuilder { get; } = new();
     }
 }

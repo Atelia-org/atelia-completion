@@ -212,6 +212,13 @@ prototypes/Completion/
 - 必须等 `content_block_stop` 才能完整解析
 - 如果 LLM 一直输出非法 JSON，要等整块结束才能报错
 
+### Turn 锁定约束在 Agent.Core 执行
+
+- Completion 层不感知 "Turn"概念；`ICompletionClient.StreamCompletionAsync` 是无状态的
+- Turn 内 `LlmProfile` 锁定的不变量与校验全部位于 `Agent.Core/AgentEngine.cs`
+- 详见 [docs/Agent/memory-notebook.md](../Agent/memory-notebook.md) 的"Turn 与 LlmProfile 锁定"小节
+- 该约束为后续 thinking/reasoning 内容的"窗口化注入"奠定前提（仅当前 Turn 注入加密 thinking，旧 Turn 仅作历史真相记录）
+
 ---
 
 ## 与邻居项目的关系

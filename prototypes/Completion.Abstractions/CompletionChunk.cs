@@ -40,7 +40,7 @@ public sealed record CompletionChunk {
 /// <summary>
 /// StreamParser 完成一个 thinking content block 的聚合后产出。
 /// <see cref="OpaquePayload"/> 由 parser 直接以 provider-native bytes 形式构造，
-/// Agent.Core / <c>CompletionAccumulator</c> 不参与解释——这条边界是"为什么 Agent.Core
+/// Agent.Core / <c>CompletionChunkAggregation.AggregateAsync(...)</c> 不参与解释——这条边界是"为什么 Agent.Core
 /// 不会被 provider 细节污染"的真正担保。详见 <c>docs/Agent/Thinking-Replay-Design.md §5.2</c>。
 /// </summary>
 /// <param name="OpaquePayload">Provider-native 序列化字节，由 converter 反向回灌时按需反序列化。</param>
@@ -49,4 +49,3 @@ public sealed record ThinkingChunk(
     System.ReadOnlyMemory<byte> OpaquePayload,
     string? PlainTextForDebug = null
 );
-

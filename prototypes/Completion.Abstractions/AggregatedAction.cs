@@ -14,36 +14,34 @@ namespace Atelia.Completion.Abstractions;
 /// 应当 <b>包装</b> 本类型，而不是替代或扩展。
 /// </para>
 /// </summary>
-/// <param name="Blocks">按 provider 实际生成顺序保存的内容块；至少包含一个块（即使为空文本）。</param>
+/// <param name="Message">Canonical action 消息体；<see cref="ActionMessage.Blocks"/> 已在构造时冻结。</param>
 /// <param name="Invocation">本次调用的来源描述符；<see cref="ActionBlock.Thinking.Origin"/> 与之对齐。</param>
 /// <param name="Usage">流末尾结算的 token 用量；provider 未返回时为 <see langword="null"/>。</param>
 /// <param name="Errors">流中通过 <see cref="CompletionChunkKind.Error"/> 报告的错误文本；无错误时为 <see langword="null"/>。</param>
 public sealed record AggregatedAction : IActionMessage {
-    private static readonly IReadOnlyList<ActionBlock> EmptyBlocks = FreezeList(Array.Empty<ActionBlock>());
-
-    private IReadOnlyList<ActionBlock> _blocks = EmptyBlocks;
+    private ActionMessage _message = null!;
     private CompletionDescriptor _invocation = null!;
     private IReadOnlyList<string>? _errors;
 
+    /// <summary>
+    /// 创建 <see cref="AggregatedAction"/>。
+    /// </summary>
     public AggregatedAction(
-        IReadOnlyList<ActionBlock> blocks,
+        ActionMessage message,
         CompletionDescriptor invocation,
         TokenUsage? usage = null,
         IReadOnlyList<string>? errors = null
     ) {
-        Blocks = blocks;
-        Invocation = invocation;
+        Message = message ?? throw new ArgumentNullException(nameof(message));
+        Invocation = invocation ?? throw new ArgumentNullException(nameof(invocation));
         Usage = usage;
         Errors = errors;
     }
 
-    /// <summary>按 provider 实际生成顺序保存的内容块；构造后会冻结为只读快照。</summary>
-    public IReadOnlyList<ActionBlock> Blocks {
-        get => _blocks;
-        init {
-            _blocks = FreezeList(value ?? throw new ArgumentNullException(nameof(value)));
-            _content = null; // 缓存失效：with 表达式可能复制旧缓存
-        }
+    /// <summary>Canonical action 消息体。</summary>
+    public ActionMessage Message {
+        get => _message;
+        init => _message = value ?? throw new ArgumentNullException(nameof(value));
     }
 
     /// <summary>本次调用的来源描述符；<see cref="ActionBlock.Thinking.Origin"/> 与之对齐。</summary>
@@ -61,22 +59,18 @@ public sealed record AggregatedAction : IActionMessage {
         init => _errors = value is null ? null : FreezeList(value);
     }
 
+    // ── IActionMessage façade ── converter / 下游代码零改动 ──
+
+    /// <inheritdoc />
+    public IReadOnlyList<ActionBlock> Blocks => Message.Blocks;
+
     /// <inheritdoc />
     public HistoryMessageKind Kind => HistoryMessageKind.Action;
 
     /// <summary>
-    /// Lossy derived view：由所有 <see cref="ActionBlock.Text"/> 块按顺序拼接派生。非真相源——优先使用 <see cref="Blocks"/>。
+    /// Lossy derived view，委托给 <see cref="Message"/>。
     /// </summary>
-    public string GetFlattenedText() => _content ??= BuildContent(Blocks);
-    private string? _content;
-
-    private static string BuildContent(IReadOnlyList<ActionBlock> blocks) {
-        var sb = new StringBuilder();
-        foreach (var block in blocks) {
-            if (block is ActionBlock.Text text) { sb.Append(text.Content); }
-        }
-        return sb.ToString();
-    }
+    public string GetFlattenedText() => Message.GetFlattenedText();
 
     private static IReadOnlyList<T> FreezeList<T>(IReadOnlyList<T> items)
         => items.Count == 0 ? Array.AsReadOnly(Array.Empty<T>()) : Array.AsReadOnly(items.ToArray());
@@ -171,6 +165,7 @@ public static class CompletionChunkAggregation {
             blocks.Add(new ActionBlock.Text(string.Empty));
         }
 
-        return new AggregatedAction(blocks, invocation, tokenUsage, errors);
+        var message = new ActionMessage(blocks);
+        return new AggregatedAction(message, invocation, tokenUsage, errors);
     }
 }

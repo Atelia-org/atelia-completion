@@ -46,10 +46,21 @@ public interface IActionMessage : IHistoryMessage {
 /// 仅用于日志、调试和兼容性断言。
 /// </para>
 /// </remarks>
-/// <param name="Blocks">按 provider 实际生成顺序保存的内容块。</param>
-public sealed record ActionMessage(
-    IReadOnlyList<ActionBlock> Blocks
-) : IActionMessage {
+/// <param name="blocks">按 provider 实际生成顺序保存的内容块；构造时冻结为只读快照。</param>
+public sealed record ActionMessage : IActionMessage {
+    /// <summary>
+    /// 按 provider 实际生成顺序保存的内容块，构造后冻结为只读快照。
+    /// </summary>
+    public IReadOnlyList<ActionBlock> Blocks { get; }
+
+    /// <summary>
+    /// 创建 <see cref="ActionMessage"/> 并冻结 <paramref name="blocks"/>。
+    /// </summary>
+    public ActionMessage(IReadOnlyList<ActionBlock> blocks) {
+        ArgumentNullException.ThrowIfNull(blocks);
+        Blocks = Array.AsReadOnly(blocks.ToArray());
+    }
+
     /// <inheritdoc />
     public HistoryMessageKind Kind => HistoryMessageKind.Action;
 }

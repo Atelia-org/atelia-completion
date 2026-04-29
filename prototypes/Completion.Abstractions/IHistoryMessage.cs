@@ -30,6 +30,31 @@ public interface IActionMessage : IHistoryMessage {
 }
 
 /// <summary>
+/// Canonical assistant/action 消息 DTO。只表达"发给模型的 assistant 内容长什么样"，
+/// 是 <see cref="IActionMessage"/> 的最小具体实现。
+/// </summary>
+/// <remarks>
+/// 与 <see cref="AggregatedAction"/>（流聚合快照，带 Invocation/Usage/Errors）不同，
+/// 本类型是无 invocation metadata 的纯消息体。适用于：
+/// <list type="bullet">
+/// <item>JSON/XML fixture 序列化与反序列化（测试数据集、跑分输入）</item>
+/// <item>provider converter 的纯 action 回灌输入</item>
+/// <item>投影层（Agent.Core）过滤 thinking block 后的产出</item>
+/// </list>
+/// <para>
+/// <see cref="Blocks"/> 是唯一真相源。<see cref="GetFlattenedText"/> 是 lossy derived view，
+/// 仅用于日志、调试和兼容性断言。
+/// </para>
+/// </remarks>
+/// <param name="Blocks">按 provider 实际生成顺序保存的内容块。</param>
+public sealed record ActionMessage(
+    IReadOnlyList<ActionBlock> Blocks
+) : IActionMessage {
+    /// <inheritdoc />
+    public HistoryMessageKind Kind => HistoryMessageKind.Action;
+}
+
+/// <summary>
 /// 观测消息的基础形态。它将环境反馈（RL 术语）与聊天/助手（Chat/Assistant）场景中的系统或工具消息进行统一编码。
 /// 为兼容不同来源的观测内容，引入统一的文本字段，可按需拼接通知增量与窗口状态等信息。
 /// </summary>
@@ -87,3 +112,22 @@ public enum HistoryMessageKind {
 /// <param name="CachedPromptTokens">可选的、从缓存中命中的 Token 数量，反映了增量上下文所带来的成本节省。</param>
 public record TokenUsage(int PromptTokens, int CompletionTokens, int? CachedPromptTokens = null);
 // Gemini的ThinkingSignature问题，可能GTP-5也有，加密后的Thinking文本，跨模型不通用。源于公共安全审查，模型思考时的输出难以复合公共安全标准，所以加密了。
+
+/// <summary>
+/// 扩展方法，提供对 <see cref="IActionMessage"/> 的 lossy 派生视图。
+/// </summary>
+public static class ActionMessageExtensions {
+    /// <summary>
+    /// 将 <see cref="IActionMessage.Blocks"/> 中所有 <see cref="ActionBlock.Text"/> 块
+    /// 按顺序拼接为单条字符串（无分隔符）。
+    /// </summary>
+    /// <remarks>
+    /// <b>这是 lossy view，不是真相源。</b>
+    /// 会丢失 text/tool-call/thinking 的边界和 interleaving 信息。
+    /// 仅用于日志、调试和兼容性断言。任何依赖结构边界的下游应直接读取 <see cref="IActionMessage.Blocks"/>。
+    /// </remarks>
+    public static string GetFlattenedText(this IActionMessage message)
+        => string.Concat(
+            message.Blocks.OfType<ActionBlock.Text>().Select(static b => b.Content)
+        );
+}

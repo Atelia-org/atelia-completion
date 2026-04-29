@@ -14,19 +14,19 @@ public interface IHistoryMessage {
 }
 
 /// <summary>
-/// 表示由 Agent 发出的一个动作。
-/// 该接口将聊天（Chat）范式中对自然语言和工具调用的编码，统一为强化学习（RL）中的动作输出语义。
+/// Provider-neutral 的富 action message 接口，供能识别有序内容块的 converter 使用。
+/// 这里只表达“要发给模型的 assistant 内容长什么样”，不承载 Agent 框架私有的 Turn / Invocation 元信息。
 /// </summary>
 public interface IActionMessage : IHistoryMessage {
-    /// <summary>
-    /// 模型生成的自然语言文本或命令，代表了策略（Policy）在当前历史状态下的决策输出。
-    /// </summary>
-    string Content { get; }
+    IReadOnlyList<ActionBlock> Blocks { get; }
 
     /// <summary>
-    /// 若模型决策中包含工具调用，此属性提供解析后的结构化信息，便于在环境中执行并计算其效果。
+    /// 从 <see cref="Blocks"/> 中无损派生的工具调用视图。默认实现遍历 <see cref="ActionBlock.ToolCall"/> 块。
     /// </summary>
-    IReadOnlyList<ParsedToolCall> ToolCalls { get; }
+    IReadOnlyList<ParsedToolCall> ToolCalls => Blocks
+        .OfType<ActionBlock.ToolCall>()
+        .Select(static block => block.Call)
+        .ToArray();
 }
 
 /// <summary>

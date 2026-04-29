@@ -6,7 +6,7 @@ using System.Threading;
 namespace Atelia.Completion.Abstractions;
 
 /// <summary>
-/// 一次 LLM 调用的流式 chunk 被聚合后的中性快照。直接实现 <see cref="IRichActionMessage"/>，
+/// 一次 LLM 调用的流式 chunk 被聚合后的中性快照。直接实现 <see cref="IActionMessage"/>，
 /// 可作为 <c>CompletionRequest.Context</c> 的下一轮 action 历史回灌。
 /// <para>
 /// 这是 <c>IAsyncEnumerable&lt;CompletionChunk&gt;.AggregateAsync(...)</c> 的标准产出。
@@ -18,7 +18,7 @@ namespace Atelia.Completion.Abstractions;
 /// <param name="Invocation">本次调用的来源描述符；<see cref="ActionBlock.Thinking.Origin"/> 与之对齐。</param>
 /// <param name="Usage">流末尾结算的 token 用量；provider 未返回时为 <see langword="null"/>。</param>
 /// <param name="Errors">流中通过 <see cref="CompletionChunkKind.Error"/> 报告的错误文本；无错误时为 <see langword="null"/>。</param>
-public sealed record AggregatedAction : IRichActionMessage {
+public sealed record AggregatedAction : IActionMessage {
     private static readonly IReadOnlyList<ActionBlock> EmptyBlocks = FreezeList(Array.Empty<ActionBlock>());
 
     private IReadOnlyList<ActionBlock> _blocks = EmptyBlocks;
@@ -40,7 +40,10 @@ public sealed record AggregatedAction : IRichActionMessage {
     /// <summary>按 provider 实际生成顺序保存的内容块；构造后会冻结为只读快照。</summary>
     public IReadOnlyList<ActionBlock> Blocks {
         get => _blocks;
-        init => _blocks = FreezeList(value ?? throw new ArgumentNullException(nameof(value)));
+        init {
+            _blocks = FreezeList(value ?? throw new ArgumentNullException(nameof(value)));
+            _content = null; // 缓存失效：with 表达式可能复制旧缓存
+        }
     }
 
     /// <summary>本次调用的来源描述符；<see cref="ActionBlock.Thinking.Origin"/> 与之对齐。</summary>
@@ -61,15 +64,11 @@ public sealed record AggregatedAction : IRichActionMessage {
     /// <inheritdoc />
     public HistoryMessageKind Kind => HistoryMessageKind.Action;
 
-    /// <inheritdoc />
-    /// <remarks>由所有 <see cref="ActionBlock.Text"/> 块按顺序拼接派生；非真相源。</remarks>
-    public string Content => _content ??= BuildContent(Blocks);
+    /// <summary>
+    /// Lossy derived view：由所有 <see cref="ActionBlock.Text"/> 块按顺序拼接派生。非真相源——优先使用 <see cref="Blocks"/>。
+    /// </summary>
+    public string GetFlattenedText() => _content ??= BuildContent(Blocks);
     private string? _content;
-
-    /// <inheritdoc />
-    /// <remarks>由所有 <see cref="ActionBlock.ToolCall"/> 块按顺序抽取派生；非真相源。</remarks>
-    public IReadOnlyList<ParsedToolCall> ToolCalls => _toolCalls ??= BuildToolCalls(Blocks);
-    private IReadOnlyList<ParsedToolCall>? _toolCalls;
 
     private static string BuildContent(IReadOnlyList<ActionBlock> blocks) {
         var sb = new StringBuilder();
@@ -78,9 +77,6 @@ public sealed record AggregatedAction : IRichActionMessage {
         }
         return sb.ToString();
     }
-
-    private static IReadOnlyList<ParsedToolCall> BuildToolCalls(IReadOnlyList<ActionBlock> blocks)
-        => FreezeList(blocks.OfType<ActionBlock.ToolCall>().Select(b => b.Call).ToArray());
 
     private static IReadOnlyList<T> FreezeList<T>(IReadOnlyList<T> items)
         => items.Count == 0 ? Array.AsReadOnly(Array.Empty<T>()) : Array.AsReadOnly(items.ToArray());

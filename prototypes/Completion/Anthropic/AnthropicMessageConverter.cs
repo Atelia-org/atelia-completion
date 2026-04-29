@@ -28,10 +28,6 @@ internal static class AnthropicMessageConverter {
                     BuildObservationMessage(input, messages, pendingToolCallIds);
                     break;
 
-                case IRichActionMessage richOutput:
-                    BuildActionMessage(richOutput, messages, pendingToolCallIds);
-                    break;
-
                 case IActionMessage output:
                     BuildActionMessage(output, messages, pendingToolCallIds);
                     break;
@@ -186,50 +182,7 @@ internal static class AnthropicMessageConverter {
     }
 
     private static void BuildActionMessage(IActionMessage output, List<AnthropicMessage> messages, List<string> pendingToolCallIds) {
-        EnsureNoPendingToolCalls(pendingToolCallIds, $"assistant action before tool results content={output.Content}");
-
-        var blocks = new List<AnthropicContentBlock>();
-
-        // 文本内容
-        var content = output.Content;
-        if (!string.IsNullOrWhiteSpace(content)) {
-            blocks.Add(new AnthropicTextBlock { Text = content });
-        }
-
-        // 工具调用
-        foreach (var toolCall in output.ToolCalls) {
-            var toolCallId = toolCall.ToolCallId;
-            var inputJson = BuildToolCallHistory(toolCall);
-
-            blocks.Add(
-                new AnthropicToolUseBlock {
-                    Id = toolCallId,
-                    Name = toolCall.ToolName,
-                    Input = inputJson
-                }
-            );
-
-            pendingToolCallIds.Add(toolCallId);
-        }
-
-        // 既无文本又无工具调用的 Action 是上游构造历史时的 bug——它在 Anthropic 协议下既无法表达
-        // 也会被 API 拒绝（空 text block）。早暴露而非偷偷垫一个空块。
-        if (blocks.Count == 0) {
-            throw new InvalidOperationException(
-                "Action message has no text content and no tool calls; nothing to send as assistant turn."
-            );
-        }
-
-        messages.Add(
-            new AnthropicMessage {
-                Role = "assistant",
-                Content = blocks
-            }
-        );
-    }
-
-    private static void BuildActionMessage(IRichActionMessage output, List<AnthropicMessage> messages, List<string> pendingToolCallIds) {
-        EnsureNoPendingToolCalls(pendingToolCallIds, $"assistant rich action before tool results blockCount={output.Blocks.Count}");
+        EnsureNoPendingToolCalls(pendingToolCallIds, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
         var blocks = new List<AnthropicContentBlock>(output.Blocks.Count);
 

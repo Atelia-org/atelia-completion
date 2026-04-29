@@ -1,14 +1,6 @@
 namespace Atelia.Completion.Abstractions;
 
 /// <summary>
-/// Provider-neutral 的富 action message 接口，供能识别有序内容块的 converter 使用。
-/// 这里只表达“要发给模型的 assistant 内容长什么样”，不承载 Agent 框架私有的 Turn / Invocation 元信息。
-/// </summary>
-public interface IRichActionMessage : IActionMessage {
-    IReadOnlyList<ActionBlock> Blocks { get; }
-}
-
-/// <summary>
 /// Assistant message 的有序内容块基类。开放式 sum type：
 /// 当前 v1 已识别的子类型为 <see cref="Text"/> / <see cref="ToolCall"/> / <see cref="Thinking"/>；
 /// 未来扩展点（v1 不实现）见 <c>docs/Agent/Thinking-Replay-Design.md §9</c>：

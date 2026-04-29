@@ -194,17 +194,37 @@ internal static class OpenAIChatMessageConverter {
     }
 
     private static void BuildActionMessage(IActionMessage output, List<OpenAIChatMessage> messages, ProjectionState state) {
-        EnsureNoPendingToolCalls(state, $"assistant action before tool results content={output.Content}");
+        EnsureNoPendingToolCalls(state, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
-        var toolCalls = BuildToolCallHistory(output.ToolCalls);
-        var content = output.Content;
+        // 从 Blocks 提取：Text 块拼成 content；ToolCall 块提取为 toolCalls；Thinking 块静默跳过
+        // （OpenAI Chat Completions 协议不支持这些富块类型）。
+        var contentBuilder = new System.Text.StringBuilder();
+        var toolCallList = new List<ParsedToolCall>(output.Blocks.Count);
 
-        if (toolCalls is { Count: > 0 } && string.IsNullOrEmpty(content)) {
+        foreach (var block in output.Blocks) {
+            switch (block) {
+                case ActionBlock.Text textBlock:
+                    contentBuilder.Append(textBlock.Content);
+                    break;
+                case ActionBlock.ToolCall toolCallBlock:
+                    toolCallList.Add(toolCallBlock.Call);
+                    break;
+                case ActionBlock.Thinking:
+                    // Protocol limitation: OpenAI 无 thinking 等效字段，静默跳过。
+                    break;
+            }
+        }
+
+        var content = contentBuilder.ToString();
+
+        if (toolCallList.Count > 0 && string.IsNullOrEmpty(content)) {
             content = null;
         }
-        else if (toolCalls is null && content is null) {
+        else if (toolCallList.Count == 0 && content.Length == 0) {
             content = string.Empty;
         }
+
+        var toolCalls = toolCallList.Count > 0 ? BuildToolCallHistory(toolCallList) : null;
 
         messages.Add(
             new OpenAIChatMessage {
@@ -214,7 +234,7 @@ internal static class OpenAIChatMessageConverter {
             }
         );
 
-        state.SetPendingToolCalls(toolCalls);
+        state.SetPendingToolCalls(toolCalls is { Count: > 0 } ? toolCalls : null);
     }
 
     private static List<OpenAIChatToolCall>? BuildToolCallHistory(IReadOnlyList<ParsedToolCall> toolCalls) {

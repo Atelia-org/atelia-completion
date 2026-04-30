@@ -8,6 +8,9 @@ using Atelia.Diagnostics;
 
 namespace Atelia.Completion.OpenAI;
 
+/// <summary>
+/// 解析 OpenAI Chat SSE 流式响应事件，直接向 <see cref="CompletionAggregator"/> 喂入增量数据。
+/// </summary>
 internal sealed class OpenAIChatStreamParser {
     private const string DebugCategory = "Provider";
 
@@ -26,82 +29,63 @@ internal sealed class OpenAIChatStreamParser {
     ) {
         _toolDefinitions = new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase);
         _whitespaceContentMode = whitespaceContentMode;
-
-        if (!toolDefinitions.IsDefaultOrEmpty) {
-            foreach (var definition in toolDefinitions) {
-                if (_toolDefinitions.ContainsKey(definition.Name)) {
-                    DebugUtil.Warning(DebugCategory, $"[OpenAI] Duplicate tool definition ignored name={definition.Name}");
-                    continue;
-                }
-
-                _toolDefinitions[definition.Name] = definition;
-            }
-        }
+        StreamParserToolUtility.LoadToolDefinitions(toolDefinitions, _toolDefinitions, "OpenAI");
     }
 
-    public IEnumerable<CompletionChunk> ParseEvent(string json) {
+    public void ParseEvent(string json, CompletionAggregator aggregator) {
         JsonNode? node;
         try {
             node = JsonNode.Parse(json);
         }
         catch (JsonException ex) {
             DebugUtil.Warning(DebugCategory, $"[OpenAI] Failed to parse event: {ex.Message}", ex);
-            yield break;
+            return;
         }
 
-        if (node is not JsonObject obj) { yield break; }
+        if (node is not JsonObject obj) { return; }
 
         if (obj["error"] is JsonObject error) {
             var errorMessage = error["message"]?.GetValue<string>() ?? "Unknown error";
             DebugUtil.Warning(DebugCategory, $"[OpenAI] API error: {errorMessage}");
-            yield return CompletionChunk.FromError(errorMessage);
-            yield break;
+            aggregator.AppendError(errorMessage);
+            return;
         }
 
         if (obj["usage"] is JsonObject usage) {
             UpdateUsage(usage);
         }
 
-        if (obj["choices"] is not JsonArray choices) { yield break; }
+        if (obj["choices"] is not JsonArray choices) { return; }
 
         foreach (var choiceNode in choices) {
             if (choiceNode is not JsonObject choice) { continue; }
-
-            foreach (var delta in HandleChoice(choice)) {
-                yield return delta;
-            }
+            HandleChoice(choice, aggregator);
         }
     }
 
-    public IEnumerable<CompletionChunk> Complete() {
-        foreach (var delta in FlushPendingToolCalls()) {
-            yield return delta;
-        }
+    public void Complete(CompletionAggregator aggregator) {
+        FlushPendingToolCalls(aggregator);
     }
 
     public TokenUsage? GetFinalUsage() => _usage;
 
-    private IEnumerable<CompletionChunk> HandleChoice(JsonObject choice) {
+    private void HandleChoice(JsonObject choice, CompletionAggregator aggregator) {
         if (choice["delta"] is JsonObject delta) {
-            foreach (var chunk in HandleDelta(delta)) {
-                yield return chunk;
-            }
+            HandleDelta(delta, aggregator);
         }
 
         var finishReason = choice["finish_reason"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(finishReason)) {
-            foreach (var chunk in FlushPendingToolCalls()) {
-                yield return chunk;
-            }
+            FlushPendingToolCalls(aggregator);
         }
     }
 
-    private IEnumerable<CompletionChunk> HandleDelta(JsonObject delta) {
+    private void HandleDelta(JsonObject delta, CompletionAggregator aggregator) {
         var hasToolCallsInCurrentDelta = delta["tool_calls"] is JsonArray { Count: > 0 };
         var content = delta["content"]?.GetValue<string>();
         if (!string.IsNullOrEmpty(content)) {
             if (!ShouldIgnoreContentDelta(content, hasToolCallsInCurrentDelta)) {
-                yield return CompletionChunk.FromContent(content);
+                aggregator.AppendContent(content);
             }
         }
 
@@ -152,12 +136,12 @@ internal sealed class OpenAIChatStreamParser {
         }
     }
 
-    private IEnumerable<CompletionChunk> FlushPendingToolCalls() {
-        if (_toolCalls.Count == 0) { yield break; }
+    private void FlushPendingToolCalls(CompletionAggregator aggregator) {
+        if (_toolCalls.Count == 0) { return; }
 
         foreach (var index in _toolCalls.Keys.OrderBy(static key => key).ToArray()) {
             var state = _toolCalls[index];
-            yield return CompletionChunk.FromToolCall(CreateToolCall(state));
+            aggregator.AppendToolCall(CreateToolCall(state));
         }
 
         _toolCalls.Clear();
@@ -201,80 +185,8 @@ internal sealed class OpenAIChatStreamParser {
         return BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
     }
 
-    private static ParsedToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText) {
-        IReadOnlyDictionary<string, object?>? arguments = null;
-        IReadOnlyDictionary<string, string>? rawArguments = null;
-        string? parseError = null;
-
-        try {
-            using var document = JsonDocument.Parse(rawArgumentsText);
-            if (document.RootElement.ValueKind != JsonValueKind.Object) {
-                parseError = $"Arguments must be a JSON object but was {document.RootElement.ValueKind}.";
-            }
-            else {
-                var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                var rawBuilder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var property in document.RootElement.EnumerateObject()) {
-                    rawBuilder[property.Name] = ExtractRawArgument(property.Value);
-                    dict[property.Name] = ConvertJsonElement(property.Value);
-                }
-                arguments = dict;
-                rawArguments = rawBuilder.ToImmutable();
-            }
-        }
-        catch (JsonException ex) {
-            parseError = $"JSON parse failed: {ex.Message}";
-        }
-
-        return new ParsedToolCall(
-            ToolName: toolName,
-            ToolCallId: toolCallId,
-            RawArguments: rawArguments,
-            Arguments: arguments,
-            ParseError: parseError,
-            ParseWarning: "tool_definition_missing"
-        );
-    }
-
-    private static string ExtractRawArgument(JsonElement element) {
-        return element.ValueKind switch {
-            JsonValueKind.String => element.GetString() ?? string.Empty,
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
-            JsonValueKind.Null => "null",
-            _ => element.GetRawText()
-        };
-    }
-
-    private static object? ConvertJsonElement(JsonElement element) {
-        switch (element.ValueKind) {
-            case JsonValueKind.Object: {
-                var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                foreach (var property in element.EnumerateObject()) {
-                    dict[property.Name] = ConvertJsonElement(property.Value);
-                }
-                return dict;
-            }
-            case JsonValueKind.Array: {
-                var list = new List<object?>();
-                foreach (var item in element.EnumerateArray()) {
-                    list.Add(ConvertJsonElement(item));
-                }
-                return list;
-            }
-            case JsonValueKind.String:
-                return element.GetString();
-            case JsonValueKind.Number:
-                if (element.TryGetInt64(out var longValue)) { return longValue; }
-                if (element.TryGetDouble(out var doubleValue)) { return doubleValue; }
-                return element.GetDecimal();
-            case JsonValueKind.True:
-            case JsonValueKind.False:
-                return element.GetBoolean();
-            default:
-                return null;
-        }
-    }
+    private static ParsedToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
+        => StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
 
     private sealed class ToolCallState {
         public ToolCallState(int index) {

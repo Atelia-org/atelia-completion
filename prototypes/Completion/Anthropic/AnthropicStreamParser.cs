@@ -9,7 +9,7 @@ using Atelia.Completion.Utils;
 namespace Atelia.Completion.Anthropic;
 
 /// <summary>
-/// 解析 Anthropic SSE 流式响应事件。
+/// 解析 Anthropic SSE 流式响应事件，直接向 <see cref="CompletionAggregator"/> 喂入增量数据。
 /// 事件类型：message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop
 /// </summary>
 internal sealed class AnthropicStreamParser {
@@ -28,46 +28,51 @@ internal sealed class AnthropicStreamParser {
 
     public AnthropicStreamParser(ImmutableArray<ToolDefinition> toolDefinitions) {
         _toolDefinitions = new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase);
-
-        if (!toolDefinitions.IsDefaultOrEmpty) {
-            foreach (var definition in toolDefinitions) {
-                if (_toolDefinitions.ContainsKey(definition.Name)) {
-                    DebugUtil.Warning(DebugCategory, $"[Anthropic] Duplicate tool definition ignored name={definition.Name}");
-                    continue;
-                }
-
-                _toolDefinitions[definition.Name] = definition;
-            }
-        }
+        StreamParserToolUtility.LoadToolDefinitions(toolDefinitions, _toolDefinitions, "Anthropic");
     }
 
-    public IEnumerable<CompletionChunk> ParseEvent(string json) {
+    public void ParseEvent(string json, CompletionAggregator aggregator) {
         JsonNode? node;
         try {
             node = JsonNode.Parse(json);
         }
         catch (JsonException ex) {
             DebugUtil.Warning(DebugCategory, $"[Anthropic] Failed to parse event: {ex.Message}", ex);
-            yield break;
+            return;
         }
 
-        if (node is not JsonObject obj) { yield break; }
+        if (node is not JsonObject obj) { return; }
 
         var eventType = obj["type"]?.GetValue<string>();
-        if (eventType is null) { yield break; }
+        if (eventType is null) { return; }
 
-        foreach (var delta in eventType switch {
-            "message_start" => HandleMessageStart(obj),
-            "content_block_start" => HandleContentBlockStart(obj),
-            "content_block_delta" => HandleContentBlockDelta(obj),
-            "content_block_stop" => HandleContentBlockStop(obj),
-            "message_delta" => HandleMessageDelta(obj),
-            "message_stop" => HandleMessageStop(obj),
-            "ping" => Enumerable.Empty<CompletionChunk>(),
-            "error" => HandleError(obj),
-            _ => HandleUnknownEvent(eventType)
-        }) {
-            yield return delta;
+        switch (eventType) {
+            case "message_start":
+                HandleMessageStart(obj);
+                break;
+            case "content_block_start":
+                HandleContentBlockStart(obj);
+                break;
+            case "content_block_delta":
+                HandleContentBlockDelta(obj, aggregator);
+                break;
+            case "content_block_stop":
+                HandleContentBlockStop(obj, aggregator);
+                break;
+            case "message_delta":
+                HandleMessageDelta(obj);
+                break;
+            case "message_stop":
+                HandleMessageStop(obj);
+                break;
+            case "ping":
+                break;
+            case "error":
+                HandleError(obj, aggregator);
+                break;
+            default:
+                HandleUnknownEvent(eventType);
+                break;
         }
     }
 
@@ -85,21 +90,19 @@ internal sealed class AnthropicStreamParser {
         );
     }
 
-    private IEnumerable<CompletionChunk> HandleMessageStart(JsonObject obj) {
+    private void HandleMessageStart(JsonObject obj) {
         // message_start 包含初始 usage
         if (obj["message"]?["usage"] is JsonObject usage) {
             UpdateUsage(usage);
         }
-
-        yield break;
     }
 
-    private IEnumerable<CompletionChunk> HandleContentBlockStart(JsonObject obj) {
+    private void HandleContentBlockStart(JsonObject obj) {
         var index = obj["index"]?.GetValue<int>() ?? -1;
-        if (index < 0) { yield break; }
+        if (index < 0) { return; }
 
         var contentBlock = obj["content_block"] as JsonObject;
-        if (contentBlock is null) { yield break; }
+        if (contentBlock is null) { return; }
 
         var blockType = contentBlock["type"]?.GetValue<string>();
 
@@ -121,22 +124,21 @@ internal sealed class AnthropicStreamParser {
         }
 
         _contentBlocks[index] = state;
-        yield break;
     }
 
-    private IEnumerable<CompletionChunk> HandleContentBlockDelta(JsonObject obj) {
+    private void HandleContentBlockDelta(JsonObject obj, CompletionAggregator aggregator) {
         var index = obj["index"]?.GetValue<int>() ?? -1;
-        if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { yield break; }
+        if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { return; }
 
         var delta = obj["delta"] as JsonObject;
-        if (delta is null) { yield break; }
+        if (delta is null) { return; }
 
         var deltaType = delta["type"]?.GetValue<string>();
 
         if (deltaType == "text_delta") {
             var text = delta["text"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(text)) {
-                yield return CompletionChunk.FromContent(text);
+                aggregator.AppendContent(text);
             }
         }
         else if (deltaType == "input_json_delta") {
@@ -159,54 +161,47 @@ internal sealed class AnthropicStreamParser {
         }
     }
 
-    private IEnumerable<CompletionChunk> HandleContentBlockStop(JsonObject obj) {
+    private void HandleContentBlockStop(JsonObject obj, CompletionAggregator aggregator) {
         var index = obj["index"]?.GetValue<int>() ?? -1;
-        if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { yield break; }
+        if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { return; }
 
-        // 如果是工具调用块，生成 ToolCallRequest
         if (state.Type == "tool_use") {
             var toolCall = CreateToolCallRequest(state);
-            yield return CompletionChunk.FromToolCall(toolCall);
+            aggregator.AppendToolCall(toolCall);
         }
         else if (state.Type == "thinking") {
             var thinkingText = state.ThinkingTextBuilder.ToString();
             var signature = state.ThinkingSignatureBuilder.ToString();
             var payloadBytes = AnthropicThinkingPayloadCodec.Encode(thinkingText, string.IsNullOrEmpty(signature) ? null : signature);
 
-            yield return CompletionChunk.FromThinking(
-                new ThinkingChunk(
-                    OpaquePayload: payloadBytes,
-                    PlainTextForDebug: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
-                )
-            );
+            aggregator.AppendThinking(new ThinkingChunk(
+                OpaquePayload: payloadBytes,
+                PlainTextForDebug: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
+            ));
         }
 
         _contentBlocks.Remove(index);
     }
 
-    private IEnumerable<CompletionChunk> HandleMessageDelta(JsonObject obj) {
+    private void HandleMessageDelta(JsonObject obj) {
         // message_delta 包含 stop_reason 和增量 usage
         if (obj["usage"] is JsonObject usage) {
             UpdateUsage(usage);
         }
-
-        yield break;
     }
 
-    private IEnumerable<CompletionChunk> HandleMessageStop(JsonObject obj) {
+    private void HandleMessageStop(JsonObject obj) {
         // 消息结束，无额外处理
-        yield break;
     }
 
-    private IEnumerable<CompletionChunk> HandleError(JsonObject obj) {
+    private void HandleError(JsonObject obj, CompletionAggregator aggregator) {
         var error = obj["error"]?["message"]?.GetValue<string>() ?? "Unknown error";
         DebugUtil.Warning(DebugCategory, $"[Anthropic] API error: {error}");
-        yield return CompletionChunk.FromError(error);
+        aggregator.AppendError(error);
     }
 
-    private IEnumerable<CompletionChunk> HandleUnknownEvent(string eventType) {
+    private void HandleUnknownEvent(string eventType) {
         DebugUtil.Warning(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
-        yield break;
     }
 
     private void UpdateUsage(JsonObject usage) {
@@ -254,56 +249,8 @@ internal sealed class AnthropicStreamParser {
         return BuildToolCallWithoutSchema(state.ToolName, state.ToolUseId, rawArgumentsText);
     }
 
-    private static ParsedToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText) {
-        IReadOnlyDictionary<string, object?>? arguments = null;
-        IReadOnlyDictionary<string, string>? rawArguments = null;
-        string? parseError = null;
-        string? parseWarning = "tool_definition_missing";
-
-        try {
-            using var document = JsonDocument.Parse(rawArgumentsText);
-            if (document.RootElement.ValueKind == JsonValueKind.Object) {
-                var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                var rawBuilder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var property in document.RootElement.EnumerateObject()) {
-                    rawBuilder[property.Name] = ExtractRawArgument(property.Value);
-                    dict[property.Name] = ConvertJsonElement(property.Value);
-                }
-
-                arguments = dict;
-                rawArguments = rawBuilder.ToImmutable();
-            }
-            else {
-                parseError = $"Arguments must be a JSON object but was {document.RootElement.ValueKind}.";
-            }
-        }
-        catch (JsonException ex) {
-            parseError = $"JSON parse failed: {ex.Message}";
-        }
-
-        return new ParsedToolCall(
-            ToolName: toolName,
-            ToolCallId: toolCallId,
-            RawArguments: rawArguments,
-            Arguments: arguments,
-            ParseError: parseError,
-            ParseWarning: parseWarning
-        );
-    }
-
-    private static string ExtractRawArgument(JsonElement element) {
-        return element.ValueKind switch {
-            JsonValueKind.String => element.GetString() ?? string.Empty,
-            JsonValueKind.Number => element.GetRawText(),
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
-            JsonValueKind.Null => "null",
-            JsonValueKind.Object => element.GetRawText(),
-            JsonValueKind.Array => element.GetRawText(),
-            _ => element.GetRawText()
-        };
-    }
+    private static ParsedToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
+        => StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
 
     private static bool TryGetInt32(JsonObject obj, string propertyName, out int value) {
         value = default;
@@ -321,39 +268,6 @@ internal sealed class AnthropicStreamParser {
         }
         catch (InvalidOperationException) {
             return false;
-        }
-    }
-
-    private static object? ConvertJsonElement(JsonElement element) {
-        switch (element.ValueKind) {
-            case JsonValueKind.Object: {
-                var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                foreach (var property in element.EnumerateObject()) {
-                    dict[property.Name] = ConvertJsonElement(property.Value);
-                }
-                return dict;
-            }
-            case JsonValueKind.Array: {
-                var list = new List<object?>();
-                foreach (var item in element.EnumerateArray()) {
-                    list.Add(ConvertJsonElement(item));
-                }
-                return list;
-            }
-            case JsonValueKind.String:
-                return element.GetString();
-            case JsonValueKind.Number:
-                if (element.TryGetInt64(out var longValue)) { return longValue; }
-                if (element.TryGetDouble(out var doubleValue)) { return doubleValue; }
-                return element.GetDecimal();
-            case JsonValueKind.True:
-            case JsonValueKind.False:
-                return element.GetBoolean();
-            case JsonValueKind.Null:
-            case JsonValueKind.Undefined:
-                return null;
-            default:
-                return element.ToString();
         }
     }
 

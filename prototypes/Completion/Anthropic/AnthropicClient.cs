@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Atelia.Diagnostics;
@@ -45,9 +44,9 @@ public sealed class AnthropicClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}");
     }
 
-    public async IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(
+    public async Task<AggregatedAction> StreamCompletionAsync(
         CompletionRequest request,
-        [EnumeratorCancellation] CancellationToken cancellationToken
+        CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
@@ -60,6 +59,8 @@ public sealed class AnthropicClient : ICompletionClient {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
+        var invocation = CompletionDescriptor.From(this, request);
+        var aggregator = new CompletionAggregator(invocation);
         var parser = new AnthropicStreamParser(request.Tools);
         string? line;
 
@@ -72,18 +73,16 @@ public sealed class AnthropicClient : ICompletionClient {
             var json = line["data: ".Length..];
             if (json == "[DONE]") { break; }
 
-            var deltas = parser.ParseEvent(json);
-            foreach (var delta in deltas) {
-                yield return delta;
-            }
+            parser.ParseEvent(json, aggregator);
         }
 
         // 输出最终统计
         if (parser.GetFinalUsage() is { } usage) {
-            yield return CompletionChunk.FromTokenUsage(usage);
+            aggregator.AppendTokenUsage(usage);
         }
 
         DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");
+        return aggregator.Build();
     }
 
     private HttpRequestMessage CreateHttpRequest(AnthropicApiRequest apiRequest) {

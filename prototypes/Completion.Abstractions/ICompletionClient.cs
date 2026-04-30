@@ -1,5 +1,5 @@
-using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Atelia.Completion.Abstractions;
 
@@ -22,11 +22,15 @@ public interface ICompletionClient {
     string ApiSpecId { get; }
 
     /// <summary>
-    /// 以流式方式请求模型进行补全。
+    /// 请求模型进行补全，内部完成流式消费与聚合，返回完整的 <see cref="AggregatedAction"/>。
     /// 请求参数遵循为强化学习（RL）驱动的 Agent 设计的历史结构，方法内部负责将其转换为特定提供商所需的负载（Payload）。
+    /// <para>
+    /// <see cref="CompletionDescriptor"/> 由实现类根据 <see cref="Name"/>、<see cref="ApiSpecId"/> 和
+    /// <paramref name="request"/>.<see cref="CompletionRequest.ModelId"/> 自行构造，无需外部额外传入。
+    /// </para>
     /// </summary>
     /// <param name="request">包含历史记录、策略偏好和采样配置的补全请求。</param>
     /// <param name="cancellationToken">用于取消长时间流式推理操作的信号。</param>
-    /// <returns>一个异步枚举，按块返回补全结果，以便实时更新 Agent 的动作或价值评估。</returns>
-    IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken);
+    /// <returns>聚合后的完整动作快照，可直接作为下一轮历史的 <see cref="IActionMessage"/> 回灌。</returns>
+    Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CancellationToken cancellationToken);
 }

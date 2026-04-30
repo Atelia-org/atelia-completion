@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -47,9 +46,9 @@ public sealed class OpenAIChatClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[OpenAI] Client initialized base={_httpClient.BaseAddress}, dialect={_dialect.Name}");
     }
 
-    public async IAsyncEnumerable<CompletionChunk> StreamCompletionAsync(
+    public async Task<AggregatedAction> StreamCompletionAsync(
         CompletionRequest request,
-        [EnumeratorCancellation] CancellationToken cancellationToken
+        CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[OpenAI] Starting call model={request.ModelId}");
 
@@ -65,6 +64,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
+        var invocation = CompletionDescriptor.From(this, request);
+        var aggregator = new CompletionAggregator(invocation);
         var parser = new OpenAIChatStreamParser(request.Tools, _dialect.WhitespaceContentMode);
         string? line;
 
@@ -77,23 +78,20 @@ public sealed class OpenAIChatClient : ICompletionClient {
             var json = line["data: ".Length..];
             if (json == "[DONE]") { break; }
 
-            foreach (var delta in parser.ParseEvent(json)) {
-                yield return delta;
-            }
+            parser.ParseEvent(json, aggregator);
         }
 
-        foreach (var delta in parser.Complete()) {
-            yield return delta;
-        }
+        parser.Complete(aggregator);
 
         if (parser.GetFinalUsage() is { } usage) {
-            yield return CompletionChunk.FromTokenUsage(usage);
+            aggregator.AppendTokenUsage(usage);
         }
         else if (shouldExpectUsagePayload) {
             DebugUtil.Warning(DebugCategory, "[OpenAI] Stream completed without usage payload");
         }
 
         DebugUtil.Trace(DebugCategory, "[OpenAI] Stream completed");
+        return aggregator.Build();
     }
 
     private async Task<StreamingRequestResult> SendStreamingRequestAsync(OpenAIChatApiRequest apiRequest, CancellationToken cancellationToken) {

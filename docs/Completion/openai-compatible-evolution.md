@@ -2,7 +2,7 @@
 
 > **用途**：指导后续 LLM Agent 会话在 `OpenAI Chat Completions` 或更广义 `OpenAI-compatible` 端点遇到不兼容问题时，如何增量分析、设计与落地。
 > **适用范围**：`prototypes/Completion/OpenAI/*`
-> **最后更新**：2026-04-23
+> **最后更新**：2026-05-01
 
 ---
 
@@ -90,11 +90,6 @@ new OpenAIClient(
 
 当前最值得抽出来的差异点：
 
-- **Tool result projection**
-  - `ToolResultsMessage` 如何映射为 OpenAI `messages[]`
-- **Stream usage mode**
-  - 是否请求 `stream_options.include_usage`
-  - 若端点拒绝该字段，是否自动降级重试
 - **Whitespace content noise during tool streaming**
   - 是否忽略工具调用过程中夹带的纯空白 `delta.content`
 
@@ -132,9 +127,9 @@ new OpenAIClient(
 
 优先问：
 
-- 是不是“不支持 `stream_options.include_usage`”？
 - 是不是“要求 tool 消息必须紧邻 assistant tool_calls”？
 - 是不是“`finish_reason` 语义不同”？
+- 是不是“工具流中会夹带纯空白 `delta.content` 噪声”？
 
 而不是先问：
 
@@ -173,7 +168,7 @@ new OpenAIClient(
 优先测“行为契约”，例如：
 
 - tool 结果必须连续出现在 assistant tool_calls 之后
-- 请求 usage 时，端点若报 `stream_options` 不支持，则自动重试去掉字段
+- 工具调用流中的纯空白 `delta.content` 仅在特定 dialect 下被忽略
 - 非 2xx 错误必须带上响应 body
 
 ---
@@ -184,20 +179,14 @@ new OpenAIClient(
 
 OpenAI Chat Completions 语义下，`role="tool"` 消息必须与上一条 `assistant.tool_calls` 紧密对应。
 
-因此当前默认采用：
+因此当前实现固定采用：
 
 1. 先输出所有 `role="tool"` 消息
 2. 再把额外观测和执行错误合并为 trailing `user` 消息
 
 不要把 `ToolResultsMessage.Content` 插到 `tool` 消息前面。
 
-### 2. Stream usage 支持性不一致
-
-不同兼容端点对 `stream_options.include_usage` 的支持程度不同。
-
-因此需要把 usage 请求语义视为一个独立变化点，而不是写死在 client 主流程里。
-
-### 3. 工具流中的纯空白 `content` 噪声
+### 2. 工具流中的纯空白 `content` 噪声
 
 已观察到部分兼容端点会在 `tool_calls` 增量之间插入仅含空白的 `delta.content`（典型是单个换行）。
 
@@ -211,8 +200,6 @@ OpenAI Chat Completions 语义下，`role="tool"` 消息必须与上一条 `assi
 当前建议把差异收敛在 OpenAI 层内部：
 
 - `OpenAIChatDialect`
-- `OpenAIChatToolResultProjectionStyle`
-- `OpenAIChatStreamUsageMode`
 
 不要把这些差异泄漏到 `Completion.Abstractions`。
 
@@ -222,14 +209,14 @@ OpenAI Chat Completions 语义下，`role="tool"` 消息必须与上一条 `assi
 
 只有当以下情况出现时，才考虑从轻量 dialect 升级到真正策略对象：
 
-- tool result 有 3 种以上稳定投影方式
-- usage / retry / fallback 出现 3 种以上稳定行为
+- tool result 有 2 种以上稳定投影方式
+- whitespace / finish_reason / 其他响应方言差异出现 3 种以上稳定行为
 - 某个 switch 开始同时影响 2 个以上核心类
 
 到那时再把对应枚举升级为：
 
 - `IToolResultProjectionPolicy`
-- `IStreamUsagePolicy`
+- `IWhitespaceContentPolicy`
 - `IHttpFailurePolicy`
 
 在那之前，保持轻量即可。
@@ -248,6 +235,18 @@ OpenAI Chat Completions 语义下，`role="tool"` 消息必须与上一条 `assi
 4. **不要直接引入厂商名分支**
 5. **不要先加一堆预防性 flag**
 6. **每次兼容修复都要补测试和文档样本**
+
+---
+
+## 当前状态校准
+
+截至 2026-05-01，OpenAI Chat 路径里的简化结论是：
+
+- `ToolResultsMessage` 的投影方式已固定为严格合法的唯一实现，不再作为 dialect 维度
+- provider 原始 token usage / `stream_options.include_usage` 已从 Completion 抽象层移除
+- 当前 dialect 实际只保留一个行为差异：是否忽略工具调用流中的纯空白 `delta.content`
+
+如果未来再次出现第二类真实差异，再按本文件的方法把它增量引入 dialect，而不是提前占位。
 
 ---
 

@@ -73,13 +73,7 @@ internal static class OpenAIChatMessageConverter {
         OpenAIChatDialect dialect,
         ProjectionState state
     ) {
-        switch (dialect.ToolResultProjectionStyle) {
-            case OpenAIChatToolResultProjectionStyle.StrictToolMessagesThenTrailingUserObservation:
-                BuildStrictToolResultMessages(toolResults, messages, state);
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(dialect), dialect.ToolResultProjectionStyle, "Unsupported tool result projection style.");
-        }
+        BuildStrictToolResultMessages(toolResults, messages, state);
     }
 
     private static void BuildStrictToolResultMessages(

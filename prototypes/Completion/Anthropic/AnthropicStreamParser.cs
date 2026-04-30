@@ -17,10 +17,6 @@ internal sealed class AnthropicStreamParser {
 
     private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
-    private int? _promptTokens;
-    private int? _completionTokens;
-    private int? _cacheReadInputTokens;
-    private int? _cacheCreationInputTokens;
 
     public AnthropicStreamParser()
         : this(ImmutableArray<ToolDefinition>.Empty) {
@@ -48,7 +44,6 @@ internal sealed class AnthropicStreamParser {
 
         switch (eventType) {
             case "message_start":
-                HandleMessageStart(obj);
                 break;
             case "content_block_start":
                 HandleContentBlockStart(obj, aggregator);
@@ -60,10 +55,8 @@ internal sealed class AnthropicStreamParser {
                 HandleContentBlockStop(obj, aggregator);
                 break;
             case "message_delta":
-                HandleMessageDelta(obj);
                 break;
             case "message_stop":
-                HandleMessageStop(obj);
                 break;
             case "ping":
                 break;
@@ -73,27 +66,6 @@ internal sealed class AnthropicStreamParser {
             default:
                 HandleUnknownEvent(eventType);
                 break;
-        }
-    }
-
-    public TokenUsage? GetFinalUsage() {
-        if (_promptTokens is null && _completionTokens is null && _cacheReadInputTokens is null && _cacheCreationInputTokens is null) {
-            return null;
-        }
-
-        var cachedPromptTokens = (_cacheReadInputTokens ?? 0) + (_cacheCreationInputTokens ?? 0);
-
-        return new TokenUsage(
-            PromptTokens: _promptTokens ?? 0,
-            CompletionTokens: _completionTokens ?? 0,
-            CachedPromptTokens: cachedPromptTokens > 0 ? cachedPromptTokens : null
-        );
-    }
-
-    private void HandleMessageStart(JsonObject obj) {
-        // message_start 包含初始 usage
-        if (obj["message"]?["usage"] is JsonObject usage) {
-            UpdateUsage(usage);
         }
     }
 
@@ -190,17 +162,6 @@ internal sealed class AnthropicStreamParser {
         _contentBlocks.Remove(index);
     }
 
-    private void HandleMessageDelta(JsonObject obj) {
-        // message_delta 包含 stop_reason 和增量 usage
-        if (obj["usage"] is JsonObject usage) {
-            UpdateUsage(usage);
-        }
-    }
-
-    private void HandleMessageStop(JsonObject obj) {
-        // 消息结束，无额外处理
-    }
-
     private void HandleError(JsonObject obj, CompletionAggregator aggregator) {
         var error = obj["error"]?["message"]?.GetValue<string>() ?? "Unknown error";
         DebugUtil.Warning(DebugCategory, $"[Anthropic] API error: {error}");
@@ -209,24 +170,6 @@ internal sealed class AnthropicStreamParser {
 
     private void HandleUnknownEvent(string eventType) {
         DebugUtil.Warning(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
-    }
-
-    private void UpdateUsage(JsonObject usage) {
-        if (TryGetInt32(usage, "input_tokens", out var inputTokens)) {
-            _promptTokens = inputTokens;
-        }
-
-        if (TryGetInt32(usage, "output_tokens", out var outputTokens)) {
-            _completionTokens = outputTokens;
-        }
-
-        if (TryGetInt32(usage, "cache_read_input_tokens", out var cacheReadTokens)) {
-            _cacheReadInputTokens = cacheReadTokens;
-        }
-
-        if (TryGetInt32(usage, "cache_creation_input_tokens", out var cacheCreationTokens)) {
-            _cacheCreationInputTokens = cacheCreationTokens;
-        }
     }
 
     /// <summary>

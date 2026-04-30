@@ -16,7 +16,6 @@ namespace Atelia.Completion.Abstractions;
 /// </summary>
 /// <param name="Message">Canonical action 消息体；<see cref="ActionMessage.Blocks"/> 已在构造时冻结。</param>
 /// <param name="Invocation">本次调用的来源描述符；<see cref="ActionBlock.Thinking.Origin"/> 与之对齐。</param>
-/// <param name="Usage">流末尾结算的 token 用量；provider 未返回时为 <see langword="null"/>。</param>
 /// <param name="Errors">流中通过错误事件报告的错误文本；无错误时为 <see langword="null"/>。</param>
 public sealed record AggregatedAction : IActionMessage {
     private ActionMessage _message = null!;
@@ -29,12 +28,10 @@ public sealed record AggregatedAction : IActionMessage {
     public AggregatedAction(
         ActionMessage message,
         CompletionDescriptor invocation,
-        TokenUsage? usage = null,
         IReadOnlyList<string>? errors = null
     ) {
         Message = message ?? throw new ArgumentNullException(nameof(message));
         Invocation = invocation ?? throw new ArgumentNullException(nameof(invocation));
-        Usage = usage;
         Errors = errors;
     }
 
@@ -49,9 +46,6 @@ public sealed record AggregatedAction : IActionMessage {
         get => _invocation;
         init => _invocation = value ?? throw new ArgumentNullException(nameof(value));
     }
-
-    /// <summary>流末尾结算的 token 用量；provider 未返回时为 <see langword="null"/>。</summary>
-    public TokenUsage? Usage { get; init; }
 
     /// <summary>流中通过错误事件报告的错误文本；无错误时为 <see langword="null"/>。</summary>
     public IReadOnlyList<string>? Errors {

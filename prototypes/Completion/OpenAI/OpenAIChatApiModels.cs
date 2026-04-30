@@ -13,16 +13,8 @@ internal sealed class OpenAIChatApiRequest {
     [JsonPropertyName("stream")]
     public bool Stream { get; set; }
 
-    [JsonPropertyName("stream_options")]
-    public OpenAIChatStreamOptions? StreamOptions { get; set; }
-
     [JsonPropertyName("tools")]
     public List<OpenAIChatTool>? Tools { get; set; }
-}
-
-internal sealed class OpenAIChatStreamOptions {
-    [JsonPropertyName("include_usage")]
-    public bool IncludeUsage { get; set; }
 }
 
 internal sealed class OpenAIChatMessage {

@@ -86,11 +86,6 @@ public sealed class AnthropicClient : ICompletionClient {
             aggregator.AbortIncompleteStreamingState();
         }
 
-        // 仅在自然流结束时保留最终 usage；early stop 不向外暴露中途统计。
-        if (!stoppedEarly && parser.GetFinalUsage() is { } usage) {
-            aggregator.AppendTokenUsage(usage);
-        }
-
         DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");
         return aggregator.Build();
     }

@@ -113,17 +113,6 @@ public enum HistoryMessageKind {
     ToolResults
 }
 
-// TODO: Thinking/Reasoning模型的CompletionTokens语义问题，不同厂商的原始值语义略有不同。需要明确：1. 计费相关的总补全长度。2. 后续输入相关的剔除Thinking/Reasoning部分后的正文长度
-/// <summary>
-/// 统一记录模型调用的 Token 使用情况，以满足计费和策略评估的需求。
-/// 字段命名沿用主流模型厂商的术语，但在 Agent 侧可分别解释为"观测编码成本"、"动作生成成本"以及缓存复用效率。
-/// </summary>
-/// <param name="PromptTokens">本次调用中，输入历史所占用的 Token 数量。</param>
-/// <param name="CompletionTokens">模型生成动作（输出）所消耗的 Token 数量。</param>
-/// <param name="CachedPromptTokens">可选的、从缓存中命中的 Token 数量，反映了增量上下文所带来的成本节省。</param>
-public record TokenUsage(int PromptTokens, int CompletionTokens, int? CachedPromptTokens = null);
-// Gemini的ThinkingSignature问题，可能GTP-5也有，加密后的Thinking文本，跨模型不通用。源于公共安全审查，模型思考时的输出难以复合公共安全标准，所以加密了。
-
 /// <summary>
 /// 扩展方法，提供对 <see cref="IActionMessage"/> 的 lossy 派生视图。
 /// </summary>

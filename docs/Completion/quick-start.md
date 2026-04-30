@@ -85,7 +85,6 @@ var action = await client.StreamCompletionAsync(request, null, ct);
 
 Console.WriteLine(action.GetFlattenedText());
 foreach (var call in action.ToolCalls) { /* ... */ }
-Console.WriteLine(action.Usage);                    // 可能为 null
 foreach (var err in action.Errors ?? Array.Empty<string>()) { /* ... */ }
 ```
 
@@ -241,14 +240,13 @@ var action = await client.StreamCompletionAsync(request, null, ct);
 `AggregatedAction` 同时提供两类视图：
 
 - 结构化真相源：`Blocks: IReadOnlyList<ActionBlock>`
-- 便捷派生视图：`GetFlattenedText()`、`ToolCalls`、`Usage`、`Errors`
+- 便捷派生视图：`GetFlattenedText()`、`ToolCalls`、`Errors`
 
 常见读取方式：
 
 ```csharp
 Console.WriteLine(action.GetFlattenedText()); // 所有 Text 块拼接
 foreach (var call in action.ToolCalls) { /* ... */ }
-Console.WriteLine(action.Usage);              // 可能为 null
 foreach (var err in action.Errors ?? Array.Empty<string>()) { /* ... */ }
 
 // 直接回灌：AggregatedAction 实现了 IActionMessage
@@ -263,7 +261,6 @@ history.Add(action);
 - `OpaquePayload` 完全透明透传，不解析。
 - 流中的 provider 错误事件被收集到 `AggregatedAction.Errors`，**不抛异常**；是否中断或上报由调用方决定。
 - 若流末尾一个内容块都没有，会补一个空 `ActionBlock.Text`，下游永远拿到至少一个块。
-- `Usage` 是可选的；provider 未返回时为 `null`。
 
 当前公共 API 不直接暴露 chunk 级增量。如果后续要做流式 UI，请在更上层另行加事件回调或单独增量接口，不要假设现有 `ICompletionClient` 仍会 `yield` chunk。
 
@@ -314,7 +311,6 @@ OpenAI Chat 路径当前 **不产出** `ActionBlock.Thinking`（`reasoning_conte
   - **Anthropic**：抛 `HttpRequestException`，但 **不附带 body**（仅 `EnsureSuccessStatusCode()`）；调试时可临时在外层抓包。
 - 历史构造不合法 → `OpenAIChatMessageConverter` / `AnthropicMessageConverter` 在序列化阶段就抛 `InvalidOperationException`，**不会** 走到 HTTP（最常见：tool_call_id 错位、Anthropic 首条非 user）。
 - SSE 中途的 JSON 解析错误不会 throw；provider 错误事件会收集进 `AggregatedAction.Errors`。
-- `AggregatedAction.Usage` 可能缺失（取决于 provider/dialect/服务端实现），不要假设一定有。
 
 ---
 
@@ -335,10 +331,10 @@ new OpenAIChatClient(
 
 | Dialect | 适用 | 关键差异 |
 |---|---|---|
-| `OpenAIChatDialects.Strict` | 真·OpenAI、严格按规范的兼容端点 | 请求 `stream_options.include_usage=true`；保留所有 `delta.content`（含空白） |
-| `OpenAIChatDialects.SgLangCompatible` | **本地 sglang** 与一些松散兼容端点 | 服务端拒绝 `stream_options` 时自动剥掉字段重试；**仅在工具调用累积期间** 忽略夹带的纯空白 `delta.content` |
+| `OpenAIChatDialects.Strict` | 真·OpenAI、严格按规范的兼容端点 | 保留所有 `delta.content`（含空白） |
+| `OpenAIChatDialects.SgLangCompatible` | **本地 sglang** 与一些松散兼容端点 | **仅在工具调用累积期间** 忽略夹带的纯空白 `delta.content` |
 
-**打到本地 8000 端口必须用 `SgLangCompatible`**：sglang 通常不识别 `stream_options.include_usage`（Strict 会撞 400 但不会自动重试），且工具调用流中会夹带空白噪声。`ApiSpecId == "openai-chat-v1"`。
+**打到本地 8000 端口通常应优先用 `SgLangCompatible`**：sglang 的工具调用流里常会夹带空白噪声，`SgLangCompatible` 会在工具调用累积期间忽略这些无意义空白。`ApiSpecId == "openai-chat-v1"`。
 
 ### 5.2 `AnthropicClient`
 
@@ -375,11 +371,10 @@ new AnthropicClient(
 4. **`ToolCallId` 跨轮错位** → converter 抛 `InvalidOperationException`，不是 400。
 5. **解析 `Thinking.OpaquePayload`** → 不要。原样回灌，`Origin` 与产生它的调用对齐。
 6. **`baseAddress` 漏 `/`** → 带路径前缀时尤其会 404。
-7. **本地 sglang 用 `Strict` dialect** → 撞 `stream_options` 400 / 工具流空白噪声。
+7. **本地 sglang 用 `Strict` dialect** → 工具流空白噪声会原样保留到文本块里。
 8. **`null` defaultValue 但 `isNullable: false`** → `ToolParamSpec` 构造立刻抛。
-9. **假设 `TokenUsage` 一定到** → 它是可选信号。
-10. **流式调用不传 `CancellationToken`** → HTTP 长连接一直挂着。
-11. **指望模型看到 `defaultValue`** → 当前 schema 不输出 `default`，请把关键默认行为写进 `description`。
+9. **流式调用不传 `CancellationToken`** → HTTP 长连接一直挂着。
+10. **指望模型看到 `defaultValue`** → 当前 schema 不输出 `default`，请把关键默认行为写进 `description`。
 
 ### 症状速查（本地 sglang 场景）
 
@@ -387,12 +382,10 @@ new AnthropicClient(
 |---|---|---|
 | `HttpRequestException: Connection refused` | sglang 没启动 / 端口不对 | 检查服务进程与端口 |
 | 404 | `baseAddress` 路径错 / 漏 `/` / 服务未暴露该 API | 核对 §5.3 |
-| 400 且 body 含 `stream_options` 或 `include_usage` | dialect 用了 `Strict` | 切到 `SgLangCompatible`；它会自动重试 |
 | 400 且模型名不存在 | `ModelId` 与本地加载模型不一致 | 用 sglang 的 `/v1/models` 端点确认 |
 | `InvalidOperationException` 提到 tool_call_id | 历史里 `ToolResult.ToolCallId` 与上一个 `ActionBlock.ToolCall` 错位 / 缺失 | 对齐 id；失败工具用 `ExecuteError` 让 converter 合成 |
 | `InvalidOperationException` 提到 first message must be user (Anthropic) | Context 第一条不是 `ObservationMessage`（或空白被跳过后变成第一条不是 user） | 调整历史；Anthropic 协议强制首条 user |
 | `ArgumentException: Default value ... isNullable` | `ToolParamSpec` 构造时 default+nullable 组合非法 | 见 §3.2 |
-| `AggregatedAction.Usage == null` | 服务端没返回 usage / dialect 已降级 | 视为可选，不要依赖 |
 
 ---
 

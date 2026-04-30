@@ -54,13 +54,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[OpenAI] Starting call model={request.ModelId}");
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, _dialect);
-        if (ShouldRequestStreamUsage()) {
-            apiRequest.StreamOptions = new OpenAIChatStreamOptions { IncludeUsage = true };
-        }
-
-        var streamingRequest = await SendStreamingRequestAsync(apiRequest, cancellationToken);
-        using var response = streamingRequest.Response;
-        var shouldExpectUsagePayload = streamingRequest.UsageRequested;
+        using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
@@ -95,52 +89,21 @@ public sealed class OpenAIChatClient : ICompletionClient {
             parser.Complete(aggregator);
         }
 
-        if (!stoppedEarly && parser.GetFinalUsage() is { } usage) {
-            aggregator.AppendTokenUsage(usage);
-        }
-        else if (!stoppedEarly && shouldExpectUsagePayload) {
-            DebugUtil.Warning(DebugCategory, "[OpenAI] Stream completed without usage payload");
-        }
-
         DebugUtil.Trace(DebugCategory, "[OpenAI] Stream completed");
         return aggregator.Build();
     }
 
-    private async Task<StreamingRequestResult> SendStreamingRequestAsync(OpenAIChatApiRequest apiRequest, CancellationToken cancellationToken) {
-        var requestBody = apiRequest;
-        var includeUsage = requestBody.StreamOptions?.IncludeUsage == true;
-
-        while (true) {
-            using var httpRequest = CreateHttpRequest(requestBody);
-            var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (response.IsSuccessStatusCode) {
-                return new StreamingRequestResult(response, includeUsage);
-            }
-
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            var statusCode = response.StatusCode;
-
-            if (ShouldRetryWithoutStreamOptions(includeUsage, statusCode, errorBody)) {
-                DebugUtil.Warning(
-                    DebugCategory,
-                    $"[OpenAI] Provider rejected stream_options, retrying without include_usage status={(int)statusCode}, dialect={_dialect.Name}"
-                );
-
-                response.Dispose();
-                requestBody = new OpenAIChatApiRequest {
-                    Model = requestBody.Model,
-                    Messages = requestBody.Messages,
-                    Stream = requestBody.Stream,
-                    StreamOptions = null,
-                    Tools = requestBody.Tools
-                };
-                includeUsage = false;
-                continue;
-            }
-
-            response.Dispose();
-            throw CreateRequestFailure(statusCode, errorBody);
+    private async Task<HttpResponseMessage> SendStreamingRequestAsync(OpenAIChatApiRequest apiRequest, CancellationToken cancellationToken) {
+        using var httpRequest = CreateHttpRequest(apiRequest);
+        var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (response.IsSuccessStatusCode) {
+            return response;
         }
+
+        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var statusCode = response.StatusCode;
+        response.Dispose();
+        throw CreateRequestFailure(statusCode, errorBody);
     }
 
     private HttpRequestMessage CreateHttpRequest(OpenAIChatApiRequest apiRequest) {
@@ -158,24 +121,6 @@ public sealed class OpenAIChatClient : ICompletionClient {
         return request;
     }
 
-    private bool ShouldRequestStreamUsage() {
-        return _dialect.StreamUsageMode is not OpenAIChatStreamUsageMode.Disabled;
-    }
-
-    private bool ShouldRetryWithoutStreamOptions(bool includeUsageRequested, HttpStatusCode statusCode, string errorBody) {
-        if (!includeUsageRequested) { return false; }
-        if (_dialect.StreamUsageMode is not OpenAIChatStreamUsageMode.RequestUsageAndRetryWithoutStreamOptions) { return false; }
-
-        if (statusCode is not (HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.UnprocessableContent)) {
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(errorBody)) { return false; }
-
-        return errorBody.Contains("stream_options", StringComparison.OrdinalIgnoreCase)
-            || errorBody.Contains("include_usage", StringComparison.OrdinalIgnoreCase);
-    }
-
     private static HttpRequestException CreateRequestFailure(HttpStatusCode statusCode, string errorBody) {
         var normalizedBody = string.IsNullOrWhiteSpace(errorBody)
             ? "<empty>"
@@ -191,6 +136,4 @@ public sealed class OpenAIChatClient : ICompletionClient {
             statusCode: statusCode
         );
     }
-
-    private sealed record StreamingRequestResult(HttpResponseMessage Response, bool UsageRequested);
 }

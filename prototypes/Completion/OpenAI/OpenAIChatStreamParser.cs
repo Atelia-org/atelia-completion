@@ -17,7 +17,6 @@ internal sealed class OpenAIChatStreamParser {
     private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly OpenAIChatWhitespaceContentMode _whitespaceContentMode;
     private readonly Dictionary<int, ToolCallState> _toolCalls = new();
-    private TokenUsage? _usage;
 
     public OpenAIChatStreamParser()
         : this(ImmutableArray<ToolDefinition>.Empty, OpenAIChatWhitespaceContentMode.Preserve) {
@@ -51,10 +50,6 @@ internal sealed class OpenAIChatStreamParser {
             return;
         }
 
-        if (obj["usage"] is JsonObject usage) {
-            UpdateUsage(usage);
-        }
-
         if (obj["choices"] is not JsonArray choices) { return; }
 
         foreach (var choiceNode in choices) {
@@ -70,8 +65,6 @@ internal sealed class OpenAIChatStreamParser {
     public void DiscardIncompleteStreamingState() {
         _toolCalls.Clear();
     }
-
-    public TokenUsage? GetFinalUsage() => _usage;
 
     private void HandleChoice(JsonObject choice, CompletionAggregator aggregator) {
         if (choice["delta"] is JsonObject delta) {
@@ -149,18 +142,6 @@ internal sealed class OpenAIChatStreamParser {
         }
 
         _toolCalls.Clear();
-    }
-
-    private void UpdateUsage(JsonObject usage) {
-        var promptTokens = usage["prompt_tokens"]?.GetValue<int>() ?? _usage?.PromptTokens ?? 0;
-        var completionTokens = usage["completion_tokens"]?.GetValue<int>() ?? _usage?.CompletionTokens ?? 0;
-
-        int? cachedPromptTokens = _usage?.CachedPromptTokens;
-        if (usage["prompt_tokens_details"] is JsonObject promptTokenDetails) {
-            cachedPromptTokens = promptTokenDetails["cached_tokens"]?.GetValue<int>() ?? cachedPromptTokens;
-        }
-
-        _usage = new TokenUsage(promptTokens, completionTokens, cachedPromptTokens);
     }
 
     private ParsedToolCall CreateToolCall(ToolCallState state) {

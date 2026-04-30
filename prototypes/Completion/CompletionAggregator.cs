@@ -30,7 +30,6 @@ public sealed class CompletionAggregator {
     private readonly CompletionStreamObserver? _observer;
     private readonly List<ActionBlock> _blocks = new();
     private readonly StringBuilder _contentBuilder = new();
-    private TokenUsage? _tokenUsage;
     private List<string>? _errors;
     private bool _thinkingInProgress;
 
@@ -46,7 +45,7 @@ public sealed class CompletionAggregator {
 
     /// <summary>
     /// 喂入一段文本内容。连续调用时片段自动合并；当后续调用 <see cref="AppendToolCall"/>、
-    /// <see cref="AppendThinking"/>、<see cref="AppendError"/> 或 <see cref="AppendTokenUsage"/> 时会自动切块。
+    /// <see cref="AppendThinking"/> 或 <see cref="AppendError"/> 时会自动切块。
     /// </summary>
     public void AppendContent(string text) {
         if (!string.IsNullOrEmpty(text)) {
@@ -139,14 +138,6 @@ public sealed class CompletionAggregator {
     }
 
     /// <summary>
-    /// 喂入 token 用量统计。通常只在流末尾调用一次。
-    /// </summary>
-    public void AppendTokenUsage(TokenUsage usage) {
-        FlushPendingText();
-        _tokenUsage = usage;
-    }
-
-    /// <summary>
     /// 产出最终的 <see cref="AggregatedAction"/>。调用此方法后不应再调用任何 Append 方法。
     /// </summary>
     public AggregatedAction Build() {
@@ -158,7 +149,7 @@ public sealed class CompletionAggregator {
         }
 
         var message = new ActionMessage(_blocks);
-        return new AggregatedAction(message, _invocation, _tokenUsage, _errors);
+        return new AggregatedAction(message, _invocation, _errors);
     }
 
     private void FlushPendingText() {

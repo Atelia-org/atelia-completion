@@ -67,6 +67,10 @@ internal sealed class OpenAIChatStreamParser {
         FlushPendingToolCalls(aggregator);
     }
 
+    public void DiscardIncompleteStreamingState() {
+        _toolCalls.Clear();
+    }
+
     public TokenUsage? GetFinalUsage() => _usage;
 
     private void HandleChoice(JsonObject choice, CompletionAggregator aggregator) {

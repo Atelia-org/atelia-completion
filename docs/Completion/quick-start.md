@@ -41,11 +41,12 @@ build CompletionRequest  →  await client.StreamCompletionAsync(...)  →  Aggr
 ```csharp
 Task<AggregatedAction> StreamCompletionAsync(
     CompletionRequest request,
-    CancellationToken cancellationToken
+    CompletionStreamObserver? observer,
+    CancellationToken cancellationToken = default
 );
 ```
 
-没有单独暴露的“增量 chunk 流”公共接口。provider 仍然走流式 HTTP/SSE，但由 client 内部解析并聚合后再返回 `AggregatedAction`。
+`observer` 为必传参数——不需要流式观察时显式传 `null` 即可。没有单独暴露的"增量 chunk 流"公共接口。provider 仍然走流式 HTTP/SSE，但由 client 内部解析并聚合后再返回 `AggregatedAction`。
 
 ---
 
@@ -80,7 +81,7 @@ var request = new CompletionRequest(
 );
 
 var ct = CancellationToken.None;                    // 生产代码请传真正的 token
-var action = await client.StreamCompletionAsync(request, ct);
+var action = await client.StreamCompletionAsync(request, null, ct);
 
 Console.WriteLine(action.GetFlattenedText());
 foreach (var call in action.ToolCalls) { /* ... */ }
@@ -88,7 +89,7 @@ Console.WriteLine(action.Usage);                    // 可能为 null
 foreach (var err in action.Errors ?? Array.Empty<string>()) { /* ... */ }
 ```
 
-**Anthropic 路径** 调用形态对称（构造 client 后 `CompletionRequest` 与 `await client.StreamCompletionAsync(...)` 写法完全一致）：
+**Anthropic 路径** 调用形态对称（构造 client 后 `CompletionRequest` 与 `await client.StreamCompletionAsync(request, null, ct)` 写法完全一致）：
 
 ```csharp
 using Atelia.Completion.Anthropic;
@@ -234,7 +235,7 @@ var request = new CompletionRequest(
 `StreamCompletionAsync(...)` 的返回值已经是标准聚合结果：
 
 ```csharp
-var action = await client.StreamCompletionAsync(request, ct);
+var action = await client.StreamCompletionAsync(request, null, ct);
 ```
 
 `AggregatedAction` 同时提供两类视图：
@@ -266,7 +267,9 @@ history.Add(action);
 
 当前公共 API 不直接暴露 chunk 级增量。如果后续要做流式 UI，请在更上层另行加事件回调或单独增量接口，不要假设现有 `ICompletionClient` 仍会 `yield` chunk。
 
-> **Agent.Core 用户**：`AgentEngine` 现在直接 await `ICompletionClient.StreamCompletionAsync(...)`，再把返回的 `AggregatedAction` 包装为 `ActionEntry`；你不需要自己再做额外聚合。
+> **Agent.Core 用户**：`AgentEngine` 现在直接 await `ICompletionClient.StreamCompletionAsync(request, null, ct)`，再把返回的 `AggregatedAction` 包装为 `ActionEntry`；你不需要自己再做额外聚合。
+>
+> 如需流式 UI 或早停，传入自定义的 `CompletionStreamObserver` 替代 `null`。详见 `CompletionStreamObserver` 的 xmldoc。
 
 ### 4.3 `ParsedToolCall` 怎么读
 

@@ -46,7 +46,8 @@ public sealed class AnthropicClient : ICompletionClient {
 
     public async Task<AggregatedAction> StreamCompletionAsync(
         CompletionRequest request,
-        CancellationToken cancellationToken
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
     ) {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
@@ -60,9 +61,10 @@ public sealed class AnthropicClient : ICompletionClient {
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
         var invocation = CompletionDescriptor.From(this, request);
-        var aggregator = new CompletionAggregator(invocation);
+        var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new AnthropicStreamParser(request.Tools);
         string? line;
+        var stoppedEarly = false;
 
         while ((line = await reader.ReadLineAsync(cancellationToken)) is not null) {
             cancellationToken.ThrowIfCancellationRequested();
@@ -74,10 +76,18 @@ public sealed class AnthropicClient : ICompletionClient {
             if (json == "[DONE]") { break; }
 
             parser.ParseEvent(json, aggregator);
+            if (aggregator.ShouldStop) {
+                stoppedEarly = true;
+                break;
+            }
         }
 
-        // 输出最终统计
-        if (parser.GetFinalUsage() is { } usage) {
+        if (stoppedEarly) {
+            aggregator.AbortIncompleteStreamingState();
+        }
+
+        // 仅在自然流结束时保留最终 usage；early stop 不向外暴露中途统计。
+        if (!stoppedEarly && parser.GetFinalUsage() is { } usage) {
             aggregator.AppendTokenUsage(usage);
         }
 

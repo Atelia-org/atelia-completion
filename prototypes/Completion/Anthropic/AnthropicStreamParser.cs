@@ -51,7 +51,7 @@ internal sealed class AnthropicStreamParser {
                 HandleMessageStart(obj);
                 break;
             case "content_block_start":
-                HandleContentBlockStart(obj);
+                HandleContentBlockStart(obj, aggregator);
                 break;
             case "content_block_delta":
                 HandleContentBlockDelta(obj, aggregator);
@@ -97,7 +97,7 @@ internal sealed class AnthropicStreamParser {
         }
     }
 
-    private void HandleContentBlockStart(JsonObject obj) {
+    private void HandleContentBlockStart(JsonObject obj, CompletionAggregator aggregator) {
         var index = obj["index"]?.GetValue<int>() ?? -1;
         if (index < 0) { return; }
 
@@ -115,10 +115,16 @@ internal sealed class AnthropicStreamParser {
             state.ToolName = contentBlock["name"]?.GetValue<string>() ?? string.Empty;
         }
         else if (blockType == "thinking") {
+            // 通知 aggregator（及 observer）thinking 块开始
+            aggregator.BeginThinking();
+
             // 偶尔 content_block_start 已携带初始 thinking/signature 文本（尽管常见为空），
             // 一并预填，后续 thinking_delta / signature_delta 继续追加。
             var initialThinking = contentBlock["thinking"]?.GetValue<string>();
-            if (!string.IsNullOrEmpty(initialThinking)) { state.ThinkingTextBuilder.Append(initialThinking); }
+            if (!string.IsNullOrEmpty(initialThinking)) {
+                state.ThinkingTextBuilder.Append(initialThinking);
+                aggregator.AppendReasoningDelta(initialThinking);
+            }
             var initialSignature = contentBlock["signature"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(initialSignature)) { state.ThinkingSignatureBuilder.Append(initialSignature); }
         }
@@ -151,6 +157,7 @@ internal sealed class AnthropicStreamParser {
             var thinkingText = delta["thinking"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(thinkingText)) {
                 state.ThinkingTextBuilder.Append(thinkingText);
+                aggregator.AppendReasoningDelta(thinkingText);
             }
         }
         else if (deltaType == "signature_delta") {
@@ -174,7 +181,7 @@ internal sealed class AnthropicStreamParser {
             var signature = state.ThinkingSignatureBuilder.ToString();
             var payloadBytes = AnthropicThinkingPayloadCodec.Encode(thinkingText, string.IsNullOrEmpty(signature) ? null : signature);
 
-            aggregator.AppendThinking(new ThinkingChunk(
+            aggregator.EndThinking(new ThinkingChunk(
                 OpaquePayload: payloadBytes,
                 PlainTextForDebug: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
             ));

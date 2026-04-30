@@ -48,7 +48,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
 
     public async Task<AggregatedAction> StreamCompletionAsync(
         CompletionRequest request,
-        CancellationToken cancellationToken
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
     ) {
         DebugUtil.Info(DebugCategory, $"[OpenAI] Starting call model={request.ModelId}");
 
@@ -65,9 +66,10 @@ public sealed class OpenAIChatClient : ICompletionClient {
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
         var invocation = CompletionDescriptor.From(this, request);
-        var aggregator = new CompletionAggregator(invocation);
+        var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new OpenAIChatStreamParser(request.Tools, _dialect.WhitespaceContentMode);
         string? line;
+        var stoppedEarly = false;
 
         while ((line = await reader.ReadLineAsync(cancellationToken)) is not null) {
             cancellationToken.ThrowIfCancellationRequested();
@@ -79,14 +81,24 @@ public sealed class OpenAIChatClient : ICompletionClient {
             if (json == "[DONE]") { break; }
 
             parser.ParseEvent(json, aggregator);
+            if (aggregator.ShouldStop) {
+                stoppedEarly = true;
+                break;
+            }
         }
 
-        parser.Complete(aggregator);
+        if (stoppedEarly) {
+            parser.DiscardIncompleteStreamingState();
+            aggregator.AbortIncompleteStreamingState();
+        }
+        else {
+            parser.Complete(aggregator);
+        }
 
-        if (parser.GetFinalUsage() is { } usage) {
+        if (!stoppedEarly && parser.GetFinalUsage() is { } usage) {
             aggregator.AppendTokenUsage(usage);
         }
-        else if (shouldExpectUsagePayload) {
+        else if (!stoppedEarly && shouldExpectUsagePayload) {
             DebugUtil.Warning(DebugCategory, "[OpenAI] Stream completed without usage payload");
         }
 

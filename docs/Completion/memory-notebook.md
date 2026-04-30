@@ -23,10 +23,10 @@
 `IHistoryMessage` 家族（在 Abstractions 层）：
 
 - `ObservationMessage` — 来自环境/用户的输入
-- `IActionMessage` — Agent/LLM 的输出；暴露 `Blocks: IReadOnlyList<ActionBlock>`，`GetFlattenedText()` 替代旧 `Content`
+- `ActionMessage` — Agent/LLM 的输出；暴露 `Blocks: IReadOnlyList<ActionBlock>`，`GetFlattenedText()` 替代旧 `Content`
 - `ToolResultsMessage` — 工具执行的结果集合
 
-`ActionBlock` 是封闭 sum type（示例三子型：`Text` / `ToolCall` / `Thinking`），是 provider converter 与 Agent.Core 共享的有序内容语言。抱着换取不丢序列 / Thinking replay 能力的目的，`ActionBlock` / `IActionMessage` / `CompletionDescriptor` 都在 Abstractions 层，避免 Completion 反向依赖 Agent.Core。
+`ActionBlock` 是封闭 sum type（示例三子型：`Text` / `ToolCall` / `Thinking`），是 provider converter 与 Agent.Core 共享的有序内容语言。抱着换取不丢序列 / Thinking replay 能力的目的，`ActionBlock` / `ActionMessage` / `CompletionDescriptor` 都在 Abstractions 层，避免 Completion 反向依赖 Agent.Core。
 
 `HistoryMessageKind` enum 给出统一标记。
 

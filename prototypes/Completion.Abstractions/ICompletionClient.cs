@@ -32,7 +32,7 @@ public interface ICompletionClient {
     /// <param name="request">包含历史记录、策略偏好和采样配置的补全请求。</param>
     /// <param name="observer">流式观察者，用于 UI 渐进显示、早停等。不需要观察时传 <see langword="null"/>。</param>
     /// <param name="cancellationToken">用于取消长时间流式推理操作的信号。</param>
-    /// <returns>聚合后的完整结果快照，其 <see cref="CompletionResult.Message"/> 可直接作为下一轮历史的 <see cref="IActionMessage"/> 回灌。</returns>
+    /// <returns>聚合后的完整结果快照，其 <see cref="CompletionResult.Message"/> 可直接作为下一轮历史的 <see cref="ActionMessage"/> 回灌。</returns>
     Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default);
 }
 

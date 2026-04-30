@@ -7,7 +7,7 @@ namespace Atelia.Completion.Abstractions;
 /// 一次 LLM 调用的完整结果快照。承载消息体与调用元信息，是
 /// <see cref="ICompletionClient.StreamCompletionAsync"/> 的标准产出。
 /// <para>
-/// <b>分层边界</b>：本类型是 Completion 调用的 envelope，<b>不</b>实现 <see cref="IActionMessage"/>。
+/// <b>分层边界</b>：本类型是 Completion 调用的 envelope，<b>不</b>实现 <see cref="IHistoryMessage"/>。
 /// 历史回灌请使用 <see cref="Message"/>（纯 <see cref="ActionMessage"/>），
 /// 上层框架（如 Agent.Core）通常会进一步包装为持有 <see cref="ActionMessage"/> 的 ActionEntry。
 /// </para>

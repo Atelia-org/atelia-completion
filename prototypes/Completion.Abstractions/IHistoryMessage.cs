@@ -12,24 +12,9 @@ public interface IHistoryMessage {
 }
 
 /// <summary>
-/// Provider-neutral 的富 action message 接口，供能识别有序内容块的 converter 使用。
-/// 这里只表达“要发给模型的 assistant 内容长什么样”，不承载 Agent 框架私有的 Turn / Invocation 元信息。
-/// </summary>
-public interface IActionMessage : IHistoryMessage {
-    IReadOnlyList<ActionBlock> Blocks { get; }
 
-    /// <summary>
-    /// 从 <see cref="Blocks"/> 中无损派生的工具调用视图。默认实现遍历 <see cref="ActionBlock.ToolCall"/> 块。
-    /// </summary>
-    IReadOnlyList<ParsedToolCall> ToolCalls => Blocks
-        .OfType<ActionBlock.ToolCall>()
-        .Select(static block => block.Call)
-        .ToArray();
-}
-
-/// <summary>
 /// Canonical assistant/action 消息 DTO。只表达"发给模型的 assistant 内容长什么样"，
-/// 是 <see cref="IActionMessage"/> 的最小具体实现。
+/// 是 <see cref="IHistoryMessage"/> 的具体实现，直接承载有序内容块。
 /// </summary>
 /// <remarks>
 /// 与 <see cref="CompletionResult"/>（流聚合快照，带 Invocation/Errors）不同，
@@ -45,7 +30,7 @@ public interface IActionMessage : IHistoryMessage {
 /// </para>
 /// </remarks>
 /// <param name="blocks">按 provider 实际生成顺序保存的内容块；构造时冻结为只读快照。</param>
-public sealed record ActionMessage : IActionMessage {
+public sealed record ActionMessage : IHistoryMessage {
     /// <summary>
     /// 按 provider 实际生成顺序保存的内容块，构造后冻结为只读快照。
     /// </summary>
@@ -126,23 +111,4 @@ public enum HistoryMessageKind {
     /// 工具执行完成后产生的额外观测。
     /// </summary>
     ToolResults
-}
-
-/// <summary>
-/// 扩展方法，提供对 <see cref="IActionMessage"/> 的 lossy 派生视图。
-/// </summary>
-public static class ActionMessageExtensions {
-    /// <summary>
-    /// 将 <see cref="IActionMessage.Blocks"/> 中所有 <see cref="ActionBlock.Text"/> 块
-    /// 按顺序拼接为单条字符串（无分隔符）。
-    /// </summary>
-    /// <remarks>
-    /// <b>这是 lossy view，不是真相源。</b>
-    /// 会丢失 text/tool-call/thinking 的边界和 interleaving 信息。
-    /// 仅用于日志、调试和兼容性断言。任何依赖结构边界的下游应直接读取 <see cref="IActionMessage.Blocks"/>。
-    /// </remarks>
-    public static string GetFlattenedText(this IActionMessage message)
-        => string.Concat(
-            message.Blocks.OfType<ActionBlock.Text>().Select(static b => b.Content)
-        );
 }

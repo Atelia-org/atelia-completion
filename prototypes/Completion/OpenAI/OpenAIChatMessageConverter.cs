@@ -33,9 +33,14 @@ internal static class OpenAIChatMessageConverter {
                     BuildObservationMessage(input, messages, state);
                     break;
 
-                case IActionMessage output:
+                case ActionMessage output:
                     BuildActionMessage(output, messages, state);
                     break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported history message {DescribeHistoryMessage(contextMessage)}."
+                    );
             }
         }
 
@@ -187,7 +192,7 @@ internal static class OpenAIChatMessageConverter {
         return JsonSerializer.Serialize(payload);
     }
 
-    private static void BuildActionMessage(IActionMessage output, List<OpenAIChatMessage> messages, ProjectionState state) {
+    private static void BuildActionMessage(ActionMessage output, List<OpenAIChatMessage> messages, ProjectionState state) {
         EnsureNoPendingToolCalls(state, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
         // 从 Blocks 提取：Text 块拼成 content；ToolCall 块提取为 toolCalls；Thinking 块静默跳过
@@ -206,6 +211,9 @@ internal static class OpenAIChatMessageConverter {
                 case ActionBlock.Thinking:
                     // Protocol limitation: OpenAI 无 thinking 等效字段，静默跳过。
                     break;
+
+                default:
+                    throw new InvalidOperationException($"Unsupported action block kind {DescribeActionBlock(block)} for OpenAI projection.");
             }
         }
 
@@ -230,6 +238,12 @@ internal static class OpenAIChatMessageConverter {
 
         state.SetPendingToolCalls(toolCalls is { Count: > 0 } ? toolCalls : null);
     }
+
+    private static string DescribeHistoryMessage(IHistoryMessage? message)
+        => message is null ? "<null>" : $"type '{message.GetType().Name}' with Kind={message.Kind}";
+
+    private static string DescribeActionBlock(ActionBlock? block)
+        => block is null ? "<null>" : $"'{block.Kind}'";
 
     private static List<OpenAIChatToolCall>? BuildToolCallHistory(IReadOnlyList<ParsedToolCall> toolCalls) {
         if (toolCalls.Count == 0) { return null; }

@@ -28,9 +28,14 @@ internal static class AnthropicMessageConverter {
                     BuildObservationMessage(input, messages, pendingToolCallIds);
                     break;
 
-                case IActionMessage output:
+                case ActionMessage output:
                     BuildActionMessage(output, messages, pendingToolCallIds);
                     break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported history message {DescribeHistoryMessage(contextMessage)}."
+                    );
             }
         }
 
@@ -181,7 +186,7 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildActionMessage(IActionMessage output, List<AnthropicMessage> messages, List<string> pendingToolCallIds) {
+    private static void BuildActionMessage(ActionMessage output, List<AnthropicMessage> messages, List<string> pendingToolCallIds) {
         EnsureNoPendingToolCalls(pendingToolCallIds, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
         var blocks = new List<AnthropicContentBlock>(output.Blocks.Count);
@@ -211,7 +216,7 @@ internal static class AnthropicMessageConverter {
                     break;
 
                 default:
-                    throw new InvalidOperationException($"Unsupported action block kind '{block.Kind}' for Anthropic projection.");
+                    throw new InvalidOperationException($"Unsupported action block kind {DescribeActionBlock(block)} for Anthropic projection.");
             }
         }
 
@@ -228,6 +233,12 @@ internal static class AnthropicMessageConverter {
             }
         );
     }
+
+    private static string DescribeHistoryMessage(IHistoryMessage? message)
+        => message is null ? "<null>" : $"type '{message.GetType().Name}' with Kind={message.Kind}";
+
+    private static string DescribeActionBlock(ActionBlock? block)
+        => block is null ? "<null>" : $"'{block.Kind}'";
 
     private static JsonElement BuildToolCallHistory(ParsedToolCall toolCall) {
         var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);

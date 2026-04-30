@@ -24,7 +24,7 @@
 
 | 程序集 | 命名空间 | 你需要的核心符号 |
 |---|---|---|
-| `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `IActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolParamSpec`、`CompletionDescriptor`、`CompletionResult`、`ThinkingChunk` |
+| `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `ActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolParamSpec`、`CompletionDescriptor`、`CompletionResult`、`ThinkingChunk` |
 | `Atelia.Completion` | `Atelia.Completion.Anthropic`、`Atelia.Completion.OpenAI` | `AnthropicClient`、`OpenAIChatClient`、`OpenAIChatDialects`（静态访问点：`.Strict` / `.SgLangCompatible`） |
 
 **只引 Abstractions** 用来定义请求/历史/工具——provider-neutral，不会拉出 HttpClient。
@@ -129,23 +129,12 @@ public sealed record CompletionRequest(
 | 你想表达 | 用什么 | 备注 |
 |---|---|---|
 | 用户输入 / 系统通知 / 环境观测 | `new ObservationMessage(string? content)` | 统一文本字段 |
-| LLM 上一次输出（要回灌） | `CompletionResult.Message`（取聚合结果的 `ActionMessage` 字段，详见 §4.2） | 纯 `ActionMessage` 实现 `IActionMessage`，可塞回 `Context` |
+| LLM 上一次输出（要回灌） | `CompletionResult.Message`（取聚合结果的 `ActionMessage` 字段，详见 §4.2） | 纯 `ActionMessage` 实现 `IHistoryMessage`，可塞回 `Context` |
 | 工具执行结果（要回灌） | `new ToolResultsMessage(content, results, executeError)` | `results: IReadOnlyList<ToolResult>`，每条带 `ToolCallId` |
 
-**`IActionMessage` 的归属**：接口、`ActionBlock` sum type、`CompletionDescriptor`、官方默认实现 `ActionMessage` 都在 **Abstractions** 层。多轮回灌的标准写法：取 `CompletionResult.Message` 即可——它是纯 `ActionMessage`（实现 `IActionMessage`），可直接 `history.Add(result.Message)`（见 §4.2）。
+**`ActionMessage` 的归属**：`ActionBlock` sum type、`CompletionDescriptor`、`ActionMessage` 都在 **Abstractions** 层。多轮回灌的标准写法：取 `CompletionResult.Message` 即可——它是 `ActionMessage`（实现 `IHistoryMessage`），可直接 `history.Add(result.Message)`（见 §4.2）。
 
-如果你确实需要从零自己造一个 `IActionMessage`（比如从持久化恢复），最小骨架：
-
-```csharp
-public sealed record MyAction(IReadOnlyList<ActionBlock> Blocks) : IActionMessage {
-    public HistoryMessageKind Kind => HistoryMessageKind.Action;
-    public string GetFlattenedText() => string.Concat(Blocks.OfType<ActionBlock.Text>().Select(t => t.Content));
-    public IReadOnlyList<ParsedToolCall> ToolCalls
-        => Blocks.OfType<ActionBlock.ToolCall>().Select(b => b.Call).ToList();
-}
-```
-
-（不过 `ActionMessage` 的派生 `GetFlattenedText()` / `ToolCalls` 已经做了同样的事，多数情况不必另造轮子。）
+（`ActionMessage` 已经提供了 `GetFlattenedText()` / `ToolCalls` / `Blocks`，直接用它即可。）
 
 最小可用历史：
 
@@ -160,7 +149,7 @@ var history = new List<IHistoryMessage> {
 ```csharp
 var history = new List<IHistoryMessage> {
     new ObservationMessage("帮我读一下 README。"),                  // Turn 1 input
-    previousAction,                                                  // Turn 1 LLM 输出（IActionMessage）
+    previousAction,                                                  // Turn 1 LLM 输出（ActionMessage）
     new ToolResultsMessage(
         Content: null,
         Results: new[] {
@@ -250,7 +239,7 @@ Console.WriteLine(result.Message.GetFlattenedText()); // 所有 Text 块拼接
 foreach (var call in result.Message.ToolCalls) { /* ... */ }
 foreach (var err in result.Errors ?? Array.Empty<string>()) { /* ... */ }
 
-// 回灌历史：取 Message（纯 ActionMessage，实现 IActionMessage）
+// 回灌历史：取 Message（纯 ActionMessage，实现 IHistoryMessage）
 history.Add(result.Message);
 ```
 

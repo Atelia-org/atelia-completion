@@ -16,7 +16,8 @@ namespace Atelia.Completion;
 /// <item>连续 <see cref="AppendContent"/> 片段合并为单个 <see cref="ActionBlock.Text"/>；
 /// text/tool_call/thinking 边界处会切块以保留顺序。</item>
 /// <item>每个 <see cref="AppendToolCall"/> 直接转为 <see cref="ActionBlock.ToolCall"/>。</item>
-/// <item>每个 <see cref="AppendThinking"/> 被包装为 <see cref="ActionBlock.Thinking"/>。</item>
+/// <item>每个 <see cref="EndThinking"/> 接收由 parser 构造的具体 <see cref="ActionBlock.ReasoningBlock"/> 子类型，
+/// 并校验其 <c>Origin</c> 与当前调用一致。</item>
 /// <item>若需流式 thinking 观察（早停、UI 状态），使用 <see cref="BeginThinking"/> /
 /// <see cref="AppendReasoningDelta"/> / <see cref="EndThinking"/> 三件套。</item>
 /// <item>所有 <see cref="AppendError"/> 文本被收集到 <see cref="CompletionResult.Errors"/>，
@@ -42,6 +43,11 @@ public sealed class CompletionAggregator {
     /// 透传自 <see cref="CompletionStreamObserver.ShouldStop"/>，供客户端在 SSE 循环中检查是否应提前终止。
     /// </summary>
     public bool ShouldStop => _observer?.ShouldStop == true;
+
+    /// <summary>
+    /// 当前调用来源描述符。StreamParser 用它为 <see cref="ActionBlock.ReasoningBlock"/> 子类型填充 <c>Origin</c>。
+    /// </summary>
+    public CompletionDescriptor Invocation => _invocation;
 
     /// <summary>
     /// 喂入一段文本内容。连续调用时片段自动合并；当后续调用 <see cref="AppendToolCall"/>、
@@ -88,31 +94,36 @@ public sealed class CompletionAggregator {
     }
 
     /// <summary>
-    /// 标记 thinking 块结束，将完整 <see cref="ThinkingChunk"/> 写入块列表。
+    /// 标记 thinking 块结束，将由 parser 构造的具体 <see cref="ActionBlock.ReasoningBlock"/> 子类型写入块列表。
+    /// 校验 <c>block.Origin</c> 与当前调用的 <c>_invocation</c> 一致，不一致时抛 <see cref="InvalidOperationException"/>。
     /// 通知 observer thinking 结束（即使 reasoning 内容为加密状态也会通知）。
     /// </summary>
-    public void EndThinking(ThinkingChunk thinking) {
+    /// <param name="block">由 StreamParser 构造的、Origin 已填充的具体 ReasoningBlock 子类型。</param>
+    /// <exception cref="ArgumentNullException">当 <paramref name="block"/> 为 <see langword="null"/> 时。</exception>
+    /// <exception cref="InvalidOperationException">当 Origin 不匹配时。</exception>
+    public void EndThinking(ActionBlock.ReasoningBlock block) {
+        if (block is null) { throw new ArgumentNullException(nameof(block)); }
+        if (!Equals(block.Origin, _invocation)) {
+            throw new InvalidOperationException(
+                $"ReasoningBlock Origin mismatch: expected {_invocation}, got {block.Origin}."
+            );
+        }
+
         if (_thinkingInProgress) {
             _observer?.OnThinkingEnd();
             _thinkingInProgress = false;
         }
 
-        _blocks.Add(
-            new ActionBlock.Thinking(
-                _invocation,
-                thinking.OpaquePayload,
-                thinking.PlainTextForDebug
-            )
-        );
+        _blocks.Add(block);
     }
 
     /// <summary>
     /// 喂入一个已完成的 thinking 块（便捷方法，等价于 BeginThinking + EndThinking 无 delta）。
-    /// <see cref="ThinkingChunk.OpaquePayload"/> 原样透传，<b>不解析</b>。
     /// </summary>
-    public void AppendThinking(ThinkingChunk thinking) {
+    /// <param name="block">由 StreamParser 构造的、Origin 已填充的具体 ReasoningBlock 子类型。</param>
+    public void AppendThinking(ActionBlock.ReasoningBlock block) {
         BeginThinking();
-        EndThinking(thinking);
+        EndThinking(block);
     }
 
     /// <summary>

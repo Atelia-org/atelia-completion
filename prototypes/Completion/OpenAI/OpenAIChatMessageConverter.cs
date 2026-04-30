@@ -116,9 +116,7 @@ internal static class OpenAIChatMessageConverter {
 
             state.ClearPendingToolCalls();
         }
-        else if (toolResults.Results.Count > 0) {
-            throw new InvalidOperationException("Tool results appeared without a preceding assistant tool_calls message.");
-        }
+        else if (toolResults.Results.Count > 0) { throw new InvalidOperationException("Tool results appeared without a preceding assistant tool_calls message."); }
 
         AppendTrailingObservation(toolResults, messages, includeExecuteError: !consumedExecuteErrorBySyntheticToolMessages);
     }
@@ -127,13 +125,9 @@ internal static class OpenAIChatMessageConverter {
         var lookup = new Dictionary<string, ToolResult>(StringComparer.Ordinal);
 
         foreach (var result in results) {
-            if (string.IsNullOrWhiteSpace(result.ToolCallId)) {
-                throw new InvalidOperationException("Tool result is missing tool_call_id.");
-            }
+            if (string.IsNullOrWhiteSpace(result.ToolCallId)) { throw new InvalidOperationException("Tool result is missing tool_call_id."); }
 
-            if (!lookup.TryAdd(result.ToolCallId, result)) {
-                throw new InvalidOperationException($"Duplicate tool result tool_call_id='{result.ToolCallId}'.");
-            }
+            if (!lookup.TryAdd(result.ToolCallId, result)) { throw new InvalidOperationException($"Duplicate tool result tool_call_id='{result.ToolCallId}'."); }
         }
 
         return lookup;
@@ -208,8 +202,8 @@ internal static class OpenAIChatMessageConverter {
                 case ActionBlock.ToolCall toolCallBlock:
                     toolCallList.Add(toolCallBlock.Call);
                     break;
-                case ActionBlock.Thinking:
-                    // Protocol limitation: OpenAI 无 thinking 等效字段，静默跳过。
+                case ActionBlock.ReasoningBlock:
+                    // Protocol limitation: OpenAI Chat Completions 无 thinking/reasoning 等效字段，静默跳过所有 reasoning 子类型。
                     break;
 
                 default:
@@ -269,9 +263,7 @@ internal static class OpenAIChatMessageConverter {
     private static string BuildToolCallArguments(ParsedToolCall toolCall) {
         var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);
 
-        if (!hasParseError && toolCall.Arguments is { } parsedArguments) {
-            return JsonSerializer.Serialize(parsedArguments);
-        }
+        if (!hasParseError && toolCall.Arguments is { } parsedArguments) { return JsonSerializer.Serialize(parsedArguments); }
 
         if (toolCall.RawArguments is { Count: > 0 } rawArguments) {
             if (hasParseError) {
@@ -285,9 +277,7 @@ internal static class OpenAIChatMessageConverter {
             return JsonSerializer.Serialize(fallback);
         }
 
-        if (toolCall.Arguments is { } fallbackArguments) {
-            return JsonSerializer.Serialize(fallbackArguments);
-        }
+        if (toolCall.Arguments is { } fallbackArguments) { return JsonSerializer.Serialize(fallbackArguments); }
 
         if (hasParseError) {
             DebugUtil.Warning(

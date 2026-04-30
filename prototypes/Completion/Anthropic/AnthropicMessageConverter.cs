@@ -122,9 +122,7 @@ internal static class AnthropicMessageConverter {
 
             pendingToolCallIds.Clear();
         }
-        else if (toolResults.Results.Count > 0) {
-            throw new InvalidOperationException("Tool results appeared without a preceding assistant tool_use message.");
-        }
+        else if (toolResults.Results.Count > 0) { throw new InvalidOperationException("Tool results appeared without a preceding assistant tool_use message."); }
 
         AppendTrailingObservation(
             toolResults,
@@ -148,13 +146,9 @@ internal static class AnthropicMessageConverter {
         var lookup = new Dictionary<string, ToolResult>(StringComparer.Ordinal);
 
         foreach (var result in results) {
-            if (string.IsNullOrWhiteSpace(result.ToolCallId)) {
-                throw new InvalidOperationException("Tool result is missing tool_use_id.");
-            }
+            if (string.IsNullOrWhiteSpace(result.ToolCallId)) { throw new InvalidOperationException("Tool result is missing tool_use_id."); }
 
-            if (!lookup.TryAdd(result.ToolCallId, result)) {
-                throw new InvalidOperationException($"Duplicate tool result tool_use_id='{result.ToolCallId}'.");
-            }
+            if (!lookup.TryAdd(result.ToolCallId, result)) { throw new InvalidOperationException($"Duplicate tool result tool_use_id='{result.ToolCallId}'."); }
         }
 
         return lookup;
@@ -208,8 +202,8 @@ internal static class AnthropicMessageConverter {
                     pendingToolCallIds.Add(toolCallBlock.Call.ToolCallId);
                     break;
 
-                case ActionBlock.Thinking thinkingBlock:
-                    blocks.Add(BuildThinkingBlock(thinkingBlock));
+                case ActionBlock.ReasoningBlock reasoningBlock:
+                    blocks.Add(BuildThinkingBlock(reasoningBlock));
                     break;
 
                 case ActionBlock.Text:
@@ -269,8 +263,15 @@ internal static class AnthropicMessageConverter {
         return JsonSerializer.SerializeToElement(new JsonObject());
     }
 
-    private static AnthropicThinkingBlock BuildThinkingBlock(ActionBlock.Thinking thinkingBlock) {
-        return AnthropicThinkingPayloadCodec.Decode(thinkingBlock.OpaquePayload);
+    private static AnthropicThinkingBlock BuildThinkingBlock(ActionBlock.ReasoningBlock reasoningBlock) {
+        if (reasoningBlock is not AnthropicReasoningBlock anthropicBlock) {
+            throw new InvalidOperationException(
+                $"Cannot replay non-Anthropic reasoning block of type '{reasoningBlock.GetType().Name}' "
+                + "via Anthropic converter. Only AnthropicReasoningBlock is supported for thinking replay."
+            );
+        }
+
+        return AnthropicThinkingPayloadCodec.Decode(anthropicBlock.OpaquePayload);
     }
 
     private static JsonObject BuildFallbackFromRawArguments(IReadOnlyDictionary<string, string> rawArguments) {

@@ -2,7 +2,7 @@ namespace Atelia.Completion.Abstractions;
 
 /// <summary>
 /// Assistant message 的有序内容块基类。开放式 sum type：
-/// 当前 v1 已识别的子类型为 <see cref="Text"/> / <see cref="ToolCall"/> / <see cref="Thinking"/>；
+/// 当前 v1 已识别的子类型为 <see cref="Text"/> / <see cref="ToolCall"/> / <see cref="ReasoningBlock"/>；
 /// 未来扩展点（v1 不实现）见 <c>docs/Agent/Thinking-Replay-Design.md §9</c>：
 /// <c>Citation</c> / <c>ServerToolUse</c> / <c>SafetyMeta</c> 等。
 /// </summary>
@@ -27,27 +27,46 @@ public abstract record ActionBlock {
     }
 
     /// <summary>
-    /// 表示一段 provider 提供的 thinking / reasoning 内容。
+    /// Reasoning / thinking 内容块的抽象基类。
     /// <para>
     /// <see cref="Origin"/> 记录产生该 block 的具体调用来源（与 Turn lock 同构），
     /// 投影层用 <c>Origin == TargetInvocation</c> 判定 replay 兼容性。
     /// </para>
     /// <para>
-    /// <see cref="OpaquePayload"/> 是 provider-native 的序列化字节，由 StreamParser 直接构造，
-    /// Agent.Core / Accumulator 不参与解释。具体 converter 反向回灌时按需反序列化。
-    /// 详见 <c>docs/Agent/Thinking-Replay-Design.md §3.1 / §5.2</c>。
+    /// 具体子类型分散在各自 provider 程序集中（如 <c>Completion.Anthropic</c>），
+    /// 允许各 provider 以原生格式承载 reasoning 内容（明文、加密、签名等），
+    /// 无需将异构格式强行归一化为单一 <c>OpaquePayload</c>。
     /// </para>
     /// <para>
     /// <see cref="PlainTextForDebug"/> 仅供日志/UI/调试展示，<b>不参与回灌</b>。
     /// </para>
     /// </summary>
-    public sealed record Thinking(
+    /// <param name="Origin">产生该 reasoning 的调用来源描述符。</param>
+    /// <param name="PlainTextForDebug">可选明文，仅供日志/UI/调试使用。</param>
+    public abstract record ReasoningBlock(
         CompletionDescriptor Origin,
-        System.ReadOnlyMemory<byte> OpaquePayload,
         string? PlainTextForDebug = null
     ) : ActionBlock {
+        /// <inheritdoc />
         public override ActionBlockKind Kind => ActionBlockKind.Thinking;
     }
+
+    /// <summary>
+    /// 明文 reasoning 块。承载 provider 已提取的明文字符串推理内容，
+    /// 可用于跨 provider 的审计、日志、UI 展示。
+    /// <para>
+    /// <b>注意</b>：明文不代表可跨 provider 回灌——回灌兼容性仍由 <see cref="ReasoningBlock.Origin"/>
+    /// 和具体 converter 的能力决定。
+    /// </para>
+    /// </summary>
+    /// <param name="Content">明文推理文本。</param>
+    /// <param name="Origin">产生该 reasoning 的调用来源描述符。</param>
+    /// <param name="PlainTextForDebug">可选调试文本；默认与 <paramref name="Content"/> 相同。</param>
+    public sealed record TextReasoningBlock(
+        string Content,
+        CompletionDescriptor Origin,
+        string? PlainTextForDebug = null
+    ) : ReasoningBlock(Origin, PlainTextForDebug ?? Content);
 }
 
 /// <summary>

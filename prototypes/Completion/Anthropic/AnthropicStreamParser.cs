@@ -153,10 +153,13 @@ internal sealed class AnthropicStreamParser {
             var signature = state.ThinkingSignatureBuilder.ToString();
             var payloadBytes = AnthropicThinkingPayloadCodec.Encode(thinkingText, string.IsNullOrEmpty(signature) ? null : signature);
 
-            aggregator.EndThinking(new ThinkingChunk(
-                OpaquePayload: payloadBytes,
-                PlainTextForDebug: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
-            ));
+            aggregator.EndThinking(
+                new AnthropicReasoningBlock(
+                    OpaquePayload: payloadBytes,
+                    Origin: aggregator.Invocation,
+                    PlainTextForDebug: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
+                )
+            );
         }
 
         _contentBlocks.Remove(index);
@@ -205,9 +208,7 @@ internal sealed class AnthropicStreamParser {
     private static bool TryGetInt32(JsonObject obj, string propertyName, out int value) {
         value = default;
 
-        if (!obj.TryGetPropertyValue(propertyName, out var node) || node is null) {
-            return false;
-        }
+        if (!obj.TryGetPropertyValue(propertyName, out var node) || node is null) { return false; }
 
         try {
             value = node.GetValue<int>();

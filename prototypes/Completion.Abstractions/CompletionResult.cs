@@ -9,7 +9,7 @@ namespace Atelia.Completion.Abstractions;
 /// <para>
 /// <b>分层边界</b>：本类型是 Completion 调用的 envelope，<b>不</b>实现 <see cref="IActionMessage"/>。
 /// 历史回灌请使用 <see cref="Message"/>（纯 <see cref="ActionMessage"/>），
-/// 上层框架（如 Agent.Core）通常会进一步包装为 <see cref="IActionMessage"/> 实现（如 ActionEntry）。
+/// 上层框架（如 Agent.Core）通常会进一步包装为持有 <see cref="ActionMessage"/> 的 ActionEntry。
 /// </para>
 /// <para>
 /// 未来若确有需要，可继续扩展 Completion 级元信息；这些元信息仍不进入 <see cref="ActionMessage"/>。

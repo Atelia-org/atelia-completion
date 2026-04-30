@@ -24,7 +24,7 @@
 
 | 程序集 | 命名空间 | 你需要的核心符号 |
 |---|---|---|
-| `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `IActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolParamSpec`、`CompletionDescriptor`、`AggregatedAction`、`ThinkingChunk` |
+| `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `IActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolParamSpec`、`CompletionDescriptor`、`CompletionResult`、`ThinkingChunk` |
 | `Atelia.Completion` | `Atelia.Completion.Anthropic`、`Atelia.Completion.OpenAI` | `AnthropicClient`、`OpenAIChatClient`、`OpenAIChatDialects`（静态访问点：`.Strict` / `.SgLangCompatible`） |
 
 **只引 Abstractions** 用来定义请求/历史/工具——provider-neutral，不会拉出 HttpClient。
@@ -33,20 +33,20 @@
 一次 LLM 调用永远是这条三步曲：
 
 ```
-build CompletionRequest  →  await client.StreamCompletionAsync(...)  →  AggregatedAction
+build CompletionRequest  →  await client.StreamCompletionAsync(...)  →  CompletionResult
 ```
 
 `ICompletionClient` 只有 **一个方法**——发起流式补全，并在 client 内部完成聚合：
 
 ```csharp
-Task<AggregatedAction> StreamCompletionAsync(
+Task<CompletionResult> StreamCompletionAsync(
     CompletionRequest request,
     CompletionStreamObserver? observer,
     CancellationToken cancellationToken = default
 );
 ```
 
-`observer` 为必传参数——不需要流式观察时显式传 `null` 即可。没有单独暴露的"增量 chunk 流"公共接口。provider 仍然走流式 HTTP/SSE，但由 client 内部解析并聚合后再返回 `AggregatedAction`。
+`observer` 为必传参数——不需要流式观察时显式传 `null` 即可。没有单独暴露的"增量 chunk 流"公共接口。provider 仍然走流式 HTTP/SSE，但由 client 内部解析并聚合后再返回 `CompletionResult`。
 
 ---
 
@@ -81,11 +81,11 @@ var request = new CompletionRequest(
 );
 
 var ct = CancellationToken.None;                    // 生产代码请传真正的 token
-var action = await client.StreamCompletionAsync(request, null, ct);
+var result = await client.StreamCompletionAsync(request, null, ct);
 
-Console.WriteLine(action.GetFlattenedText());
-foreach (var call in action.ToolCalls) { /* ... */ }
-foreach (var err in action.Errors ?? Array.Empty<string>()) { /* ... */ }
+Console.WriteLine(result.Message.GetFlattenedText());
+foreach (var call in result.Message.ToolCalls) { /* ... */ }
+foreach (var err in result.Errors ?? Array.Empty<string>()) { /* ... */ }
 ```
 
 **Anthropic 路径** 调用形态对称（构造 client 后 `CompletionRequest` 与 `await client.StreamCompletionAsync(request, null, ct)` 写法完全一致）：
@@ -129,10 +129,10 @@ public sealed record CompletionRequest(
 | 你想表达 | 用什么 | 备注 |
 |---|---|---|
 | 用户输入 / 系统通知 / 环境观测 | `new ObservationMessage(string? content)` | 统一文本字段 |
-| LLM 上一次输出（要回灌） | `AggregatedAction`（聚合 chunk 流自动得到，详见 §4.2） | 直接实现 `IActionMessage`，可塞回 `Context` |
+| LLM 上一次输出（要回灌） | `CompletionResult.Message`（取聚合结果的 `ActionMessage` 字段，详见 §4.2） | 纯 `ActionMessage` 实现 `IActionMessage`，可塞回 `Context` |
 | 工具执行结果（要回灌） | `new ToolResultsMessage(content, results, executeError)` | `results: IReadOnlyList<ToolResult>`，每条带 `ToolCallId` |
 
-**`IActionMessage` 的归属**：接口、`ActionBlock` sum type、`CompletionDescriptor`、官方默认实现 `AggregatedAction` 都在 **Abstractions** 层。所以多轮回灌的标准写法非常短：上一轮调用得到的 `AggregatedAction` 直接 `history.Add(...)` 即可（见 §4.2）。
+**`IActionMessage` 的归属**：接口、`ActionBlock` sum type、`CompletionDescriptor`、官方默认实现 `ActionMessage` 都在 **Abstractions** 层。多轮回灌的标准写法：取 `CompletionResult.Message` 即可——它是纯 `ActionMessage`（实现 `IActionMessage`），可直接 `history.Add(result.Message)`（见 §4.2）。
 
 如果你确实需要从零自己造一个 `IActionMessage`（比如从持久化恢复），最小骨架：
 
@@ -145,7 +145,7 @@ public sealed record MyAction(IReadOnlyList<ActionBlock> Blocks) : IActionMessag
 }
 ```
 
-（不过 `AggregatedAction` 的派生 `GetFlattenedText()` / `ToolCalls` 已经做了同样的事，多数情况不必另造轮子。）
+（不过 `ActionMessage` 的派生 `GetFlattenedText()` / `ToolCalls` 已经做了同样的事，多数情况不必另造轮子。）
 
 最小可用历史：
 
@@ -227,30 +227,31 @@ var request = new CompletionRequest(
 
 ---
 
-## 4. 消费 `AggregatedAction`
+## 4. 消费 `CompletionResult`
 
 ### 4.1 返回值长什么样
 
 `StreamCompletionAsync(...)` 的返回值已经是标准聚合结果：
 
 ```csharp
-var action = await client.StreamCompletionAsync(request, null, ct);
+var result = await client.StreamCompletionAsync(request, null, ct);
 ```
 
-`AggregatedAction` 同时提供两类视图：
+`CompletionResult` 承载消息体与调用元信息：
 
-- 结构化真相源：`Blocks: IReadOnlyList<ActionBlock>`
-- 便捷派生视图：`GetFlattenedText()`、`ToolCalls`、`Errors`
+- 消息体：`Message: ActionMessage` — 结构化真相源 `Message.Blocks`
+- 便捷派生视图（在 `Message` 上）：`Message.GetFlattenedText()`、`Message.ToolCalls`
+- 调用元信息：`Invocation`、`Errors`
 
 常见读取方式：
 
 ```csharp
-Console.WriteLine(action.GetFlattenedText()); // 所有 Text 块拼接
-foreach (var call in action.ToolCalls) { /* ... */ }
-foreach (var err in action.Errors ?? Array.Empty<string>()) { /* ... */ }
+Console.WriteLine(result.Message.GetFlattenedText()); // 所有 Text 块拼接
+foreach (var call in result.Message.ToolCalls) { /* ... */ }
+foreach (var err in result.Errors ?? Array.Empty<string>()) { /* ... */ }
 
-// 直接回灌：AggregatedAction 实现了 IActionMessage
-history.Add(action);
+// 回灌历史：取 Message（纯 ActionMessage，实现 IActionMessage）
+history.Add(result.Message);
 ```
 
 ### 4.2 聚合契约
@@ -259,12 +260,12 @@ history.Add(action);
 - 每个工具调用最终变成一个 `ActionBlock.ToolCall`，不会把 partial JSON 暴露给上层。
 - 每个 thinking 块最终变成一个 `ActionBlock.Thinking`；其 `Origin` 由本次调用的 `CompletionDescriptor` 自动绑定。
 - `OpaquePayload` 完全透明透传，不解析。
-- 流中的 provider 错误事件被收集到 `AggregatedAction.Errors`，**不抛异常**；是否中断或上报由调用方决定。
+- 流中的 provider 错误事件被收集到 `CompletionResult.Errors`，**不抛异常**；是否中断或上报由调用方决定。
 - 若流末尾一个内容块都没有，会补一个空 `ActionBlock.Text`，下游永远拿到至少一个块。
 
 当前公共 API 不直接暴露 chunk 级增量。如果后续要做流式 UI，请在更上层另行加事件回调或单独增量接口，不要假设现有 `ICompletionClient` 仍会 `yield` chunk。
 
-> **Agent.Core 用户**：`AgentEngine` 现在直接 await `ICompletionClient.StreamCompletionAsync(request, null, ct)`，再把返回的 `AggregatedAction` 包装为 `ActionEntry`；你不需要自己再做额外聚合。
+> **Agent.Core 用户**：`AgentEngine` 现在直接 await `ICompletionClient.StreamCompletionAsync(request, null, ct)`，再把返回的 `CompletionResult` 包装为 `ActionEntry`；你不需要自己再做额外聚合。
 >
 > 如需流式 UI 或早停，传入自定义的 `CompletionStreamObserver` 替代 `null`。详见 `CompletionStreamObserver` 的 xmldoc。
 
@@ -310,7 +311,7 @@ OpenAI Chat 路径当前 **不产出** `ActionBlock.Thinking`（`reasoning_conte
   - **OpenAI**：抛 `HttpRequestException`，`Message` 含状态码与最多 512 字符的 response body。
   - **Anthropic**：抛 `HttpRequestException`，但 **不附带 body**（仅 `EnsureSuccessStatusCode()`）；调试时可临时在外层抓包。
 - 历史构造不合法 → `OpenAIChatMessageConverter` / `AnthropicMessageConverter` 在序列化阶段就抛 `InvalidOperationException`，**不会** 走到 HTTP（最常见：tool_call_id 错位、Anthropic 首条非 user）。
-- SSE 中途的 JSON 解析错误不会 throw；provider 错误事件会收集进 `AggregatedAction.Errors`。
+- SSE 中途的 JSON 解析错误不会 throw；provider 错误事件会收集进 `CompletionResult.Errors`。
 
 ---
 
@@ -395,5 +396,5 @@ new AnthropicClient(
 - [openai-compatible-evolution.md](./openai-compatible-evolution.md) — 当你撞到新的兼容端点差异，按这份增量演进，不要堆 flag。
 - `docs/Agent/Thinking-Replay-Design.md` — `ActionBlock.Thinking` / `OpaquePayload` 回灌契约全本（特别是 §3.1、§5.2）。
 - `prototypes/LiveContextProto/Program.cs` — client 构造的最小活样本（看 `Main` 中的 `oaiClient = new OpenAIChatClient(...)` 几行；其余 `CharacterAgent` / `ConsoleTui` 是 prototype 私有封装，对单纯调通本库不必关心）。
-- `prototypes/Completion.Abstractions/AggregatedAction.cs` — `AggregatedAction` record 的实现与契约。
+- `prototypes/Completion.Abstractions/CompletionResult.cs` — `CompletionResult` record 的实现与契约。
 - `prototypes/Completion/CompletionAggregator.cs` — provider 流式输出在 Completion 层内部的标准聚合器。

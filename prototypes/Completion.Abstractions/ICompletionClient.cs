@@ -22,7 +22,7 @@ public interface ICompletionClient {
     string ApiSpecId { get; }
 
     /// <summary>
-    /// 请求模型进行补全，内部完成流式消费与聚合，返回完整的 <see cref="AggregatedAction"/>。
+    /// 请求模型进行补全，内部完成流式消费与聚合，返回完整的 <see cref="CompletionResult"/>。
     /// 请求参数遵循为强化学习（RL）驱动的 Agent 设计的历史结构，方法内部负责将其转换为特定提供商所需的负载（Payload）。
     /// <para>
     /// <see cref="CompletionDescriptor"/> 由实现类根据 <see cref="Name"/>、<see cref="ApiSpecId"/> 和
@@ -32,20 +32,19 @@ public interface ICompletionClient {
     /// <param name="request">包含历史记录、策略偏好和采样配置的补全请求。</param>
     /// <param name="observer">流式观察者，用于 UI 渐进显示、早停等。不需要观察时传 <see langword="null"/>。</param>
     /// <param name="cancellationToken">用于取消长时间流式推理操作的信号。</param>
-    /// <returns>聚合后的完整动作快照，可直接作为下一轮历史的 <see cref="IActionMessage"/> 回灌。</returns>
-    Task<AggregatedAction> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default);
+    /// <returns>聚合后的完整结果快照，其 <see cref="CompletionResult.Message"/> 可直接作为下一轮历史的 <see cref="IActionMessage"/> 回灌。</returns>
+    Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// 流式补全的观察者。在 <see cref="CompletionAggregator"/> 聚合过程中被回调，
-/// 用于 UI 渐进显示、早停、流式日志等场景。
+/// 流式补全的观察者，用于 UI 渐进显示、早停、流式日志等场景。
 /// </summary>
 /// <remarks>
 /// <para><b>使用模式：</b></para>
 /// <list type="bullet">
 /// <item><b>事件</b>：直接订阅 event，适合轻量 lambda 或简单状态累积。</item>
 /// <item><b>早停</b>：在回调中将 <see cref="ShouldStop"/> 设为 <see langword="true"/>，
-/// 客户端会在下一检查点终止流处理。已聚合的部分结果仍通过 <see cref="AggregatedAction"/> 返回。</item>
+/// 客户端会在下一检查点终止流处理。已聚合的部分结果仍通过 <see cref="CompletionResult"/> 返回。</item>
 /// </list>
 /// <para><b>关于 Thinking 与 Reasoning 的术语：</b>
 /// 本项目以 <b>Thinking</b> 表示动作/状态（thinking 块的开始与结束），
@@ -56,7 +55,7 @@ public interface ICompletionClient {
 public sealed class CompletionStreamObserver {
     /// <summary>
     /// 设为 <see langword="true"/> 以请求提前终止流处理。
-    /// 已聚合的部分结果仍会通过 <see cref="AggregatedAction"/> 返回。
+    /// 已聚合的部分结果仍会通过 <see cref="CompletionResult"/> 返回。
     /// 一旦设为 <see langword="true"/> 不会自动复位（单向累积语义）。
     /// </summary>
     public bool ShouldStop { get; set; }

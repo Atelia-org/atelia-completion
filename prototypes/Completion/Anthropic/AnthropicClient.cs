@@ -44,7 +44,7 @@ public sealed class AnthropicClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}");
     }
 
-    public async Task<AggregatedAction> StreamCompletionAsync(
+    public async Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default

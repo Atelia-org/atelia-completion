@@ -1,5 +1,3 @@
-using System.Collections.Immutable;
-
 namespace Atelia.Completion.Abstractions;
 
 /// <summary>
@@ -34,7 +32,7 @@ public interface IActionMessage : IHistoryMessage {
 /// 是 <see cref="IActionMessage"/> 的最小具体实现。
 /// </summary>
 /// <remarks>
-/// 与 <see cref="AggregatedAction"/>（流聚合快照，带 Invocation/Usage/Errors）不同，
+/// 与 <see cref="CompletionResult"/>（流聚合快照，带 Invocation/Errors）不同，
 /// 本类型是无 invocation metadata 的纯消息体。适用于：
 /// <list type="bullet">
 /// <item>JSON/XML fixture 序列化与反序列化（测试数据集、跑分输入）</item>
@@ -63,6 +61,23 @@ public sealed record ActionMessage : IActionMessage {
 
     /// <inheritdoc />
     public HistoryMessageKind Kind => HistoryMessageKind.Action;
+
+    /// <summary>
+    /// Lossy derived view：将 <see cref="Blocks"/> 中所有 <see cref="ActionBlock.Text"/>
+    /// 块的内容按顺序串接（无分隔符）。非真相源——优先使用 <see cref="Blocks"/>。
+    /// </summary>
+    public string GetFlattenedText() => string.Concat(
+        Blocks.OfType<ActionBlock.Text>().Select(static block => block.Content)
+    );
+
+    /// <summary>
+    /// Lossy derived view：从 <see cref="Blocks"/> 中按顺序提取所有
+    /// <see cref="ActionBlock.ToolCall"/> 块的工具调用信息。
+    /// </summary>
+    public IReadOnlyList<ParsedToolCall> ToolCalls => Blocks
+        .OfType<ActionBlock.ToolCall>()
+        .Select(static block => block.Call)
+        .ToArray();
 }
 
 /// <summary>

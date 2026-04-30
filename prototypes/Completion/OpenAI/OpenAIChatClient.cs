@@ -46,7 +46,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[OpenAI] Client initialized base={_httpClient.BaseAddress}, dialect={_dialect.Name}");
     }
 
-    public async Task<AggregatedAction> StreamCompletionAsync(
+    public async Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
@@ -96,9 +96,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(OpenAIChatApiRequest apiRequest, CancellationToken cancellationToken) {
         using var httpRequest = CreateHttpRequest(apiRequest);
         var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.IsSuccessStatusCode) {
-            return response;
-        }
+        if (response.IsSuccessStatusCode) { return response; }
 
         var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
         var statusCode = response.StatusCode;

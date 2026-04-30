@@ -19,7 +19,7 @@ namespace Atelia.Completion;
 /// <item>每个 <see cref="AppendThinking"/> 被包装为 <see cref="ActionBlock.Thinking"/>。</item>
 /// <item>若需流式 thinking 观察（早停、UI 状态），使用 <see cref="BeginThinking"/> /
 /// <see cref="AppendReasoningDelta"/> / <see cref="EndThinking"/> 三件套。</item>
-/// <item>所有 <see cref="AppendError"/> 文本被收集到 <see cref="AggregatedAction.Errors"/>，
+/// <item>所有 <see cref="AppendError"/> 文本被收集到 <see cref="CompletionResult.Errors"/>，
 /// <b>不抛异常</b>——调用方自行决定是否中断或上报。</item>
 /// <item>若流末尾无任何块，会补一个空 <see cref="ActionBlock.Text"/> 以保证下游消费者的形状确定性。</item>
 /// </list>
@@ -70,9 +70,7 @@ public sealed class CompletionAggregator {
     /// 适用于需要逐 delta 观察 reasoning 内容或显示"思考中…"UI 的场景。
     /// </summary>
     public void BeginThinking() {
-        if (_thinkingInProgress) {
-            throw new InvalidOperationException("A thinking block is already in progress.");
-        }
+        if (_thinkingInProgress) { throw new InvalidOperationException("A thinking block is already in progress."); }
 
         FlushPendingText();
         _thinkingInProgress = true;
@@ -99,11 +97,13 @@ public sealed class CompletionAggregator {
             _thinkingInProgress = false;
         }
 
-        _blocks.Add(new ActionBlock.Thinking(
-            _invocation,
-            thinking.OpaquePayload,
-            thinking.PlainTextForDebug
-        ));
+        _blocks.Add(
+            new ActionBlock.Thinking(
+                _invocation,
+                thinking.OpaquePayload,
+                thinking.PlainTextForDebug
+            )
+        );
     }
 
     /// <summary>
@@ -127,7 +127,7 @@ public sealed class CompletionAggregator {
     }
 
     /// <summary>
-    /// 喂入一条错误文本。错误不会抛异常，仅被收集到 <see cref="AggregatedAction.Errors"/>。
+    /// 喂入一条错误文本。错误不会抛异常，仅被收集到 <see cref="CompletionResult.Errors"/>。
     /// </summary>
     public void AppendError(string error) {
         FlushPendingText();
@@ -138,9 +138,9 @@ public sealed class CompletionAggregator {
     }
 
     /// <summary>
-    /// 产出最终的 <see cref="AggregatedAction"/>。调用此方法后不应再调用任何 Append 方法。
+    /// 产出最终的 <see cref="CompletionResult"/>。调用此方法后不应再调用任何 Append 方法。
     /// </summary>
-    public AggregatedAction Build() {
+    public CompletionResult Build() {
         FlushPendingText();
 
         if (_blocks.Count == 0) {
@@ -149,7 +149,7 @@ public sealed class CompletionAggregator {
         }
 
         var message = new ActionMessage(_blocks);
-        return new AggregatedAction(message, _invocation, _errors);
+        return new CompletionResult(message, _invocation, _errors);
     }
 
     private void FlushPendingText() {

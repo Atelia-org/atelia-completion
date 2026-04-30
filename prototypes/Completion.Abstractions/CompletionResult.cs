@@ -1,31 +1,32 @@
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading;
 
 namespace Atelia.Completion.Abstractions;
 
 /// <summary>
-/// 一次 LLM 调用的流式 chunk 被聚合后的中性快照。直接实现 <see cref="IActionMessage"/>，
-/// 可作为 <c>CompletionRequest.Context</c> 的下一轮 action 历史回灌。
+/// 一次 LLM 调用的完整结果快照。承载消息体与调用元信息，是
+/// <see cref="ICompletionClient.StreamCompletionAsync"/> 的标准产出。
 /// <para>
-/// 这是 <see cref="ICompletionClient.StreamCompletionAsync"/> 的标准产出。
-/// 上层框架（如 Agent.Core）若需要附加自身私有元数据（serial、token estimate 等），
-/// 应当 <b>包装</b> 本类型，而不是替代或扩展。
+/// <b>分层边界</b>：本类型是 Completion 调用的 envelope，<b>不</b>实现 <see cref="IActionMessage"/>。
+/// 历史回灌请使用 <see cref="Message"/>（纯 <see cref="ActionMessage"/>），
+/// 上层框架（如 Agent.Core）通常会进一步包装为 <see cref="IActionMessage"/> 实现（如 ActionEntry）。
+/// </para>
+/// <para>
+/// 未来若确有需要，可继续扩展 Completion 级元信息；这些元信息仍不进入 <see cref="ActionMessage"/>。
 /// </para>
 /// </summary>
 /// <param name="Message">Canonical action 消息体；<see cref="ActionMessage.Blocks"/> 已在构造时冻结。</param>
 /// <param name="Invocation">本次调用的来源描述符；<see cref="ActionBlock.Thinking.Origin"/> 与之对齐。</param>
 /// <param name="Errors">流中通过错误事件报告的错误文本；无错误时为 <see langword="null"/>。</param>
-public sealed record AggregatedAction : IActionMessage {
+public sealed record CompletionResult {
     private ActionMessage _message = null!;
     private CompletionDescriptor _invocation = null!;
     private IReadOnlyList<string>? _errors;
 
     /// <summary>
-    /// 创建 <see cref="AggregatedAction"/>。
+    /// 创建 <see cref="CompletionResult"/>。
     /// </summary>
-    public AggregatedAction(
+    public CompletionResult(
         ActionMessage message,
         CompletionDescriptor invocation,
         IReadOnlyList<string>? errors = null
@@ -35,7 +36,7 @@ public sealed record AggregatedAction : IActionMessage {
         Errors = errors;
     }
 
-    /// <summary>Canonical action 消息体。</summary>
+    /// <summary>Canonical action 消息体。历史回灌请使用此字段。</summary>
     public ActionMessage Message {
         get => _message;
         init => _message = value ?? throw new ArgumentNullException(nameof(value));
@@ -52,19 +53,6 @@ public sealed record AggregatedAction : IActionMessage {
         get => _errors;
         init => _errors = value is null ? null : FreezeList(value);
     }
-
-    // ── IActionMessage façade ── converter / 下游代码零改动 ──
-
-    /// <inheritdoc />
-    public IReadOnlyList<ActionBlock> Blocks => Message.Blocks;
-
-    /// <inheritdoc />
-    public HistoryMessageKind Kind => HistoryMessageKind.Action;
-
-    /// <summary>
-    /// Lossy derived view，委托给 <see cref="Message"/>。
-    /// </summary>
-    public string GetFlattenedText() => Message.GetFlattenedText();
 
     private static IReadOnlyList<T> FreezeList<T>(IReadOnlyList<T> items)
         => items.Count == 0 ? Array.AsReadOnly(Array.Empty<T>()) : Array.AsReadOnly(items.ToArray());

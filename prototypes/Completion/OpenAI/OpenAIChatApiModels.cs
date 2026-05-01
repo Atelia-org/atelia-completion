@@ -15,6 +15,9 @@ internal sealed class OpenAIChatApiRequest {
 
     [JsonPropertyName("tools")]
     public List<OpenAIChatTool>? Tools { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 internal sealed class OpenAIChatMessage {

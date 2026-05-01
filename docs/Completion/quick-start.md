@@ -313,8 +313,19 @@ new OpenAIChatClient(
     apiKey: null,
     httpClient: null,                              // 共享 HttpClient 时传入；不传则内部 new
     baseAddress: new Uri("http://localhost:8000/"),
-    dialect: OpenAIChatDialects.SgLangCompatible
+    dialect: OpenAIChatDialects.SgLangCompatible,
+    options: OpenAIChatClientOptions.QwenThinkingDisabled()
 );
+```
+
+`options.ExtraBody` 表示把额外字段直接并到请求 JSON 根对象；它对应 SDK 语义里的 `extra_body`，不是线上的 `"extra_body"` 字段。当前本地 Qwen3.5 推荐用 `OpenAIChatClientOptions.QwenThinkingDisabled()` 注入：
+
+```json
+{
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  }
+}
 ```
 
 **Dialect 二选一**：

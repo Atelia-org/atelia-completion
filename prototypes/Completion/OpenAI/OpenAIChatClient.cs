@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
@@ -14,10 +15,17 @@ public sealed class OpenAIChatClient : ICompletionClient {
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+    private static readonly HashSet<string> ReservedRequestFieldNames = new(StringComparer.Ordinal) {
+        "model",
+        "messages",
+        "stream",
+        "tools"
+    };
 
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
     private readonly OpenAIChatDialect _dialect;
+    private readonly JsonObject? _extraBody;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "openai";
     public string ApiSpecId => "openai-chat-v1";
@@ -26,7 +34,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
         string? apiKey,
         HttpClient? httpClient = null,
         Uri? baseAddress = null,
-        OpenAIChatDialect? dialect = null
+        OpenAIChatDialect? dialect = null,
+        OpenAIChatClientOptions? options = null
     ) {
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient ?? new HttpClient();
@@ -42,8 +51,12 @@ public sealed class OpenAIChatClient : ICompletionClient {
         }
 
         _dialect = dialect ?? OpenAIChatDialects.Strict;
+        _extraBody = options?.ExtraBody is null ? null : (JsonObject)options.ExtraBody.DeepClone();
 
-        DebugUtil.Info(DebugCategory, $"[OpenAI] Client initialized base={_httpClient.BaseAddress}, dialect={_dialect.Name}");
+        DebugUtil.Info(
+            DebugCategory,
+            $"[OpenAI] Client initialized base={_httpClient.BaseAddress}, dialect={_dialect.Name}, extraBodyKeys={_extraBody?.Count ?? 0}"
+        );
     }
 
     public async Task<CompletionResult> StreamCompletionAsync(
@@ -105,6 +118,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
     }
 
     private HttpRequestMessage CreateHttpRequest(OpenAIChatApiRequest apiRequest) {
+        apiRequest.ExtensionData = BuildExtraBodyExtensionData();
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
         DebugUtil.Trace(DebugCategory, $"[OpenAI] Request payload length={json.Length}, dialect={_dialect.Name}");
 
@@ -117,6 +131,26 @@ public sealed class OpenAIChatClient : ICompletionClient {
         }
 
         return request;
+    }
+
+    private Dictionary<string, JsonElement>? BuildExtraBodyExtensionData() {
+        if (_extraBody is null || _extraBody.Count == 0) { return null; }
+
+        var extensionData = new Dictionary<string, JsonElement>(_extraBody.Count, StringComparer.Ordinal);
+
+        foreach (var (propertyName, propertyValue) in _extraBody) {
+            if (ReservedRequestFieldNames.Contains(propertyName)) {
+                throw new InvalidOperationException(
+                    $"OpenAI extra body field '{propertyName}' collides with a reserved request property."
+                );
+            }
+
+            extensionData[propertyName] = propertyValue is null
+                ? JsonSerializer.SerializeToElement((object?)null, SerializerOptions)
+                : propertyValue.Deserialize<JsonElement>(SerializerOptions);
+        }
+
+        return extensionData;
     }
 
     private static HttpRequestException CreateRequestFailure(HttpStatusCode statusCode, string errorBody) {

@@ -1,11 +1,9 @@
 using System.Collections.Immutable;
 using System.Text.Json;
-using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.OpenAI;
 using Xunit;
 
-namespace Atelia.Completion.Tests.OpenAI;
+namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIChatProjectionRoundTripTests {
     private static readonly CompletionDescriptor DeepSeekInvocation = new(

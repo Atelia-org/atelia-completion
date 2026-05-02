@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `prototypes/Completion*` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-04-30
+> **最后更新**：2026-05-02
 
 ---
 
@@ -120,6 +120,16 @@ JSON 解析失败会记 warning 但不中断流。
 
 strict 路径默认保留所有 `delta.content`；只有特定 dialect（当前是 `SgLangCompatible`）才会忽略“工具调用已开始后夹带的纯空白 content noise”。
 
+### 8. HTTP transport 能力通过 handler pipeline 统一挂载
+
+- `Completion` 不重新发明新的 `HttpClient` facade
+- capture / record / replay 主线统一落在 `Transport/*` 的 handler pipeline
+- provider 继续只依赖普通 `HttpClient`
+- MVP 以 text-first capture 为准：记录 `RequestText` / `ResponseText`；若 transport 在拿到 response 前失败，则追加 `ErrorText`
+- response capture 必须保持流式消费语义，因此通过 tee read stream 在读取过程中复制文本，而不是预先整体 `ReadAsStringAsync()`
+- replay 对请求仍做严格校验，但校验失败时不会消耗当前 golden log 条目
+- `CompletionHttpTransportTests` 现已包含显式启用的本地 round-trip E2E：设置环境变量 `ATELIA_RUN_LOCAL_LLM_E2E=1` 后，会对 `http://localhost:8000/` 同时跑 OpenAI Chat 与 Anthropic Messages 的 record → JSONL → replay 闭环验证
+
 ---
 
 ## 核心数据流（一次 LLM 调用）
@@ -162,6 +172,11 @@ prototypes/Completion.Abstractions/
 └─ ToolDefinition.cs          ToolDefinition + ToolParamSpec
 
 prototypes/Completion/
+├─ Transport/
+│  ├─ CompletionHttpClientBuilder.cs   组装 capture / replay handler 链
+│  ├─ CompletionHttpExchange.cs        HTTP 文本交换快照
+│  ├─ ICompletionHttpExchangeSink.cs   capture sink 抽象 + 内存/调试实现
+│  └─ ICompletionHttpReplayResponder.cs replay 抽象
 ├─ Anthropic/
 │  ├─ AnthropicClient.cs            ICompletionClient 实现
 │  ├─ AnthropicApiModels.cs         请求/响应 DTO（snake_case 序列化）
@@ -258,6 +273,8 @@ Anthropic API / OpenAI-compatible API / 本地 sglang 服务
 ---
 
 ## 相关文档
+
+- [HTTP Transport Pipeline](./http-transport-pipeline.md) — Completion 在 capture / record / replay 方向的主干设计
 
 - [docs/Agent/memory-notebook.md](../Agent/memory-notebook.md) — Agent.Core 的对应概览
 - [docs/LiveContextProto/AnthropicClient/](../LiveContextProto/AnthropicClient/) — 历史设计笔记，部分已被现行实现覆盖

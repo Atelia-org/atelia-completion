@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -107,14 +106,12 @@ public sealed class OpenAIChatClient : ICompletionClient {
     }
 
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(OpenAIChatApiRequest apiRequest, CancellationToken cancellationToken) {
-        using var httpRequest = CreateHttpRequest(apiRequest);
-        var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (response.IsSuccessStatusCode) { return response; }
-
-        var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        var statusCode = response.StatusCode;
-        response.Dispose();
-        throw CreateRequestFailure(statusCode, errorBody);
+        return await CompletionHttpRequestUtility.SendStreamingRequestAsync(
+            _httpClient,
+            CreateHttpRequest(apiRequest),
+            "OpenAI chat/completions request",
+            cancellationToken
+        );
     }
 
     private HttpRequestMessage CreateHttpRequest(OpenAIChatApiRequest apiRequest) {
@@ -151,21 +148,5 @@ public sealed class OpenAIChatClient : ICompletionClient {
         }
 
         return extensionData;
-    }
-
-    private static HttpRequestException CreateRequestFailure(HttpStatusCode statusCode, string errorBody) {
-        var normalizedBody = string.IsNullOrWhiteSpace(errorBody)
-            ? "<empty>"
-            : errorBody.ReplaceLineEndings(" ").Trim();
-
-        if (normalizedBody.Length > 512) {
-            normalizedBody = normalizedBody[..512];
-        }
-
-        return new HttpRequestException(
-            $"OpenAI chat/completions request failed status={(int)statusCode} body={normalizedBody}",
-            inner: null,
-            statusCode: statusCode
-        );
     }
 }

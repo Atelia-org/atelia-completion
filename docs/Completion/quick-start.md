@@ -3,7 +3,7 @@
 > **读者**：要在自己的代码里通过 `Atelia.Completion[.Abstractions]` 调用 LLM 的高级 LLM Agent / 上层应用作者。
 > **不读这份**：要给 Completion 层加新 provider、改 SSE 解析的人——请去 [memory-notebook.md](./memory-notebook.md) 与 [openai-compatible-evolution.md](./openai-compatible-evolution.md)。
 > **配套环境**：本机 `http://localhost:8000/` 上有 sglang 服务，同时暴露 Anthropic Messages (`/v1/messages`) 与 OpenAI Chat (`/v1/chat/completions`) 两类端点。
-> **最后更新**：2026-04-30
+> **最后更新**：2026-05-02
 
 ---
 
@@ -12,6 +12,9 @@
 不同诉求挑不同章节，避免一次性吞噬所有信息：
 
 - **只调文本**（hello-world）：§1 → §2 → §4.1 → §5 → §6
+- **顺手记录 golden log**：再读 §2.1
+- **直接从 golden log replay**：再读 §2.2
+- **跑本地 round-trip E2E**：再读 §2.4
 - **加上工具调用**：再读 §3.1、§3.2、§4.3
 - **多轮回灌历史 / 用 thinking 模型**：再读 §4.2、§4.4
 - **撞到本地服务报错**：直接跳 §6 故障速查
@@ -100,6 +103,137 @@ var anthropic = new AnthropicClient(
 ```
 
 > **跨 provider 复用 `CompletionRequest` 的边界**：纯文本 + 工具调用历史可以原样喂给任一 client，provider 差异封装在内部 converter / parser 里。**但** 含 `ActionBlock.Thinking` 的回灌历史 **不可以跨 provider 也不可以跨调用源**——`OpaquePayload` 是 provider-native 字节，`Origin` 必须是当时产出它的那次调用（详见 §4.4）。
+
+### 2.1 用 builder 注入 golden log 文件 sink
+
+如果你希望把每次 request / response 直接落成 golden log，推荐用高层 transport factory 创建普通 `HttpClient`，再把它注入 provider client。
+
+当前 MVP 的 golden log 格式是 JSON Lines：每一行一个 `CompletionHttpExchange`，后续可自然演进到 replay。
+
+```csharp
+using System.Collections.Immutable;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
+
+var transport = CompletionHttpTransportFactory.CreateFromPaths(
+    new Uri("http://localhost:8000/"),
+    recordLogPath: ".atelia/completion-golden/openai.jsonl",
+    replayLogPath: null
+);
+using var httpClient = transport.HttpClient;
+
+var client = new OpenAIChatClient(
+    apiKey: null,
+    httpClient: httpClient,
+    dialect: OpenAIChatDialects.SgLangCompatible
+);
+
+var request = new CompletionRequest(
+    ModelId: "Qwen3.5-27b-GPTQ-Int4",
+    SystemPrompt: "You are a helpful assistant.",
+    Context: new IHistoryMessage[] {
+        new ObservationMessage("用一句话介绍自己。"),
+    },
+    Tools: ImmutableArray<ToolDefinition>.Empty
+);
+
+var result = await client.StreamCompletionAsync(request, null, CancellationToken.None);
+Console.WriteLine(result.Message.GetFlattenedText());
+```
+
+这个写法的关键点是：
+
+- provider 仍然只看普通 `HttpClient`
+- golden log capture 不会侵入 provider 代码
+- 后续想切到 replay，只需要替换 transport factory 的装配方式
+
+### 2.2 用 builder 从 JSONL golden log 直接 replay
+
+当你已经有一份 JSONL golden log 时，可以把真实网络替换成顺序 replay：
+
+```csharp
+using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
+
+using var httpClient = CompletionHttpTransportFactory.CreateJsonLinesReplayClient(
+    new Uri("http://localhost:8000/"),
+    ".atelia/completion-golden/openai.jsonl"
+);
+
+var client = new OpenAIChatClient(
+    apiKey: null,
+    httpClient: httpClient,
+    dialect: OpenAIChatDialects.SgLangCompatible
+);
+```
+
+当前 replay 语义是：
+
+- 严格顺序消耗 golden log 中的下一条 exchange
+- 校验 `method`、`requestUri`、`requestText`
+- 校验失败会立即抛错，提醒请求已经偏离录制时的行为
+
+这更适合 deterministic 调试和单测，不是通用匹配型 mock server。
+
+### 2.3 LiveContextProto 的本地开关
+
+`prototypes/LiveContextProto/Program.cs` 已经接好 transport factory，可以直接靠环境变量切换模式：
+
+- `ATELIA_COMPLETION_GOLDEN_LOG=/path/to/openai.jsonl`：真实访问远程服务，同时记录 golden log
+- `ATELIA_COMPLETION_REPLAY_LOG=/path/to/openai.jsonl`：不访问远程服务，直接从 golden log 顺序 replay
+
+程序启动时会打印当前 transport 模式，例如：
+
+```text
+[startup] transport: record -> .atelia/completion-golden/openai.jsonl (http://localhost:8000/)
+[startup] env: ATELIA_COMPLETION_GOLDEN_LOG=record, ATELIA_COMPLETION_REPLAY_LOG=replay
+```
+
+两个环境变量不能同时设置。
+
+### 2.4 本地 round-trip E2E 测试怎么跑
+
+`CompletionHttpTransportTests` 里已经有两条显式启用的本地 E2E：
+
+- `LocalRoundTripE2E_OpenAI_RecordThenReplayAgainstLocalEndpoint`
+- `LocalRoundTripE2E_Anthropic_RecordThenReplayAgainstLocalEndpoint`
+
+它们都会对真实的 `http://localhost:8000/` 做完整闭环：
+
+1. 先走 live request
+2. 把 exchange 记录到 JSONL golden log
+3. 再从同一份 JSONL 做 replay
+4. 验证 replay 结果与 live 结果一致
+
+这两条测试默认**不会真正执行**，只有显式设置环境变量才会跑：
+
+```bash
+export ATELIA_RUN_LOCAL_LLM_E2E=1
+dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.csproj --filter "LocalRoundTripE2E"
+```
+
+如果你只想跑其中一条，也可以用更细的过滤条件：
+
+```bash
+export ATELIA_RUN_LOCAL_LLM_E2E=1
+dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.csproj --filter "LocalRoundTripE2E_OpenAI"
+
+export ATELIA_RUN_LOCAL_LLM_E2E=1
+dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.csproj --filter "LocalRoundTripE2E_Anthropic"
+```
+
+使用前提：
+
+- 本地 `sglang` 服务已经监听 `http://localhost:8000/`
+- 该端点同时支持 OpenAI Chat 与 Anthropic Messages
+- 本地服务不校验 `model-id` 与 `api-key`，因此测试中的占位值不会影响运行
+
+推荐把它视为**显式运行的本地集成测试**，而不是默认快速单测：
+
+- 默认 `dotnet test` 不会被本地服务状态影响
+- 需要验证 transport 的真实闭环时，再手动开启
+- 这是比“只测录制”或“只测回放”更强的一条验证路径
 
 ---
 

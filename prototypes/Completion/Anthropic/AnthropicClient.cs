@@ -52,10 +52,7 @@ public sealed class AnthropicClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
-        var httpRequest = CreateHttpRequest(apiRequest);
-
-        using var response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream, Encoding.UTF8);
@@ -88,6 +85,15 @@ public sealed class AnthropicClient : ICompletionClient {
 
         DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");
         return aggregator.Build();
+    }
+
+    private async Task<HttpResponseMessage> SendStreamingRequestAsync(AnthropicApiRequest apiRequest, CancellationToken cancellationToken) {
+        return await CompletionHttpRequestUtility.SendStreamingRequestAsync(
+            _httpClient,
+            CreateHttpRequest(apiRequest),
+            "Anthropic messages request",
+            cancellationToken
+        );
     }
 
     private HttpRequestMessage CreateHttpRequest(AnthropicApiRequest apiRequest) {

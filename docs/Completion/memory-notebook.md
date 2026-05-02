@@ -115,7 +115,7 @@ JSON 解析失败会记 warning 但不中断流。
 | `choices[].delta.content` | 追加正文增量 | `AppendContent(...)` |
 | `choices[].delta.tool_calls[]` | 按 `tool_calls[i].index` 聚合 id/name/arguments 片段 | — |
 | `choices[].finish_reason = "tool_calls"` | 将已聚合完成的调用一次性解析为 `ParsedToolCall` | `AppendToolCall(...)` |
-| `reasoning_content` | 忽略，不上浮到抽象层 | — |
+| `reasoning_content` | `Strict` / `SgLangCompatible` 忽略；`DeepSeekV4` 捕获为 `OpenAIChatReasoningBlock`，并在 replay-compatible assistant history 中写回 | `OpenAIChatReasoningBlock` |
 | `[DONE]` | 流结束；若仍有未刷出的工具调用则补刷 | — |
 
 strict 路径默认保留所有 `delta.content`；只有特定 dialect（当前是 `SgLangCompatible`）才会忽略“工具调用已开始后夹带的纯空白 content noise”。

@@ -34,7 +34,7 @@ internal static class OpenAIChatMessageConverter {
                     break;
 
                 case ActionMessage output:
-                    BuildActionMessage(output, messages, state);
+                    BuildActionMessage(output, messages, state, dialect);
                     break;
 
                 default:
@@ -186,12 +186,18 @@ internal static class OpenAIChatMessageConverter {
         return JsonSerializer.Serialize(payload);
     }
 
-    private static void BuildActionMessage(ActionMessage output, List<OpenAIChatMessage> messages, ProjectionState state) {
+    private static void BuildActionMessage(
+        ActionMessage output,
+        List<OpenAIChatMessage> messages,
+        ProjectionState state,
+        OpenAIChatDialect dialect
+    ) {
         EnsureNoPendingToolCalls(state, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
-        // 从 Blocks 提取：Text 块拼成 content；ToolCall 块提取为 toolCalls；Thinking 块静默跳过
-        // （OpenAI Chat Completions 协议不支持这些富块类型）。
+        // 从 Blocks 提取：Text 块拼成 content；ToolCall 块提取为 toolCalls；
+        // reasoning 仅在支持 replay 的 dialect 下投影到 reasoning_content。
         var contentBuilder = new System.Text.StringBuilder();
+        var reasoningBuilder = new System.Text.StringBuilder();
         var toolCallList = new List<ParsedToolCall>(output.Blocks.Count);
 
         foreach (var block in output.Blocks) {
@@ -202,8 +208,14 @@ internal static class OpenAIChatMessageConverter {
                 case ActionBlock.ToolCall toolCallBlock:
                     toolCallList.Add(toolCallBlock.Call);
                     break;
+                case OpenAIChatReasoningBlock openAiReasoningBlock when dialect.ReasoningMode is OpenAIChatReasoningMode.ReplayCompatible:
+                    reasoningBuilder.Append(openAiReasoningBlock.Content);
+                    break;
+                case ActionBlock.TextReasoningBlock textReasoningBlock when dialect.ReasoningMode is OpenAIChatReasoningMode.ReplayCompatible:
+                    reasoningBuilder.Append(textReasoningBlock.Content);
+                    break;
                 case ActionBlock.ReasoningBlock:
-                    // Protocol limitation: OpenAI Chat Completions 无 thinking/reasoning 等效字段，静默跳过所有 reasoning 子类型。
+                    // 默认 strict/capture-only 路径不回灌 reasoning_content，保持最保守的 OpenAI 语义。
                     break;
 
                 default:
@@ -221,11 +233,13 @@ internal static class OpenAIChatMessageConverter {
         }
 
         var toolCalls = toolCallList.Count > 0 ? BuildToolCallHistory(toolCallList) : null;
+        var reasoningContent = reasoningBuilder.Length > 0 ? reasoningBuilder.ToString() : null;
 
         messages.Add(
             new OpenAIChatMessage {
                 Role = "assistant",
                 Content = content,
+                ReasoningContent = reasoningContent,
                 ToolCalls = toolCalls
             }
         );

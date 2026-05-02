@@ -16,18 +16,27 @@ internal sealed class OpenAIChatStreamParser {
 
     private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly OpenAIChatWhitespaceContentMode _whitespaceContentMode;
+    private readonly OpenAIChatReasoningMode _reasoningMode;
     private readonly Dictionary<int, ToolCallState> _toolCalls = new();
+    private readonly StringBuilder _reasoningContentBuilder = new();
+    private bool _reasoningInProgress;
 
     public OpenAIChatStreamParser()
-        : this(ImmutableArray<ToolDefinition>.Empty, OpenAIChatWhitespaceContentMode.Preserve) {
+        : this(
+            ImmutableArray<ToolDefinition>.Empty,
+            OpenAIChatWhitespaceContentMode.Preserve,
+            OpenAIChatReasoningMode.Ignore
+        ) {
     }
 
     public OpenAIChatStreamParser(
         ImmutableArray<ToolDefinition> toolDefinitions,
-        OpenAIChatWhitespaceContentMode whitespaceContentMode = OpenAIChatWhitespaceContentMode.Preserve
+        OpenAIChatWhitespaceContentMode whitespaceContentMode = OpenAIChatWhitespaceContentMode.Preserve,
+        OpenAIChatReasoningMode reasoningMode = OpenAIChatReasoningMode.Ignore
     ) {
         _toolDefinitions = new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase);
         _whitespaceContentMode = whitespaceContentMode;
+        _reasoningMode = reasoningMode;
         StreamParserToolUtility.LoadToolDefinitions(toolDefinitions, _toolDefinitions, "OpenAI");
     }
 
@@ -59,11 +68,13 @@ internal sealed class OpenAIChatStreamParser {
     }
 
     public void Complete(CompletionAggregator aggregator) {
-        FlushPendingToolCalls(aggregator);
+        FlushPendingStreamingState(aggregator);
     }
 
     public void DiscardIncompleteStreamingState() {
         _toolCalls.Clear();
+        _reasoningContentBuilder.Clear();
+        _reasoningInProgress = false;
     }
 
     private void HandleChoice(JsonObject choice, CompletionAggregator aggregator) {
@@ -73,20 +84,32 @@ internal sealed class OpenAIChatStreamParser {
 
         var finishReason = choice["finish_reason"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(finishReason)) {
-            FlushPendingToolCalls(aggregator);
+            FlushPendingStreamingState(aggregator);
         }
     }
 
     private void HandleDelta(JsonObject delta, CompletionAggregator aggregator) {
+        var reasoningContent = delta["reasoning_content"]?.GetValue<string>();
+        if (!string.IsNullOrEmpty(reasoningContent) && _reasoningMode is not OpenAIChatReasoningMode.Ignore) {
+            BeginThinkingIfNeeded(aggregator);
+            _reasoningContentBuilder.Append(reasoningContent);
+            aggregator.AppendReasoningDelta(reasoningContent);
+        }
+
         var hasToolCallsInCurrentDelta = delta["tool_calls"] is JsonArray { Count: > 0 };
         var content = delta["content"]?.GetValue<string>();
         if (!string.IsNullOrEmpty(content)) {
+            FlushPendingReasoning(aggregator);
             if (!ShouldIgnoreContentDelta(content, hasToolCallsInCurrentDelta)) {
                 aggregator.AppendContent(content);
             }
         }
 
         if (delta["tool_calls"] is JsonArray toolCalls) {
+            if (_toolCalls.Count == 0) {
+                FlushPendingReasoning(aggregator);
+            }
+
             var fallbackIndex = 0;
             foreach (var toolCallNode in toolCalls) {
                 if (toolCallNode is JsonObject toolCall) {
@@ -96,6 +119,32 @@ internal sealed class OpenAIChatStreamParser {
                 fallbackIndex++;
             }
         }
+    }
+
+    private void BeginThinkingIfNeeded(CompletionAggregator aggregator) {
+        if (_reasoningInProgress) { return; }
+
+        aggregator.BeginThinking();
+        _reasoningInProgress = true;
+    }
+
+    private void FlushPendingReasoning(CompletionAggregator aggregator) {
+        if (_reasoningContentBuilder.Length == 0) { return; }
+
+        aggregator.EndThinking(
+            new OpenAIChatReasoningBlock(
+                _reasoningContentBuilder.ToString(),
+                aggregator.Invocation
+            )
+        );
+
+        _reasoningContentBuilder.Clear();
+        _reasoningInProgress = false;
+    }
+
+    private void FlushPendingStreamingState(CompletionAggregator aggregator) {
+        FlushPendingReasoning(aggregator);
+        FlushPendingToolCalls(aggregator);
     }
 
     private bool ShouldIgnoreContentDelta(string content, bool hasToolCallsInCurrentDelta) {

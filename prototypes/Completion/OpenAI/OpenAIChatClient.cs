@@ -73,7 +73,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
 
         var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
-        var parser = new OpenAIChatStreamParser(request.Tools, _dialect.WhitespaceContentMode);
+        var parser = new OpenAIChatStreamParser(request.Tools, _dialect.WhitespaceContentMode, _dialect.ReasoningMode);
         string? line;
         var stoppedEarly = false;
 

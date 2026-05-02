@@ -425,7 +425,7 @@ public record ParsedToolCall(
 
 `PlainTextForDebug` 仅供日志/UI——**永远不要** 把它当成可回灌的 thinking 内容。
 
-OpenAI Chat 路径当前 **不产出** `ActionBlock.Thinking`（`reasoning_content` 字段被丢弃）；只有 Anthropic 路径会发。如果只走 OpenAI，可以直接忽略这个 case。
+OpenAI Chat 路径的默认 `Strict` / `SgLangCompatible` dialect 仍然**不回灌** `reasoning_content`；但 `OpenAIChatDialects.DeepSeekV4` 与 `DeepSeekV4ChatClient` 现在会把 `reasoning_content` 产出为 `OpenAIChatReasoningBlock`，并在下一轮 assistant 历史中回灌回 `reasoning_content`。如果你只走真·OpenAI 或 sglang，本段仍可忽略；如果你要接 DeepSeek V4 tool calling continuity，就应保留这个 block。
 
 ### 4.5 取消与异常
 
@@ -464,10 +464,23 @@ new OpenAIChatClient(
 
 **Dialect 二选一**：
 
+如果目标就是 DeepSeek V4，通常不需要自己选 dialect，直接用 `DeepSeekV4ChatClient` 更省心：
+
+```csharp
+new DeepSeekV4ChatClient(
+    apiKey: Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"),
+    httpClient: null,
+    baseAddress: null
+);
+```
+
+通用 `OpenAIChatClient` 仍适合需要手动控制端点和 dialect 的场景。
+
 | Dialect | 适用 | 关键差异 |
 |---|---|---|
 | `OpenAIChatDialects.Strict` | 真·OpenAI、严格按规范的兼容端点 | 保留所有 `delta.content`（含空白） |
 | `OpenAIChatDialects.SgLangCompatible` | **本地 sglang** 与一些松散兼容端点 | **仅在工具调用累积期间** 忽略夹带的纯空白 `delta.content` |
+| `OpenAIChatDialects.DeepSeekV4` | **DeepSeek V4** 等要求 assistant tool replay 保留 `reasoning_content` 的端点 | 捕获 `delta.reasoning_content` 为 `OpenAIChatReasoningBlock`，并在回灌 assistant 历史时写回 `reasoning_content` |
 
 **打到本地 8000 端口通常应优先用 `SgLangCompatible`**：sglang 的工具调用流里常会夹带空白噪声，`SgLangCompatible` 会在工具调用累积期间忽略这些无意义空白。`ApiSpecId == "openai-chat-v1"`。
 

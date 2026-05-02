@@ -27,6 +27,9 @@ internal sealed class OpenAIChatMessage {
     [JsonPropertyName("content")]
     public string? Content { get; set; }
 
+    [JsonPropertyName("reasoning_content")]
+    public string? ReasoningContent { get; set; }
+
     [JsonPropertyName("tool_call_id")]
     public string? ToolCallId { get; set; }
 

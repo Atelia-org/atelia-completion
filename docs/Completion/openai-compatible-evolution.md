@@ -2,7 +2,7 @@
 
 > **用途**：指导后续 LLM Agent 会话在 `OpenAI Chat Completions` 或更广义 `OpenAI-compatible` 端点遇到不兼容问题时，如何增量分析、设计与落地。
 > **适用范围**：`prototypes/Completion/OpenAI/*`
-> **最后更新**：2026-05-01
+> **最后更新**：2026-05-02
 
 ---
 
@@ -92,6 +92,8 @@ new OpenAIClient(
 
 - **Whitespace content noise during tool streaming**
   - 是否忽略工具调用过程中夹带的纯空白 `delta.content`
+- **Reasoning content handling**
+   - 忽略、仅捕获，还是在 assistant 历史回灌时重新写回 `reasoning_content`
 
 未来只有当真实问题反复出现时，才继续增加新的差异维度。
 
@@ -193,6 +195,16 @@ OpenAI Chat Completions 语义下，`role="tool"` 消息必须与上一条 `assi
 - `Strict` 路径应保留这类内容，避免隐式改写 transcript
 - 只有明确确认存在该噪声的 dialect，才应在“已有 pending tool calls 且 content 全空白”时丢弃
 
+### 3. `reasoning_content` 的处理模式
+
+已确认 DeepSeek V4 的 OpenAI-compatible chat/completions 路径在 assistant tool replay 时需要保留 `reasoning_content`，否则会丢失思考连续性。
+
+- `Strict` / `SgLangCompatible` 仍保持最保守语义：忽略 `reasoning_content`
+- `DeepSeekV4` dialect 会把 `delta.reasoning_content` 捕获为 `OpenAIChatReasoningBlock`
+- 当历史里的 assistant message 走 `DeepSeekV4` dialect 回灌时，会把 `OpenAIChatReasoningBlock` 或显式 `TextReasoningBlock` 写回 `reasoning_content`
+
+这个差异已经同时影响 parser 与 converter，因此已达到进入 dialect 的门槛；但仍保持为轻量枚举，而不是提前升级为独立策略对象。
+
 ---
 
 ## 推荐的代码落点
@@ -240,13 +252,15 @@ OpenAI Chat Completions 语义下，`role="tool"` 消息必须与上一条 `assi
 
 ## 当前状态校准
 
-截至 2026-05-01，OpenAI Chat 路径里的简化结论是：
+截至 2026-05-02，OpenAI Chat 路径里的简化结论是：
 
 - `ToolResultsMessage` 的投影方式已固定为严格合法的唯一实现，不再作为 dialect 维度
 - provider 原始 token usage / `stream_options.include_usage` 已从 Completion 抽象层移除
-- 当前 dialect 实际只保留一个行为差异：是否忽略工具调用流中的纯空白 `delta.content`
+- 当前 dialect 已有两个行为差异：
+   - 是否忽略工具调用流中的纯空白 `delta.content`
+   - 如何处理 `reasoning_content`：忽略、仅捕获、或允许 replay-compatible 回灌
 
-如果未来再次出现第二类真实差异，再按本文件的方法把它增量引入 dialect，而不是提前占位。
+如果未来再次出现第三类真实差异，再按本文件的方法把它增量引入 dialect，而不是提前占位。
 
 ---
 

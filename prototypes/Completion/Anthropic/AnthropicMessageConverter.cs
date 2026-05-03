@@ -234,29 +234,24 @@ internal static class AnthropicMessageConverter {
     private static string DescribeActionBlock(ActionBlock? block)
         => block is null ? "<null>" : $"'{block.Kind}'";
 
-    private static JsonElement BuildToolCallHistory(ParsedToolCall toolCall) {
-        var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);
+    private static JsonElement BuildToolCallHistory(RawToolCall toolCall) {
+        var json = StreamParserToolUtility.NormalizeRawArgumentsJson(toolCall.RawArgumentsJson);
 
-        if (!hasParseError && toolCall.Arguments is { } parsedArguments) { return JsonSerializer.SerializeToElement(parsedArguments); }
-
-        if (toolCall.RawArguments is { Count: > 0 } rawArguments) {
-            if (hasParseError) {
-                DebugUtil.Warning(
-                    DebugCategory,
-                    $"[Anthropic] Falling back to raw arguments toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
-                );
+        try {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object) {
+                return JsonSerializer.SerializeToElement(document.RootElement);
             }
 
-            var fallback = BuildFallbackFromRawArguments(rawArguments);
-            return JsonSerializer.SerializeToElement(fallback);
-        }
-
-        if (toolCall.Arguments is { } fallbackArguments) { return JsonSerializer.SerializeToElement(fallbackArguments); }
-
-        if (hasParseError) {
             DebugUtil.Warning(
                 DebugCategory,
-                $"[Anthropic] Tool call arguments unavailable toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
+                $"[Anthropic] Tool call replay requires object input; fallback to empty object toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} rootKind={document.RootElement.ValueKind}"
+            );
+        }
+        catch (JsonException ex) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[Anthropic] Tool call replay received invalid raw arguments JSON; fallback to empty object toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={ex.Message}"
             );
         }
 
@@ -272,39 +267,6 @@ internal static class AnthropicMessageConverter {
         }
 
         return AnthropicThinkingPayloadCodec.Decode(anthropicBlock.OpaquePayload);
-    }
-
-    private static JsonObject BuildFallbackFromRawArguments(IReadOnlyDictionary<string, string> rawArguments) {
-        var node = new JsonObject();
-
-        foreach (var pair in rawArguments) {
-            node[pair.Key] = ConvertRawArgumentValue(pair.Value);
-        }
-
-        return node;
-    }
-
-    private static JsonNode? ConvertRawArgumentValue(string rawValue) {
-        if (rawValue is null) { return null; }
-
-        var trimmed = rawValue.Trim();
-
-        if (trimmed.Length == 0) { return JsonValue.Create(rawValue); }
-
-        if (string.Equals(trimmed, "null", StringComparison.OrdinalIgnoreCase)) { return null; }
-
-        try {
-            var parsed = JsonNode.Parse(trimmed);
-            return parsed;
-        }
-        catch (JsonException) {
-            // fall back to treating the value as a plain string
-        }
-        catch (ArgumentException) {
-            // fall back to treating the value as a plain string
-        }
-
-        return JsonValue.Create(rawValue);
     }
 
     /// <summary>

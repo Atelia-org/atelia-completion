@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Xunit;
@@ -10,7 +9,7 @@ public sealed class AnthropicStreamParserTests {
 
     [Fact]
     public void ParseEvent_UsageEventsDoNotAffectBlocks() {
-        var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+        var parser = new AnthropicStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
@@ -38,17 +37,7 @@ public sealed class AnthropicStreamParserTests {
 
     [Fact]
     public void ParseEvent_AggregatesToolInputFragmentsIntoSingleToolCall() {
-        var parser = new AnthropicStreamParser(
-            ImmutableArray.Create(
-                new ToolDefinition(
-                    Name: "get_weather",
-                    Description: "Get weather",
-                    Parameters: ImmutableArray.Create(
-                        new ToolParamSpec("city", "city", ToolParamType.String)
-                    )
-                )
-            )
-        );
+        var parser = new AnthropicStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
@@ -77,14 +66,12 @@ public sealed class AnthropicStreamParserTests {
 
         Assert.Equal("toolu_123", toolCall.ToolCallId);
         Assert.Equal("get_weather", toolCall.ToolName);
-        Assert.Null(toolCall.ParseError);
-        Assert.Equal("Paris", toolCall.Arguments!["city"]);
-        Assert.Equal("Paris", toolCall.RawArguments!["city"]);
+        Assert.Equal("{\"city\":\"Paris\"}", toolCall.RawArgumentsJson);
     }
 
     [Fact]
-    public void ParseEvent_UnknownToolFallbackPreservesStringLiterals() {
-        var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+    public void ParseEvent_UnknownToolFallbackPreservesRawArgumentsJson() {
+        var parser = new AnthropicStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
@@ -110,23 +97,12 @@ public sealed class AnthropicStreamParserTests {
 
         Assert.Equal("toolu_456", toolCall.ToolCallId);
         Assert.Equal("unknown_tool", toolCall.ToolName);
-        Assert.Null(toolCall.ParseError);
-        Assert.Equal("tool_definition_missing", toolCall.ParseWarning);
-        Assert.Equal("true", toolCall.Arguments!["flag"]);
-        Assert.Equal("42", toolCall.Arguments!["count"]);
-        Assert.Equal("null", toolCall.Arguments!["maybe"]);
-
-        var nested = Assert.IsType<Dictionary<string, object?>>(toolCall.Arguments!["nested"]);
-        Assert.Equal("false", nested["enabled"]);
-
-        Assert.Equal("true", toolCall.RawArguments!["flag"]);
-        Assert.Equal("42", toolCall.RawArguments!["count"]);
-        Assert.Equal("null", toolCall.RawArguments!["maybe"]);
+        Assert.Equal("{\"flag\":\"true\",\"count\":\"42\",\"maybe\":\"null\",\"nested\":{\"enabled\":\"false\"}}", toolCall.RawArgumentsJson);
     }
 
     [Fact]
     public void ParseEvent_AggregatesThinkingDeltasIntoOpaquePayload() {
-        var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+        var parser = new AnthropicStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
@@ -170,7 +146,7 @@ public sealed class AnthropicStreamParserTests {
 
     [Fact]
     public void ParseEvent_PreservesThinkingThenTextOrdering() {
-        var parser = new AnthropicStreamParser(ImmutableArray<ToolDefinition>.Empty);
+        var parser = new AnthropicStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {

@@ -9,7 +9,7 @@ public sealed class CompletionResultTests {
     public void Constructor_CopiesIncomingLists_ToPreserveSnapshotSemantics() {
         var sourceBlocks = new List<ActionBlock> {
             new ActionBlock.Text("alpha"),
-            new ActionBlock.ToolCall(new ParsedToolCall("tool.a", "call-1", null, new Dictionary<string, object?>(), null, null))
+            new ActionBlock.ToolCall(new RawToolCall("tool.a", "call-1", "{}"))
         };
         var sourceErrors = new List<string> { "boom-1" };
 

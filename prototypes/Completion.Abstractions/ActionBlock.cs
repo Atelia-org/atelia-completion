@@ -22,7 +22,7 @@ public abstract record ActionBlock {
     /// <summary>
     /// 表示一次工具调用请求，由 <see cref="Call"/> 描述具体名称、调用 ID 与参数。
     /// </summary>
-    public sealed record ToolCall(ParsedToolCall Call) : ActionBlock {
+    public sealed record ToolCall(RawToolCall Call) : ActionBlock {
         public override ActionBlockKind Kind => ActionBlockKind.ToolCall;
     }
 

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
@@ -10,15 +9,6 @@ public sealed class OpenAIChatStreamParserTests {
     [Fact]
     public void ParseEvent_IgnoresReasoningContentAndAggregatesToolCallFragments() {
         var parser = new OpenAIChatStreamParser(
-            ImmutableArray.Create(
-                new ToolDefinition(
-                    Name: "get_weather",
-                    Description: "Get weather",
-                    Parameters: ImmutableArray.Create(
-                        new ToolParamSpec("city", "city", ToolParamType.String)
-                    )
-                )
-            ),
             OpenAIChatWhitespaceContentMode.IgnoreWhitespaceDuringToolCalls
         );
         var aggregator = new CompletionAggregator(DummyInvocation);
@@ -45,23 +35,12 @@ public sealed class OpenAIChatStreamParserTests {
         var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
         Assert.Equal("call_123", toolCall.ToolCallId);
         Assert.Equal("get_weather", toolCall.ToolName);
-        Assert.Null(toolCall.ParseError);
-        Assert.Equal("Paris", toolCall.Arguments!["city"]);
-        Assert.Equal("Paris", toolCall.RawArguments!["city"]);
+        Assert.Equal("{\"city\": \"Paris\"}", toolCall.RawArgumentsJson);
     }
 
     [Fact]
     public void ParseEvent_DeepSeekModeCapturesReasoningContentBeforeToolCalls() {
         var parser = new OpenAIChatStreamParser(
-            ImmutableArray.Create(
-                new ToolDefinition(
-                    Name: "get_weather",
-                    Description: "Get weather",
-                    Parameters: ImmutableArray.Create(
-                        new ToolParamSpec("city", "city", ToolParamType.String)
-                    )
-                )
-            ),
             OpenAIChatWhitespaceContentMode.Preserve,
             OpenAIChatReasoningMode.ReplayCompatible
         );
@@ -90,21 +69,12 @@ public sealed class OpenAIChatStreamParserTests {
         var toolCall = Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call;
         Assert.Equal("call_123", toolCall.ToolCallId);
         Assert.Equal("get_weather", toolCall.ToolName);
-        Assert.Equal("Paris", toolCall.Arguments!["city"]);
+        Assert.Equal("{\"city\":\"Paris\"}", toolCall.RawArgumentsJson);
     }
 
     [Fact]
     public void ParseEvent_StrictModePreservesWhitespaceContentDuringToolCalls() {
         var parser = new OpenAIChatStreamParser(
-            ImmutableArray.Create(
-                new ToolDefinition(
-                    Name: "get_weather",
-                    Description: "Get weather",
-                    Parameters: ImmutableArray.Create(
-                        new ToolParamSpec("city", "city", ToolParamType.String)
-                    )
-                )
-            ),
             OpenAIChatWhitespaceContentMode.Preserve
         );
         var aggregator = new CompletionAggregator(DummyInvocation);
@@ -131,15 +101,6 @@ public sealed class OpenAIChatStreamParserTests {
     [Fact]
     public void ParseEvent_SgLangModeIgnoresWhitespaceWhenContentAndToolCallsShareSameDelta() {
         var parser = new OpenAIChatStreamParser(
-            ImmutableArray.Create(
-                new ToolDefinition(
-                    Name: "get_weather",
-                    Description: "Get weather",
-                    Parameters: ImmutableArray.Create(
-                        new ToolParamSpec("city", "city", ToolParamType.String)
-                    )
-                )
-            ),
             OpenAIChatWhitespaceContentMode.IgnoreWhitespaceDuringToolCalls
         );
         var aggregator = new CompletionAggregator(DummyInvocation);
@@ -163,25 +124,12 @@ public sealed class OpenAIChatStreamParserTests {
 
         var toolCallBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.ToolCall);
         Assert.Equal("call_123", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.ToolCallId);
-        Assert.Equal("Paris", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.Arguments!["city"]);
+        Assert.Equal("{\"city\":\"Paris\"}", Assert.IsType<ActionBlock.ToolCall>(toolCallBlock).Call.RawArgumentsJson);
     }
 
     [Fact]
     public void ParseEvent_InterleavedToolCallsAreAggregatedByIndex() {
-        var parser = new OpenAIChatStreamParser(
-            ImmutableArray.Create(
-                new ToolDefinition(
-                    Name: "alpha",
-                    Description: "alpha",
-                    Parameters: ImmutableArray.Create(new ToolParamSpec("value", "value", ToolParamType.String))
-                ),
-                new ToolDefinition(
-                    Name: "beta",
-                    Description: "beta",
-                    Parameters: ImmutableArray.Create(new ToolParamSpec("count", "count", ToolParamType.Int32))
-                )
-            )
-        );
+        var parser = new OpenAIChatStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
@@ -205,9 +153,9 @@ public sealed class OpenAIChatStreamParserTests {
         var toolCallBlocks = result.Message.Blocks.Where(b => b.Kind == ActionBlockKind.ToolCall).ToArray();
         Assert.Equal(2, toolCallBlocks.Length);
         Assert.Equal("alpha", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[0]).Call.ToolName);
-        Assert.Equal("A", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[0]).Call.Arguments!["value"]);
+        Assert.Equal("{\"value\": \"A\"}", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[0]).Call.RawArgumentsJson);
         Assert.Equal("beta", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.ToolName);
-        Assert.Equal(7, Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.Arguments!["count"]);
+        Assert.Equal("{\"count\": 7}", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.RawArgumentsJson);
         Assert.Equal("call_b", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.ToolCallId);
     }
 }

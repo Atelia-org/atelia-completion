@@ -59,7 +59,7 @@ public sealed record ActionMessage : IHistoryMessage {
     /// Lossy derived view：从 <see cref="Blocks"/> 中按顺序提取所有
     /// <see cref="ActionBlock.ToolCall"/> 块的工具调用信息。
     /// </summary>
-    public IReadOnlyList<ParsedToolCall> ToolCalls => Blocks
+    public IReadOnlyList<RawToolCall> ToolCalls => Blocks
         .OfType<ActionBlock.ToolCall>()
         .Select(static block => block.Call)
         .ToArray();

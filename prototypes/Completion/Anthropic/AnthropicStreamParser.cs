@@ -1,10 +1,9 @@
-using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Utils;
+using Atelia.Diagnostics;
 
 namespace Atelia.Completion.Anthropic;
 
@@ -15,16 +14,9 @@ namespace Atelia.Completion.Anthropic;
 internal sealed class AnthropicStreamParser {
     private const string DebugCategory = "Provider";
 
-    private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
 
-    public AnthropicStreamParser()
-        : this(ImmutableArray<ToolDefinition>.Empty) {
-    }
-
-    public AnthropicStreamParser(ImmutableArray<ToolDefinition> toolDefinitions) {
-        _toolDefinitions = new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase);
-        StreamParserToolUtility.LoadToolDefinitions(toolDefinitions, _toolDefinitions, "Anthropic");
+    public AnthropicStreamParser() {
     }
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
@@ -176,33 +168,17 @@ internal sealed class AnthropicStreamParser {
     }
 
     /// <summary>
-    /// Builds a <see cref="ParsedToolCall"/> from a completed Anthropic tool content block.
+    /// Builds a <see cref="RawToolCall"/> from a completed Anthropic tool content block.
     /// </summary>
     /// <remarks>
-    /// Ensures both parsed arguments and their raw textual counterparts are captured so downstream providers can
-    /// reconstruct the invocation even when type conversion fails.
+    /// Preserves the provider-emitted JSON text for downstream replay and execution-boundary parsing.
     /// </remarks>
-    private ParsedToolCall CreateToolCallRequest(ContentBlockState state) {
-        var rawArgumentsText = state.ToolInputJsonBuilder.Length == 0
-            ? "{}"
-            : state.ToolInputJsonBuilder.ToString();
-
-        if (_toolDefinitions.TryGetValue(state.ToolName, out var definition)) {
-            var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, rawArgumentsText);
-            return new ParsedToolCall(
-                ToolName: state.ToolName,
-                ToolCallId: state.ToolUseId,
-                RawArguments: parsed.RawArguments,
-                Arguments: parsed.Arguments,
-                ParseError: parsed.ParseError,
-                ParseWarning: parsed.ParseWarning
-            );
-        }
-
+    private RawToolCall CreateToolCallRequest(ContentBlockState state) {
+        var rawArgumentsText = StreamParserToolUtility.NormalizeRawArgumentsJson(state.ToolInputJsonBuilder.ToString());
         return BuildToolCallWithoutSchema(state.ToolName, state.ToolUseId, rawArgumentsText);
     }
 
-    private static ParsedToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
+    private static RawToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
         => StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
 
     private static bool TryGetInt32(JsonObject obj, string propertyName, out int value) {

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -14,30 +13,18 @@ namespace Atelia.Completion.OpenAI;
 internal sealed class OpenAIChatStreamParser {
     private const string DebugCategory = "Provider";
 
-    private readonly Dictionary<string, ToolDefinition> _toolDefinitions;
     private readonly OpenAIChatWhitespaceContentMode _whitespaceContentMode;
     private readonly OpenAIChatReasoningMode _reasoningMode;
     private readonly Dictionary<int, ToolCallState> _toolCalls = new();
     private readonly StringBuilder _reasoningContentBuilder = new();
     private bool _reasoningInProgress;
 
-    public OpenAIChatStreamParser()
-        : this(
-            ImmutableArray<ToolDefinition>.Empty,
-            OpenAIChatWhitespaceContentMode.Preserve,
-            OpenAIChatReasoningMode.Ignore
-        ) {
-    }
-
     public OpenAIChatStreamParser(
-        ImmutableArray<ToolDefinition> toolDefinitions,
         OpenAIChatWhitespaceContentMode whitespaceContentMode = OpenAIChatWhitespaceContentMode.Preserve,
         OpenAIChatReasoningMode reasoningMode = OpenAIChatReasoningMode.Ignore
     ) {
-        _toolDefinitions = new Dictionary<string, ToolDefinition>(StringComparer.OrdinalIgnoreCase);
         _whitespaceContentMode = whitespaceContentMode;
         _reasoningMode = reasoningMode;
-        StreamParserToolUtility.LoadToolDefinitions(toolDefinitions, _toolDefinitions, "OpenAI");
     }
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
@@ -193,33 +180,15 @@ internal sealed class OpenAIChatStreamParser {
         _toolCalls.Clear();
     }
 
-    private ParsedToolCall CreateToolCall(ToolCallState state) {
-        var rawArgumentsText = state.ArgumentsBuilder.Length == 0
-            ? "{}"
-            : state.ArgumentsBuilder.ToString();
+    private RawToolCall CreateToolCall(ToolCallState state) {
+        var rawArgumentsText = StreamParserToolUtility.NormalizeRawArgumentsJson(state.ArgumentsBuilder.ToString());
 
         var toolName = state.ToolName ?? string.Empty;
         var toolCallId = string.IsNullOrWhiteSpace(state.ToolCallId) ? $"openai-call-{state.Index}" : state.ToolCallId;
-
-        // 主路径：模型调用了已注册的工具，由 schema 引导的解析器一次解析到位。
-        if (_toolDefinitions.TryGetValue(toolName, out var definition)) {
-            var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, rawArgumentsText);
-            return new ParsedToolCall(
-                ToolName: toolName,
-                ToolCallId: toolCallId,
-                RawArguments: parsed.RawArguments,
-                Arguments: parsed.Arguments,
-                ParseError: parsed.ParseError,
-                ParseWarning: parsed.ParseWarning
-            );
-        }
-
-        // 罕见路径：模型调了未注册的工具。仍尽量把 raw 文本结构化以便诊断/回放，
-        // 但不做任何类型猜测——没有 schema 时，把 "42" 当数字反而会污染诊断。
         return BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
     }
 
-    private static ParsedToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
+    private static RawToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
         => StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
 
     private sealed class ToolCallState {

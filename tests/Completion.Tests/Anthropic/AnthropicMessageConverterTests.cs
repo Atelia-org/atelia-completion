@@ -7,19 +7,11 @@ namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicMessageConverterTests {
     [Fact]
-    public void ConvertToApiRequest_ParseErrorFallsBackToRawArguments() {
-        var toolCall = new ParsedToolCall(
+    public void ConvertToApiRequest_ReplaysRawArgumentsJson() {
+        var toolCall = new RawToolCall(
             ToolName: "search",
             ToolCallId: "call-1",
-            RawArguments: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-                ["message"] = "hello",
-                ["count"] = "42",
-                ["flag"] = "true",
-                ["payload"] = "{\"nested\":1}"
-            },
-            Arguments: null,
-            ParseError: "int32_invalid_literal",
-            ParseWarning: null
+            RawArgumentsJson: "{\"message\":\"hello\",\"count\":42,\"flag\":true,\"payload\":{\"nested\":1}}"
         );
 
         var actionMessage = new ActionMessage(
@@ -60,18 +52,11 @@ public sealed class AnthropicMessageConverterTests {
     }
 
     [Fact]
-    public void ConvertToApiRequest_UsesParsedArgumentsWhenNoParseError() {
-        var arguments = new Dictionary<string, object?> {
-            ["count"] = 7
-        };
-
-        var toolCall = new ParsedToolCall(
+    public void ConvertToApiRequest_UsesRawArgumentsJsonObject() {
+        var toolCall = new RawToolCall(
             ToolName: "echo",
             ToolCallId: "call-2",
-            RawArguments: null,
-            Arguments: arguments,
-            ParseError: null,
-            ParseWarning: null
+            RawArgumentsJson: "{\"count\":7}"
         );
 
         var actionMessage = new ActionMessage(
@@ -104,18 +89,11 @@ public sealed class AnthropicMessageConverterTests {
     }
 
     [Fact]
-    public void ConvertToApiRequest_ParseErrorWithoutRawFallsBackToParsedValues() {
-        var arguments = new Dictionary<string, object?> {
-            ["count"] = 3
-        };
-
-        var toolCall = new ParsedToolCall(
+    public void ConvertToApiRequest_UsesRawArgumentsJsonForReplay() {
+        var toolCall = new RawToolCall(
             ToolName: "echo",
             ToolCallId: "call-3",
-            RawArguments: null,
-            Arguments: arguments,
-            ParseError: "arguments_malformed",
-            ParseWarning: null
+            RawArgumentsJson: "{\"count\":3}"
         );
 
         var actionMessage = new ActionMessage(
@@ -148,11 +126,87 @@ public sealed class AnthropicMessageConverterTests {
     }
 
     [Fact]
+    public void ConvertToApiRequest_InvalidRawArgumentsJsonFallsBackToEmptyObject() {
+        var toolCall = new RawToolCall(
+            ToolName: "echo",
+            ToolCallId: "call-invalid",
+            RawArgumentsJson: "{\"count\":"
+        );
+
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.ToolCall(toolCall) }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("hi"),
+                actionMessage,
+                new ToolResultsMessage(
+                    Content: null,
+                    Results: new[] {
+                        new ToolResult("echo", "call-invalid", ToolExecutionStatus.Success, "ok")
+                    },
+                    ExecuteError: null
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
+        var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
+
+        Assert.Equal(JsonValueKind.Object, toolUseBlock.Input.ValueKind);
+        Assert.Empty(toolUseBlock.Input.EnumerateObject());
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_NonObjectRawArgumentsJsonFallsBackToEmptyObject() {
+        var toolCall = new RawToolCall(
+            ToolName: "echo",
+            ToolCallId: "call-array",
+            RawArgumentsJson: "[1,2,3]"
+        );
+
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.ToolCall(toolCall) }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("hi"),
+                actionMessage,
+                new ToolResultsMessage(
+                    Content: null,
+                    Results: new[] {
+                        new ToolResult("echo", "call-array", ToolExecutionStatus.Success, "ok")
+                    },
+                    ExecuteError: null
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
+        var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
+
+        Assert.Equal(JsonValueKind.Object, toolUseBlock.Input.ValueKind);
+        Assert.Empty(toolUseBlock.Input.EnumerateObject());
+    }
+
+    [Fact]
     public void ConvertToApiRequest_ToolResultsFollowPendingAssistantToolCallOrder() {
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
-                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
-                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
+                new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")),
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-2", "{}"))
             }
         );
 
@@ -211,8 +265,8 @@ public sealed class AnthropicMessageConverterTests {
     public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
-                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
-                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
+                new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")),
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-2", "{}"))
             }
         );
 
@@ -320,13 +374,10 @@ public sealed class AnthropicMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_RichActionMessagePreservesBlockOrdering() {
-        var toolCall = new ParsedToolCall(
+        var toolCall = new RawToolCall(
             ToolName: "search",
             ToolCallId: "call-1",
-            RawArguments: new Dictionary<string, string>(),
-            Arguments: new Dictionary<string, object?>(),
-            ParseError: null,
-            ParseWarning: null
+            RawArgumentsJson: "{}"
         );
 
         var action = new ActionMessage(

@@ -237,7 +237,7 @@ public sealed class OpenAIChatProjectionRoundTripTests {
         OpenAIChatDialect dialect,
         params string[] events
     ) {
-        var parser = new OpenAIChatStreamParser(tools, dialect.WhitespaceContentMode, dialect.ReasoningMode);
+        var parser = new OpenAIChatStreamParser(dialect.WhitespaceContentMode, dialect.ReasoningMode);
         var aggregator = new CompletionAggregator(DeepSeekInvocation);
 
         foreach (var e in events) {

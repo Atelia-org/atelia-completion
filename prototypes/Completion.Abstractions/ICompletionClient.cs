@@ -118,11 +118,11 @@ public sealed class CompletionStreamObserver {
     // ── 工具调用 ──
 
     /// <summary>一个完整的工具调用被解析完成时触发。</summary>
-    public event Action<ParsedToolCall>? ReceivedToolCall;
+    public event Action<RawToolCall>? ReceivedToolCall;
 
     /// <inheritdoc cref="ReceivedToolCall"/>
     /// <remarks>默认实现仅负责触发 <see cref="ReceivedToolCall"/>。</remarks>
-    public void OnToolCall(ParsedToolCall toolCall) {
+    public void OnToolCall(RawToolCall toolCall) {
         ReceivedToolCall?.Invoke(toolCall);
     }
 

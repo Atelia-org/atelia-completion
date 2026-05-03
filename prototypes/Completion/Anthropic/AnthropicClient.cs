@@ -59,7 +59,7 @@ public sealed class AnthropicClient : ICompletionClient {
 
         var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
-        var parser = new AnthropicStreamParser(request.Tools);
+        var parser = new AnthropicStreamParser();
         string? line;
         var stoppedEarly = false;
 

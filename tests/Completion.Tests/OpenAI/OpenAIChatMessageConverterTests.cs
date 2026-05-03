@@ -9,19 +9,11 @@ public sealed class OpenAIChatMessageConverterTests {
     private static CompletionDescriptor DummyInvocation => new("api.deepseek.com", "openai-chat-v1", "deepseek-v4");
 
     [Fact]
-    public void ConvertToApiRequest_ParseErrorFallsBackToRawArguments() {
-        var toolCall = new ParsedToolCall(
+    public void ConvertToApiRequest_ReplaysRawArgumentsJson() {
+        var toolCall = new RawToolCall(
             ToolName: "search",
             ToolCallId: "call-1",
-            RawArguments: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-                ["message"] = "hello",
-                ["count"] = "42",
-                ["flag"] = "true",
-                ["payload"] = "{\"nested\":1}"
-            },
-            Arguments: null,
-            ParseError: "int32_invalid_literal",
-            ParseWarning: null
+            RawArgumentsJson: "{\"message\":\"hello\",\"count\":42,\"flag\":true,\"payload\":{\"nested\":1}}"
         );
 
         var actionMessage = new ActionMessage(
@@ -65,8 +57,8 @@ public sealed class OpenAIChatMessageConverterTests {
     public void ConvertToApiRequest_ToolResultsFollowPendingAssistantToolCallOrder() {
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
-                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
-                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
+                new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")),
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-2", "{}"))
             }
         );
 
@@ -120,8 +112,8 @@ public sealed class OpenAIChatMessageConverterTests {
     public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
-                new ActionBlock.ToolCall(new ParsedToolCall("search", "call-1", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null)),
-                new ActionBlock.ToolCall(new ParsedToolCall("lookup", "call-2", new Dictionary<string, string>(), new Dictionary<string, object?>(), null, null))
+                new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")),
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-2", "{}"))
             }
         );
 
@@ -194,13 +186,10 @@ public sealed class OpenAIChatMessageConverterTests {
             new ActionBlock[] {
                 new OpenAIChatReasoningBlock("Need tool continuity.", DummyInvocation),
                 new ActionBlock.ToolCall(
-                    new ParsedToolCall(
+                    new RawToolCall(
                         "search",
                         "call-1",
-                        new Dictionary<string, string>(),
-                        new Dictionary<string, object?>(),
-                        null,
-                        null
+                        "{}"
                     )
                 )
             }

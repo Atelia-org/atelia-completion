@@ -63,7 +63,7 @@ public sealed class CompletionAggregator {
     /// <summary>
     /// 喂入一个已完成的工具调用请求。会先 flush 待定文本再追加块。
     /// </summary>
-    public void AppendToolCall(ParsedToolCall toolCall) {
+    public void AppendToolCall(RawToolCall toolCall) {
         FlushPendingText();
         _blocks.Add(new ActionBlock.ToolCall(toolCall));
         _observer?.OnToolCall(toolCall);

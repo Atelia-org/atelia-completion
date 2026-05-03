@@ -392,27 +392,24 @@ history.Add(result.Message);
 >
 > 如需流式 UI 或早停，传入自定义的 `CompletionStreamObserver` 替代 `null`。详见 `CompletionStreamObserver` 的 xmldoc。
 
-### 4.3 `ParsedToolCall` 怎么读
+### 4.3 `RawToolCall` 怎么读
 
 ```csharp
-public record ParsedToolCall(
+public record RawToolCall(
     string ToolName,
     string ToolCallId,
-    IReadOnlyDictionary<string, string>? RawArguments,        // 按参数名拆开的原始字符串值
-    IReadOnlyDictionary<string, object?>? Arguments,          // 强类型解析后
-    string? ParseError,
-    string? ParseWarning
+    string RawArgumentsJson                                  // provider 原始 arguments JSON 文本
 );
 ```
 
 读取建议：
 
-1. `ParseError != null` → **致命** 解析失败，`Arguments` 一定为 null（契约：`Arguments == null` ⇒ `ParseError != null`）。要么把 error 反馈给模型让它重试，要么把整条 call 标 `Skipped`。
-2. `ParseError == null && Arguments != null` → 走 `Arguments[name]`，类型已按 `ToolParamSpec.ValueKind` 转换好。即使没有任何参数，`Arguments` 也是空字典而非 null。
-3. `ParseWarning != null` → 部分字段降级，对应字段在 `Arguments` 里可能保留原始 string。决定是否容忍。
-4. **持久化**：成功路径下，存 `RawArguments` 通常足够，重放时再走 `JsonArgumentParser` 解析；若 `ParseError` 非空，请连同 `ParseError` / `ParseWarning` 一并保存。⚠️ 当前抽象 **不保留** 完整 malformed JSON 文本——若 fatal parse 失败，原始 JSON 可能已不可恢复。需要法证级 replay 时请自行在网络层抓包。
+1. `RawArgumentsJson` 是 **provider 发来的完整 arguments 文本**。Completion 抽象层不再替你做 schema-aware 解析。
+2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ToolDefinition` 解析；解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
+3. **持久化 / replay**：直接保存 `RawArgumentsJson`。回放给 OpenAI Chat 时原样作为 `function.arguments`；回放给 Anthropic/Gemini 这类结构化参数协议时，再把这段 JSON parse 成对象。
+4. **法证价值**：相比旧设计，当前抽象会保留完整原始 JSON 文本；即使 arguments malformed，也不会因为 provider 预解析失败而丢证据。
 
-执行完一定要回灌一条 `ToolResultsMessage`，且 `ToolResult.ToolCallId` 必须等于 `ParsedToolCall.ToolCallId`。
+执行完一定要回灌一条 `ToolResultsMessage`，且 `ToolResult.ToolCallId` 必须等于 `RawToolCall.ToolCallId`。
 
 ### 4.4 `Thinking` block
 

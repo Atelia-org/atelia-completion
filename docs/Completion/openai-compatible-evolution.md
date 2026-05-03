@@ -79,7 +79,7 @@ new OpenAIClient(
 
 - `CompletionRequest`
 - `IHistoryMessage`
-- `ParsedToolCall`
+- `RawToolCall`
 - `CompletionChunk`
 
 这层不承载某个兼容端点的特殊细节。

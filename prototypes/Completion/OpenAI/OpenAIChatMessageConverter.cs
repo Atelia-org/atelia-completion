@@ -198,7 +198,7 @@ internal static class OpenAIChatMessageConverter {
         // reasoning 仅在支持 replay 的 dialect 下投影到 reasoning_content。
         var contentBuilder = new System.Text.StringBuilder();
         var reasoningBuilder = new System.Text.StringBuilder();
-        var toolCallList = new List<ParsedToolCall>(output.Blocks.Count);
+        var toolCallList = new List<RawToolCall>(output.Blocks.Count);
 
         foreach (var block in output.Blocks) {
             switch (block) {
@@ -253,7 +253,7 @@ internal static class OpenAIChatMessageConverter {
     private static string DescribeActionBlock(ActionBlock? block)
         => block is null ? "<null>" : $"'{block.Kind}'";
 
-    private static List<OpenAIChatToolCall>? BuildToolCallHistory(IReadOnlyList<ParsedToolCall> toolCalls) {
+    private static List<OpenAIChatToolCall>? BuildToolCallHistory(IReadOnlyList<RawToolCall> toolCalls) {
         if (toolCalls.Count == 0) { return null; }
 
         var list = new List<OpenAIChatToolCall>(toolCalls.Count);
@@ -274,61 +274,8 @@ internal static class OpenAIChatMessageConverter {
         return list;
     }
 
-    private static string BuildToolCallArguments(ParsedToolCall toolCall) {
-        var hasParseError = !string.IsNullOrWhiteSpace(toolCall.ParseError);
-
-        if (!hasParseError && toolCall.Arguments is { } parsedArguments) { return JsonSerializer.Serialize(parsedArguments); }
-
-        if (toolCall.RawArguments is { Count: > 0 } rawArguments) {
-            if (hasParseError) {
-                DebugUtil.Warning(
-                    DebugCategory,
-                    $"[OpenAI] Falling back to raw arguments toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
-                );
-            }
-
-            var fallback = BuildFallbackFromRawArguments(rawArguments);
-            return JsonSerializer.Serialize(fallback);
-        }
-
-        if (toolCall.Arguments is { } fallbackArguments) { return JsonSerializer.Serialize(fallbackArguments); }
-
-        if (hasParseError) {
-            DebugUtil.Warning(
-                DebugCategory,
-                $"[OpenAI] Tool call arguments unavailable toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={toolCall.ParseError}"
-            );
-        }
-
-        return "{}";
-    }
-
-    private static JsonObject BuildFallbackFromRawArguments(IReadOnlyDictionary<string, string> rawArguments) {
-        var node = new JsonObject();
-
-        foreach (var pair in rawArguments) {
-            node[pair.Key] = ConvertRawArgumentValue(pair.Value);
-        }
-
-        return node;
-    }
-
-    private static JsonNode? ConvertRawArgumentValue(string rawValue) {
-        if (rawValue is null) { return null; }
-
-        var trimmed = rawValue.Trim();
-        if (trimmed.Length == 0) { return JsonValue.Create(rawValue); }
-        if (string.Equals(trimmed, "null", StringComparison.OrdinalIgnoreCase)) { return null; }
-
-        try {
-            return JsonNode.Parse(trimmed);
-        }
-        catch (JsonException) {
-        }
-        catch (ArgumentException) {
-        }
-
-        return JsonValue.Create(rawValue);
+    private static string BuildToolCallArguments(RawToolCall toolCall) {
+        return StreamParserToolUtility.NormalizeRawArgumentsJson(toolCall.RawArgumentsJson);
     }
 
     private static List<OpenAIChatTool>? BuildToolDefinitions(ImmutableArray<ToolDefinition> tools) {

@@ -5,19 +5,15 @@ namespace Atelia.Completion.Tools;
 public sealed record ToolExecuteResult {
     public ToolExecuteResult(
         ToolExecutionStatus status,
-        string basic,
-        string? detail = null
+        string content
     ) {
         Status = status;
-        Basic = basic ?? throw new ArgumentNullException(nameof(basic));
-        Detail = detail ?? basic;
+        Content = content ?? throw new ArgumentNullException(nameof(content));
     }
 
     public ToolExecutionStatus Status { get; }
 
-    public string Basic { get; }
-
-    public string Detail { get; }
+    public string Content { get; }
 }
 
 public sealed record ToolCallExecutionResult {

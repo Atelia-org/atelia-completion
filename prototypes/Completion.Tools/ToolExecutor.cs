@@ -161,17 +161,18 @@ public sealed class ToolExecutor {
     }
 
     private static ToolCallExecutionResult CreateParseFailureResult(RawToolCall request, ResolvedToolCall resolvedRequest) {
-        var basic = "工具参数解析失败。";
-        var detail = string.IsNullOrWhiteSpace(resolvedRequest.ParseError)
-            ? basic
-            : $"解析错误: {resolvedRequest.ParseError}";
+        var content = "工具参数解析失败。";
+
+        if (!string.IsNullOrWhiteSpace(resolvedRequest.ParseError)) {
+            content = string.Concat(content, "\n解析错误: ", resolvedRequest.ParseError);
+        }
 
         if (!string.IsNullOrWhiteSpace(request.RawArgumentsJson)) {
-            detail = string.Concat(detail, "\nraw_arguments_json: ", request.RawArgumentsJson);
+            content = string.Concat(content, "\nraw_arguments_json: ", request.RawArgumentsJson);
         }
 
         return new ToolCallExecutionResult(
-            new ToolExecuteResult(ToolExecutionStatus.Failed, basic, detail),
+            new ToolExecuteResult(ToolExecutionStatus.Failed, content),
             request.ToolName,
             request.ToolCallId
         );
@@ -180,7 +181,7 @@ public sealed class ToolExecutor {
     private static ToolExecuteResult AttachParseWarning(ToolExecuteResult content, string? parseWarning) {
         if (string.IsNullOrWhiteSpace(parseWarning)) { return content; }
 
-        var detail = string.Concat(content.Detail, "\n[ParseWarning] ", parseWarning);
-        return new ToolExecuteResult(content.Status, content.Basic, detail);
+        var mergedContent = string.Concat(content.Content, "\n[ParseWarning] ", parseWarning);
+        return new ToolExecuteResult(content.Status, mergedContent);
     }
 }

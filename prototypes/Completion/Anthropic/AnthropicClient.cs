@@ -26,18 +26,14 @@ public sealed class AnthropicClient : ICompletionClient {
     public string Name => _httpClient.BaseAddress?.Host ?? "anthropic";
     public string ApiSpecId => "messages-v1";
 
-    public AnthropicClient(string? apiKey, HttpClient? httpClient = null, string? apiVersion = null, Uri? baseAddress = null) {
-        _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
-        _httpClient = httpClient ?? new HttpClient();
+    public AnthropicClient(string? apiKey, HttpClient httpClient, string? apiVersion = null) {
+        ArgumentNullException.ThrowIfNull(httpClient);
 
-        // 显式 baseAddress 永远胜出；否则保留外部 HttpClient 已配置的 BaseAddress；都没有时回落到官方端点。
-        // 不要无条件覆盖：共享 HttpClient 的调用方可能已明确配置代理/兼容端点。
-        if (baseAddress is not null) {
-            _httpClient.BaseAddress = baseAddress;
-        }
-        else if (_httpClient.BaseAddress is null) {
-            _httpClient.BaseAddress = new Uri("https://api.anthropic.com/");
-        }
+        _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        _httpClient = httpClient;
+        _ = _httpClient.BaseAddress ?? throw new InvalidOperationException(
+            "AnthropicClient requires HttpClient.BaseAddress to be configured by the caller."
+        );
 
         _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
 

@@ -31,23 +31,17 @@ public sealed class OpenAIChatClient : ICompletionClient {
 
     public OpenAIChatClient(
         string? apiKey,
-        HttpClient? httpClient = null,
-        Uri? baseAddress = null,
+        HttpClient httpClient,
         OpenAIChatDialect? dialect = null,
         OpenAIChatClientOptions? options = null
     ) {
-        _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
-        _httpClient = httpClient ?? new HttpClient();
+        ArgumentNullException.ThrowIfNull(httpClient);
 
-        // 显式 baseAddress 永远胜出；否则尊重外部 HttpClient 已配置的 BaseAddress；都没有时回落到官方端点。
-        // 不要无条件覆盖：HttpClient.BaseAddress 在已发出首个请求后再赋值会抛 InvalidOperationException，
-        // 且共享 HttpClient 的调用方也会被静默改写意图。
-        if (baseAddress is not null) {
-            _httpClient.BaseAddress = baseAddress;
-        }
-        else if (_httpClient.BaseAddress is null) {
-            _httpClient.BaseAddress = new Uri("https://api.openai.com/");
-        }
+        _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        _httpClient = httpClient;
+        _ = _httpClient.BaseAddress ?? throw new InvalidOperationException(
+            "OpenAIChatClient requires HttpClient.BaseAddress to be configured by the caller."
+        );
 
         _dialect = dialect ?? OpenAIChatDialects.Strict;
         _extraBody = options?.ExtraBody is null ? null : (JsonObject)options.ExtraBody.DeepClone();

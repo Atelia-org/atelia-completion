@@ -10,28 +10,27 @@ namespace Atelia.Completion.Gemini;
 public sealed class GeminiClient : ICompletionClient {
     private const string DebugCategory = "Provider";
 
-    private static readonly JsonSerializerOptions SerializerOptions = new() {
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web) {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
+    private readonly Uri _baseUri;
 
-    public string Name => _httpClient.BaseAddress?.Host ?? "generativelanguage.googleapis.com";
+    public string Name => _baseUri.Host;
     public string ApiSpecId => "google-gemini-generate-content-v1beta";
 
-    public GeminiClient(string? apiKey, HttpClient? httpClient = null, Uri? baseAddress = null) {
+    public GeminiClient(string? apiKey, HttpClient httpClient) {
+        ArgumentNullException.ThrowIfNull(httpClient);
+
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
-        _httpClient = httpClient ?? new HttpClient();
+        _httpClient = httpClient;
+        _baseUri = _httpClient.BaseAddress ?? throw new InvalidOperationException(
+            "GeminiClient requires HttpClient.BaseAddress to be configured by the caller."
+        );
 
-        if (baseAddress is not null) {
-            _httpClient.BaseAddress = baseAddress;
-        }
-        else if (_httpClient.BaseAddress is null) {
-            _httpClient.BaseAddress = new Uri("https://generativelanguage.googleapis.com/");
-        }
-
-        DebugUtil.Info(DebugCategory, $"[Gemini] Client initialized base={_httpClient.BaseAddress}");
+        DebugUtil.Info(DebugCategory, $"[Gemini] Client initialized base={_baseUri}");
     }
 
     public async Task<CompletionResult> StreamCompletionAsync(
@@ -101,8 +100,9 @@ public sealed class GeminiClient : ICompletionClient {
 
         var modelPath = NormalizeModelPath(modelId);
         var relativeUri = $"v1beta/{modelPath}:streamGenerateContent?alt=sse";
+        var requestUri = new Uri(_baseUri, relativeUri);
 
-        var request = new HttpRequestMessage(HttpMethod.Post, relativeUri) {
+        var request = new HttpRequestMessage(HttpMethod.Post, requestUri) {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
         };
 

@@ -10,7 +10,19 @@ namespace Atelia.Completion.Gemini.Tests;
 
 public sealed class GeminiClientTests {
     [Fact]
-    public void Constructor_DoesNotOverwriteExternalBaseAddressWhenNoneProvided() {
+    public void Constructor_RequiresPreconfiguredHttpClientBaseAddress() {
+        if (!GeminiProductionTypesPresent()) { return; }
+
+        using var handler = new EmptyHttpMessageHandler();
+        using var httpClient = new HttpClient(handler);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => CreateGeminiClient(httpClient));
+
+        Assert.Contains("HttpClient.BaseAddress", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Constructor_UsesPreconfiguredHttpClientBaseAddress() {
         if (!GeminiProductionTypesPresent()) { return; }
 
         using var handler = new EmptyHttpMessageHandler();
@@ -19,26 +31,11 @@ public sealed class GeminiClientTests {
             BaseAddress = preconfigured
         };
 
-        var client = CreateGeminiClient(httpClient, baseAddress: null);
+        dynamic client = CreateGeminiClient(httpClient);
 
         Assert.NotNull(client);
         Assert.Equal(preconfigured, httpClient.BaseAddress);
-    }
-
-    [Fact]
-    public void Constructor_ExplicitBaseAddressOverridesExternalHttpClientBaseAddress() {
-        if (!GeminiProductionTypesPresent()) { return; }
-
-        using var handler = new EmptyHttpMessageHandler();
-        using var httpClient = new HttpClient(handler) {
-            BaseAddress = new Uri("http://localhost:9000/")
-        };
-        var explicitAddress = new Uri("http://localhost:7777/");
-
-        var client = CreateGeminiClient(httpClient, baseAddress: explicitAddress);
-
-        Assert.NotNull(client);
-        Assert.Equal(explicitAddress, httpClient.BaseAddress);
+        Assert.Equal(preconfigured.Host, (string)client.Name);
     }
 
     [Fact]
@@ -60,7 +57,7 @@ public sealed class GeminiClientTests {
             BaseAddress = new Uri("http://localhost:8000/")
         };
 
-        var client = CreateGeminiClient(httpClient, baseAddress: null);
+        var client = CreateGeminiClient(httpClient);
         var exception = await Assert.ThrowsAsync<HttpRequestException>(
             () => InvokeStreamCompletionAsync(client, CreateRequest())
         );
@@ -91,7 +88,7 @@ public sealed class GeminiClientTests {
             BaseAddress = new Uri("http://localhost:8000/")
         };
 
-        var client = CreateGeminiClient(httpClient, baseAddress: null, apiKey: "secret-key");
+        var client = CreateGeminiClient(httpClient, apiKey: "secret-key");
         var result = await InvokeStreamCompletionAsync(client, CreateRequest());
 
         Assert.Equal("ok", result.Message.GetFlattenedText());
@@ -108,7 +105,7 @@ public sealed class GeminiClientTests {
         );
     }
 
-    private static object CreateGeminiClient(HttpClient httpClient, Uri? baseAddress, string? apiKey = null) {
+    private static object CreateGeminiClient(HttpClient httpClient, string? apiKey = null) {
         var clientType = typeof(CompletionHttpTransportFactory).Assembly.GetType("Atelia.Completion.Gemini.GeminiClient");
         Assert.NotNull(clientType);
         var constructor = clientType
@@ -119,7 +116,7 @@ public sealed class GeminiClientTests {
 
         var arguments = constructor!
             .GetParameters()
-            .Select(parameter => ResolveConstructorArgument(parameter, httpClient, baseAddress, apiKey))
+            .Select(parameter => ResolveConstructorArgument(parameter, httpClient, apiKey))
             .ToArray();
 
         try {
@@ -134,13 +131,14 @@ public sealed class GeminiClientTests {
     private static bool HasSupportedGeminiConstructorShape(ConstructorInfo constructor) {
         var parameters = constructor.GetParameters();
         return parameters.Any(parameter => parameter.ParameterType == typeof(HttpClient))
-            && parameters.Any(parameter => parameter.ParameterType == typeof(Uri));
+            && parameters.All(
+                parameter => parameter.ParameterType == typeof(HttpClient)
+                    || (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase))
+            );
     }
 
-    private static object? ResolveConstructorArgument(ParameterInfo parameter, HttpClient httpClient, Uri? baseAddress, string? apiKey) {
+    private static object? ResolveConstructorArgument(ParameterInfo parameter, HttpClient httpClient, string? apiKey) {
         if (parameter.ParameterType == typeof(HttpClient)) { return httpClient; }
-
-        if (parameter.ParameterType == typeof(Uri)) { return baseAddress; }
 
         if (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase)) { return apiKey; }
 

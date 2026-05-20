@@ -20,10 +20,10 @@ public sealed class CompletionHttpTransportTests {
         var captureSink = new InMemoryCompletionHttpExchangeSink();
         using var httpClient = new CompletionHttpClientBuilder()
             .UsePrimaryHandler(
-                new StubHttpMessageHandler(
-                    new HttpResponseMessage(HttpStatusCode.OK) {
-                        Content = new StringContent(
-                            """
+            new StubHttpMessageHandler(
+                new HttpResponseMessage(HttpStatusCode.OK) {
+                    Content = new StringContent(
+                        """
                             data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":null}
 
                             data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
@@ -31,12 +31,12 @@ public sealed class CompletionHttpTransportTests {
                             data: [DONE]
 
                             """,
-                            Encoding.UTF8,
-                            "text/event-stream"
-                        )
-                    }
-                )
+                        Encoding.UTF8,
+                        "text/event-stream"
+                    )
+                }
             )
+        )
             .AddExchangeSink(captureSink)
             .Build();
 
@@ -85,10 +85,10 @@ public sealed class CompletionHttpTransportTests {
         try {
             using var httpClient = new CompletionHttpClientBuilder()
                 .UsePrimaryHandler(
-                    new StubHttpMessageHandler(
-                        new HttpResponseMessage(HttpStatusCode.OK) {
-                            Content = new StringContent(
-                                """
+                new StubHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(
+                            """
                                 data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":null}
 
                                 data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
@@ -96,12 +96,12 @@ public sealed class CompletionHttpTransportTests {
                                 data: [DONE]
 
                                 """,
-                                Encoding.UTF8,
-                                "text/event-stream"
-                            )
-                        }
-                    )
+                            Encoding.UTF8,
+                            "text/event-stream"
+                        )
+                    }
                 )
+            )
                 .AddJsonLinesGoldenLogSink(filePath)
                 .Build();
 
@@ -137,10 +137,10 @@ public sealed class CompletionHttpTransportTests {
         try {
             using (var recordingHttpClient = new CompletionHttpClientBuilder()
                 .UsePrimaryHandler(
-                    new StubHttpMessageHandler(
-                        new HttpResponseMessage(HttpStatusCode.OK) {
-                            Content = new StringContent(
-                                """
+                new StubHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(
+                            """
                                 data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":null}
 
                                 data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
@@ -148,12 +148,12 @@ public sealed class CompletionHttpTransportTests {
                                 data: [DONE]
 
                                 """,
-                                Encoding.UTF8,
-                                "text/event-stream"
-                            )
-                        }
-                    )
+                            Encoding.UTF8,
+                            "text/event-stream"
+                        )
+                    }
                 )
+            )
                 .AddJsonLinesGoldenLogSink(filePath)
                 .Build()) {
                 recordingHttpClient.BaseAddress = new Uri("http://localhost:8000/");
@@ -192,9 +192,7 @@ public sealed class CompletionHttpTransportTests {
 
     [Fact]
     public async Task JsonLinesGoldenLogSink_RecordsAndReplaysGeminiExchange() {
-        if (!GeminiProductionTypesPresent()) {
-            return;
-        }
+        if (!GeminiProductionTypesPresent()) { return; }
 
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "gemini-replay.jsonl");
@@ -202,10 +200,10 @@ public sealed class CompletionHttpTransportTests {
         try {
             using (var recordingHttpClient = new CompletionHttpClientBuilder()
                 .UsePrimaryHandler(
-                    new StubHttpMessageHandler(
-                        new HttpResponseMessage(HttpStatusCode.OK) {
-                            Content = new StringContent(
-                                """
+                new StubHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(
+                            """
                                 data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]}}]}
 
                                 data: {"candidates":[{"content":{"role":"model","parts":[{"text":" world"}]},"finishReason":"STOP"}]}
@@ -213,12 +211,12 @@ public sealed class CompletionHttpTransportTests {
                                 data: [DONE]
 
                                 """,
-                                Encoding.UTF8,
-                                "text/event-stream"
-                            )
-                        }
-                    )
+                            Encoding.UTF8,
+                            "text/event-stream"
+                        )
+                    }
                 )
+            )
                 .AddJsonLinesGoldenLogSink(filePath)
                 .Build()) {
                 recordingHttpClient.BaseAddress = new Uri("http://localhost:8000/");
@@ -311,10 +309,10 @@ public sealed class CompletionHttpTransportTests {
         try {
             using (var recordingHttpClient = new CompletionHttpClientBuilder()
                 .UsePrimaryHandler(
-                    new StubHttpMessageHandler(
-                        new HttpResponseMessage(HttpStatusCode.OK) {
-                            Content = new StringContent(
-                                """
+                new StubHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(
+                            """
                                 data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":null}
 
                                 data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
@@ -322,12 +320,12 @@ public sealed class CompletionHttpTransportTests {
                                 data: [DONE]
 
                                 """,
-                                Encoding.UTF8,
-                                "text/event-stream"
-                            )
-                        }
-                    )
+                            Encoding.UTF8,
+                            "text/event-stream"
+                        )
+                    }
                 )
+            )
                 .AddJsonLinesGoldenLogSink(filePath)
                 .Build()) {
                 recordingHttpClient.BaseAddress = new Uri("http://localhost:8000/");
@@ -446,9 +444,7 @@ public sealed class CompletionHttpTransportTests {
     [Fact]
     [Trait("Category", "LocalE2E")]
     public async Task LocalRoundTripE2E_OpenAI_RecordThenReplayAgainstLocalEndpoint() {
-        if (!ShouldRunLocalLlmE2E()) {
-            return;
-        }
+        if (!ShouldRunLocalLlmE2E()) { return; }
 
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "openai-local-roundtrip.jsonl");
@@ -473,9 +469,7 @@ public sealed class CompletionHttpTransportTests {
     [Fact]
     [Trait("Category", "LocalE2E")]
     public async Task LocalRoundTripE2E_Anthropic_RecordThenReplayAgainstLocalEndpoint() {
-        if (!ShouldRunLocalLlmE2E()) {
-            return;
-        }
+        if (!ShouldRunLocalLlmE2E()) { return; }
 
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "anthropic-local-roundtrip.jsonl");
@@ -559,8 +553,7 @@ public sealed class CompletionHttpTransportTests {
         using (var recordClient = recordSetup.HttpClient) {
             var anthropicClient = new AnthropicClient(
                 apiKey: "ignored-local-api-key",
-                httpClient: recordClient,
-                baseAddress: null
+                httpClient: recordClient
             );
 
             var live = await anthropicClient.StreamCompletionAsync(CreateRequest(modelId), null, CancellationToken.None);
@@ -571,8 +564,7 @@ public sealed class CompletionHttpTransportTests {
         using (var replayClient = CompletionHttpTransportFactory.CreateJsonLinesReplayClient(LocalLlmBaseAddress, filePath)) {
             var replayAnthropicClient = new AnthropicClient(
                 apiKey: "ignored-local-api-key",
-                httpClient: replayClient,
-                baseAddress: null
+                httpClient: replayClient
             );
 
             var replayed = await replayAnthropicClient.StreamCompletionAsync(CreateRequest(modelId), null, CancellationToken.None);
@@ -583,7 +575,7 @@ public sealed class CompletionHttpTransportTests {
     }
 
     private static async Task<CompletionResult> InvokeGeminiCompletionAsync(HttpClient httpClient, CompletionRequest request) {
-        var client = CreateGeminiClient(httpClient, baseAddress: null);
+        var client = CreateGeminiClient(httpClient);
         var method = client.GetType().GetMethod(
             "StreamCompletionAsync",
             BindingFlags.Public | BindingFlags.Instance,
@@ -602,7 +594,7 @@ public sealed class CompletionHttpTransportTests {
         return Assert.IsType<CompletionResult>(resultProperty!.GetValue(task));
     }
 
-    private static object CreateGeminiClient(HttpClient httpClient, Uri? baseAddress) {
+    private static object CreateGeminiClient(HttpClient httpClient) {
         var clientType = typeof(CompletionHttpTransportFactory).Assembly.GetType("Atelia.Completion.Gemini.GeminiClient");
         Assert.NotNull(clientType);
         var constructor = clientType
@@ -613,7 +605,7 @@ public sealed class CompletionHttpTransportTests {
 
         var arguments = constructor!
             .GetParameters()
-            .Select(parameter => ResolveGeminiConstructorArgument(parameter, httpClient, baseAddress))
+            .Select(parameter => ResolveGeminiConstructorArgument(parameter, httpClient))
             .ToArray();
 
         try {
@@ -628,25 +620,18 @@ public sealed class CompletionHttpTransportTests {
     private static bool HasSupportedGeminiConstructorShape(ConstructorInfo constructor) {
         var parameters = constructor.GetParameters();
         return parameters.Any(parameter => parameter.ParameterType == typeof(HttpClient))
-            && parameters.Any(parameter => parameter.ParameterType == typeof(Uri));
+            && parameters.All(
+                parameter => parameter.ParameterType == typeof(HttpClient)
+                    || (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase))
+            );
     }
 
-    private static object? ResolveGeminiConstructorArgument(ParameterInfo parameter, HttpClient httpClient, Uri? baseAddress) {
-        if (parameter.ParameterType == typeof(HttpClient)) {
-            return httpClient;
-        }
+    private static object? ResolveGeminiConstructorArgument(ParameterInfo parameter, HttpClient httpClient) {
+        if (parameter.ParameterType == typeof(HttpClient)) { return httpClient; }
 
-        if (parameter.ParameterType == typeof(Uri)) {
-            return baseAddress;
-        }
+        if (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase)) { return null; }
 
-        if (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase)) {
-            return null;
-        }
-
-        if (parameter.HasDefaultValue) {
-            return parameter.DefaultValue;
-        }
+        if (parameter.HasDefaultValue) { return parameter.DefaultValue; }
 
         throw new InvalidOperationException(
             $"Unsupported GeminiClient constructor parameter '{parameter.Name}' of type '{parameter.ParameterType}'."

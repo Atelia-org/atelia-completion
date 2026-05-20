@@ -120,31 +120,30 @@ public sealed class OpenAIChatClientTests {
     }
 
     [Fact]
-    public void Constructor_DoesNotOverwriteExternalBaseAddressWhenNoneProvided() {
+    public void Constructor_RequiresPreconfiguredHttpClientBaseAddress() {
+        using var handler = new SequenceHttpMessageHandler();
+        using var httpClient = new HttpClient(handler);
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.Strict)
+        );
+
+        Assert.Contains("HttpClient.BaseAddress", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Constructor_UsesPreconfiguredHttpClientBaseAddress() {
         using var handler = new SequenceHttpMessageHandler();
         var preconfigured = new Uri("http://localhost:9000/");
         using var httpClient = new HttpClient(handler) {
             BaseAddress = preconfigured
         };
 
-        var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, baseAddress: null, dialect: OpenAIChatDialects.Strict);
+        var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.Strict);
 
         Assert.NotNull(client);
         Assert.Equal(preconfigured, httpClient.BaseAddress);
-    }
-
-    [Fact]
-    public void Constructor_ExplicitBaseAddressOverridesExternalHttpClientBaseAddress() {
-        using var handler = new SequenceHttpMessageHandler();
-        using var httpClient = new HttpClient(handler) {
-            BaseAddress = new Uri("http://localhost:9000/")
-        };
-        var explicitAddress = new Uri("http://localhost:7777/");
-
-        var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, baseAddress: explicitAddress, dialect: OpenAIChatDialects.Strict);
-
-        Assert.NotNull(client);
-        Assert.Equal(explicitAddress, httpClient.BaseAddress);
+        Assert.Equal(preconfigured.Host, client.Name);
     }
 
     [Fact]
@@ -233,7 +232,7 @@ public sealed class OpenAIChatClientTests {
             BaseAddress = new Uri("http://localhost:8000/")
         };
 
-        var client = new DeepSeekV4ChatClient(apiKey: null, httpClient: httpClient, baseAddress: null);
+        var client = new DeepSeekV4ChatClient(apiKey: null, httpClient: httpClient);
         var request = new CompletionRequest(
             ModelId: "deepseek-v4",
             SystemPrompt: string.Empty,

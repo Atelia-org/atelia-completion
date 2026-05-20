@@ -7,31 +7,30 @@ namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicClientTests {
     [Fact]
-    public void Constructor_DoesNotOverwriteExternalBaseAddressWhenNoneProvided() {
+    public void Constructor_RequiresPreconfiguredHttpClientBaseAddress() {
+        using var handler = new EmptyHttpMessageHandler();
+        using var httpClient = new HttpClient(handler);
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => new AnthropicClient(apiKey: null, httpClient: httpClient)
+        );
+
+        Assert.Contains("HttpClient.BaseAddress", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Constructor_UsesPreconfiguredHttpClientBaseAddress() {
         using var handler = new EmptyHttpMessageHandler();
         var preconfigured = new Uri("http://localhost:9000/");
         using var httpClient = new HttpClient(handler) {
             BaseAddress = preconfigured
         };
 
-        var client = new AnthropicClient(apiKey: null, httpClient: httpClient, baseAddress: null);
+        var client = new AnthropicClient(apiKey: null, httpClient: httpClient);
 
         Assert.NotNull(client);
         Assert.Equal(preconfigured, httpClient.BaseAddress);
-    }
-
-    [Fact]
-    public void Constructor_ExplicitBaseAddressOverridesExternalHttpClientBaseAddress() {
-        using var handler = new EmptyHttpMessageHandler();
-        using var httpClient = new HttpClient(handler) {
-            BaseAddress = new Uri("http://localhost:9000/")
-        };
-        var explicitAddress = new Uri("http://localhost:7777/");
-
-        var client = new AnthropicClient(apiKey: null, httpClient: httpClient, baseAddress: explicitAddress);
-
-        Assert.NotNull(client);
-        Assert.Equal(explicitAddress, httpClient.BaseAddress);
+        Assert.Equal(preconfigured.Host, client.Name);
     }
 
     [Fact]

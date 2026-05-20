@@ -3,8 +3,6 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Completion.OpenAI;
 
 public sealed class DeepSeekV4ChatClient : ICompletionClient {
-    private static readonly Uri DefaultBaseAddress = new("https://api.deepseek.com/");
-
     private readonly OpenAIChatClient _inner;
 
     public string Name => _inner.Name;
@@ -12,14 +10,12 @@ public sealed class DeepSeekV4ChatClient : ICompletionClient {
 
     public DeepSeekV4ChatClient(
         string? apiKey,
-        HttpClient? httpClient = null,
-        Uri? baseAddress = null,
+        HttpClient httpClient,
         OpenAIChatClientOptions? options = null
     ) {
         _inner = new OpenAIChatClient(
             apiKey: apiKey,
             httpClient: httpClient,
-            baseAddress: baseAddress ?? DefaultBaseAddress,
             dialect: OpenAIChatDialects.DeepSeekV4,
             options: options
         );

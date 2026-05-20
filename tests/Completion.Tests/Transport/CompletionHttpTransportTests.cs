@@ -2,6 +2,8 @@ using System.Collections.Immutable;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Reflection;
+using System.Runtime.ExceptionServices;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Atelia.Completion.OpenAI;
@@ -180,6 +182,69 @@ public sealed class CompletionHttpTransportTests {
 
             var replayed = await replayClient.StreamCompletionAsync(CreateRequest("gpt-4.1"), null, CancellationToken.None);
             Assert.Equal("hello", replayed.Message.GetFlattenedText());
+        }
+        finally {
+            if (Directory.Exists(tempDirectory)) {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task JsonLinesGoldenLogSink_RecordsAndReplaysGeminiExchange() {
+        if (!GeminiProductionTypesPresent()) {
+            return;
+        }
+
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
+        var filePath = Path.Combine(tempDirectory, "gemini-replay.jsonl");
+
+        try {
+            using (var recordingHttpClient = new CompletionHttpClientBuilder()
+                .UsePrimaryHandler(
+                    new StubHttpMessageHandler(
+                        new HttpResponseMessage(HttpStatusCode.OK) {
+                            Content = new StringContent(
+                                """
+                                data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]}}]}
+
+                                data: {"candidates":[{"content":{"role":"model","parts":[{"text":" world"}]},"finishReason":"STOP"}]}
+
+                                data: [DONE]
+
+                                """,
+                                Encoding.UTF8,
+                                "text/event-stream"
+                            )
+                        }
+                    )
+                )
+                .AddJsonLinesGoldenLogSink(filePath)
+                .Build()) {
+                recordingHttpClient.BaseAddress = new Uri("http://localhost:8000/");
+
+                var recorded = await InvokeGeminiCompletionAsync(recordingHttpClient, CreateRequest("gemini-2.5-flash"));
+                Assert.Equal("hello world", recorded.Message.GetFlattenedText());
+            }
+
+            var lines = await File.ReadAllLinesAsync(filePath, CancellationToken.None);
+            var line = Assert.Single(lines);
+            using (var document = JsonDocument.Parse(line)) {
+                var root = document.RootElement;
+                Assert.Equal(
+                    "http://localhost:8000/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+                    root.GetProperty("requestUri").GetString()
+                );
+                Assert.Contains("\"systemInstruction\"", root.GetProperty("requestText").GetString(), StringComparison.Ordinal);
+                Assert.Contains("\"text\":\"hello\"", root.GetProperty("responseText").GetString(), StringComparison.Ordinal);
+            }
+
+            using var replayHttpClient = CompletionHttpTransportFactory.CreateJsonLinesReplayClient(
+                new Uri("http://localhost:8000/"),
+                filePath
+            );
+            var replayed = await InvokeGeminiCompletionAsync(replayHttpClient, CreateRequest("gemini-2.5-flash"));
+            Assert.Equal("hello world", replayed.Message.GetFlattenedText());
         }
         finally {
             if (Directory.Exists(tempDirectory)) {
@@ -515,6 +580,82 @@ public sealed class CompletionHttpTransportTests {
         }
 
         return (liveText, replayedText);
+    }
+
+    private static async Task<CompletionResult> InvokeGeminiCompletionAsync(HttpClient httpClient, CompletionRequest request) {
+        var client = CreateGeminiClient(httpClient, baseAddress: null);
+        var method = client.GetType().GetMethod(
+            "StreamCompletionAsync",
+            BindingFlags.Public | BindingFlags.Instance,
+            binder: null,
+            types: new[] { typeof(CompletionRequest), typeof(CompletionStreamObserver), typeof(CancellationToken) },
+            modifiers: null
+        );
+
+        Assert.NotNull(method);
+
+        var task = (Task)method!.Invoke(client, new object?[] { request, null, CancellationToken.None })!;
+        await task;
+
+        var resultProperty = task.GetType().GetProperty("Result");
+        Assert.NotNull(resultProperty);
+        return Assert.IsType<CompletionResult>(resultProperty!.GetValue(task));
+    }
+
+    private static object CreateGeminiClient(HttpClient httpClient, Uri? baseAddress) {
+        var clientType = typeof(CompletionHttpTransportFactory).Assembly.GetType("Atelia.Completion.Gemini.GeminiClient");
+        Assert.NotNull(clientType);
+        var constructor = clientType
+            .GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .SingleOrDefault(HasSupportedGeminiConstructorShape);
+
+        Assert.NotNull(constructor);
+
+        var arguments = constructor!
+            .GetParameters()
+            .Select(parameter => ResolveGeminiConstructorArgument(parameter, httpClient, baseAddress))
+            .ToArray();
+
+        try {
+            return constructor.Invoke(arguments);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null) {
+            ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            throw;
+        }
+    }
+
+    private static bool HasSupportedGeminiConstructorShape(ConstructorInfo constructor) {
+        var parameters = constructor.GetParameters();
+        return parameters.Any(parameter => parameter.ParameterType == typeof(HttpClient))
+            && parameters.Any(parameter => parameter.ParameterType == typeof(Uri));
+    }
+
+    private static object? ResolveGeminiConstructorArgument(ParameterInfo parameter, HttpClient httpClient, Uri? baseAddress) {
+        if (parameter.ParameterType == typeof(HttpClient)) {
+            return httpClient;
+        }
+
+        if (parameter.ParameterType == typeof(Uri)) {
+            return baseAddress;
+        }
+
+        if (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase)) {
+            return null;
+        }
+
+        if (parameter.HasDefaultValue) {
+            return parameter.DefaultValue;
+        }
+
+        throw new InvalidOperationException(
+            $"Unsupported GeminiClient constructor parameter '{parameter.Name}' of type '{parameter.ParameterType}'."
+        );
+    }
+
+    private static bool GeminiProductionTypesPresent() {
+        var assembly = typeof(CompletionHttpTransportFactory).Assembly;
+        return assembly.GetType("Atelia.Completion.Gemini.GeminiClient") is not null;
     }
 
     private sealed class StubHttpMessageHandler : HttpMessageHandler {

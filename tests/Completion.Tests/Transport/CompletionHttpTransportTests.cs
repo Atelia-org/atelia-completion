@@ -16,6 +16,13 @@ public sealed class CompletionHttpTransportTests {
     private static readonly Uri LocalLlmBaseAddress = new("http://localhost:8000/");
 
     [Fact]
+    public void CreateLiveClient_NormalizesBaseAddressWithPathPrefix() {
+        using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri("http://localhost:8000/provider"));
+
+        Assert.Equal(new Uri("http://localhost:8000/provider/"), httpClient.BaseAddress);
+    }
+
+    [Fact]
     public async Task CapturePipeline_RecordsRequestAndStreamingResponseText_ForOpenAIClient() {
         var captureSink = new InMemoryCompletionHttpExchangeSink();
         using var httpClient = new CompletionHttpClientBuilder()

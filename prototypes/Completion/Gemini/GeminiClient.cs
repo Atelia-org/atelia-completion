@@ -10,27 +10,22 @@ namespace Atelia.Completion.Gemini;
 public sealed class GeminiClient : ICompletionClient {
     private const string DebugCategory = "Provider";
 
-    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web) {
+    private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
-    private readonly Uri _baseUri;
 
-    public string Name => _baseUri.Host;
+    public string Name => _httpClient.BaseAddress?.Host ?? "generativelanguage.googleapis.com";
     public string ApiSpecId => "google-gemini-generate-content-v1beta";
 
     public GeminiClient(string? apiKey, HttpClient httpClient) {
-        ArgumentNullException.ThrowIfNull(httpClient);
-
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
-        _baseUri = _httpClient.BaseAddress ?? throw new InvalidOperationException(
-            "GeminiClient requires HttpClient.BaseAddress to be configured by the caller."
-        );
+        _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(GeminiClient));
 
-        DebugUtil.Info(DebugCategory, $"[Gemini] Client initialized base={_baseUri}");
+        DebugUtil.Info(DebugCategory, $"[Gemini] Client initialized base={_httpClient.BaseAddress}");
     }
 
     public async Task<CompletionResult> StreamCompletionAsync(
@@ -100,9 +95,8 @@ public sealed class GeminiClient : ICompletionClient {
 
         var modelPath = NormalizeModelPath(modelId);
         var relativeUri = $"v1beta/{modelPath}:streamGenerateContent?alt=sse";
-        var requestUri = new Uri(_baseUri, relativeUri);
 
-        var request = new HttpRequestMessage(HttpMethod.Post, requestUri) {
+        var request = new HttpRequestMessage(HttpMethod.Post, relativeUri) {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
         };
 

@@ -27,13 +27,9 @@ public sealed class AnthropicClient : ICompletionClient {
     public string ApiSpecId => "messages-v1";
 
     public AnthropicClient(string? apiKey, HttpClient httpClient, string? apiVersion = null) {
-        ArgumentNullException.ThrowIfNull(httpClient);
-
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
-        _ = _httpClient.BaseAddress ?? throw new InvalidOperationException(
-            "AnthropicClient requires HttpClient.BaseAddress to be configured by the caller."
-        );
+        _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(AnthropicClient));
 
         _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
 

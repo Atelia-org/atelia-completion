@@ -28,7 +28,7 @@
 | 程序集 | 命名空间 | 你需要的核心符号 |
 |---|---|---|
 | `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `ActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolParamSpec`、`CompletionDescriptor`、`CompletionResult`、`ThinkingChunk` |
-| `Atelia.Completion` | `Atelia.Completion.Anthropic`、`Atelia.Completion.OpenAI` | `AnthropicClient`、`OpenAIChatClient`、`OpenAIChatDialects`（静态访问点：`.Strict` / `.SgLangCompatible`） |
+| `Atelia.Completion` | `Atelia.Completion.Anthropic`、`Atelia.Completion.OpenAI`、`Atelia.Completion.Gemini` | `AnthropicClient`、`OpenAIChatClient`、`OpenAIChatDialects`（静态访问点：`.Strict` / `.SgLangCompatible`）、`GeminiClient` |
 
 **只引 Abstractions** 用来定义请求/历史/工具——provider-neutral，不会拉出 HttpClient。
 **再引 Completion** 才能拿到具体 client 实现。
@@ -67,11 +67,16 @@ using System.Collections.Immutable;
 using System.Threading;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.OpenAI;
+using Atelia.Completion.Transport;
+
+using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+    new Uri("http://localhost:8000/")
+);
 
 var client = new OpenAIChatClient(
-    apiKey: null,                                   // 本地服务通常无需 key
-    baseAddress: new Uri("http://localhost:8000/"), // 注意结尾的 '/'
-    dialect: OpenAIChatDialects.SgLangCompatible    // 本地 sglang 必须选这个
+    apiKey: null,                                // 本地服务通常无需 key
+    httpClient: httpClient,
+    dialect: OpenAIChatDialects.SgLangCompatible // 本地 sglang 必须选这个
 );
 
 var request = new CompletionRequest(
@@ -95,14 +100,37 @@ foreach (var err in result.Errors ?? Array.Empty<string>()) { /* ... */ }
 
 ```csharp
 using Atelia.Completion.Anthropic;
+using Atelia.Completion.Transport;
+
+using var anthropicHttpClient = CompletionHttpTransportFactory.CreateLiveClient(
+    new Uri("http://localhost:8000/")
+);
 
 var anthropic = new AnthropicClient(
     apiKey: null,
-    baseAddress: new Uri("http://localhost:8000/")
+    httpClient: anthropicHttpClient
 );
 ```
 
 > **跨 provider 复用 `CompletionRequest` 的边界**：纯文本 + 工具调用历史可以原样喂给任一 client，provider 差异封装在内部 converter / parser 里。**但** 含 `ActionBlock.Thinking` 的回灌历史 **不可以跨 provider 也不可以跨调用源**——`OpaquePayload` 是 provider-native 字节，`Origin` 必须是当时产出它的那次调用（详见 §4.4）。
+>
+> **Gemini 额外边界**：Gemini 3 的 tool continuation 依赖 `thoughtSignature`。如果上一轮 Gemini 已经产出 tool call，后续继续把 tool result 回灌给 Gemini 时，应保留该轮产出的 `GeminiReplayBlock`；只剩通用 `ToolCall` / `Text` 而丢失 replay payload 时，Gemini converter 会拒绝进行 tool replay。
+
+**Gemini 路径** 也遵循同一套 `CompletionRequest -> StreamCompletionAsync -> CompletionResult` 形态，只是 endpoint 与 replay 约束不同：
+
+```csharp
+using Atelia.Completion.Gemini;
+using Atelia.Completion.Transport;
+
+using var geminiHttpClient = CompletionHttpTransportFactory.CreateLiveClient(
+    new Uri("https://generativelanguage.googleapis.com/")
+);
+
+var gemini = new GeminiClient(
+    apiKey: Environment.GetEnvironmentVariable("GEMINI_API_KEY"),
+    httpClient: geminiHttpClient
+);
+```
 
 ### 2.1 用 builder 注入 golden log 文件 sink
 
@@ -411,18 +439,25 @@ public record RawToolCall(
 
 执行完一定要回灌一条 `ToolResultsMessage`，且 `ToolResult.ToolCallId` 必须等于 `RawToolCall.ToolCallId`。
 
-### 4.4 `Thinking` block
+### 4.4 `ReasoningBlock` / provider-native replay block
 
 > 只做单轮 / 只要文本时可跳过本节；要把历史回灌给 thinking/reasoning 模型时必须读。
 
-`ThinkingChunk.OpaquePayload: ReadOnlyMemory<byte>` 是 **provider-native** 序列化字节。**不要尝试解析它。** 唯一正确用法：
+provider-specific `ActionBlock.ReasoningBlock`（例如 `AnthropicReasoningBlock`、`OpenAIChatReasoningBlock`、`GeminiReplayBlock`）承载 **provider-native** replay 信息。对这类 block 的共同规则是：
 
-- 原样塞进 `ActionBlock.Thinking(origin, opaquePayload, plainTextForDebug)` 一起回灌；
-- 回灌时 `Origin` 必须是 **当时产生它的那次调用** 的 `CompletionDescriptor`，否则 converter 会拒绝 replay（Anthropic 的 thinking 签名跨模型不通用，跨调用源也无意义）。
+- 不要手工解析后再重组为“通用 thinking 文本”；优先原样保留 provider-native payload；
+- 回灌时 `Origin` 必须是 **当时产生它的那次调用** 的 `CompletionDescriptor`，否则 converter 会拒绝 replay（Anthropic 的 thinking 签名、Gemini 的 `thoughtSignature` 都与调用源绑定）；
+- 如果你修改了同一条 `ActionMessage` 里的可见 `Text` / `ToolCall`，也必须同步更新对应 provider replay block；Gemini 路径会对这两份信息做一致性校验，避免出现双真源漂移。
 
-`PlainTextForDebug` 仅供日志/UI——**永远不要** 把它当成可回灌的 thinking 内容。
+`PlainTextForDebug` 仅供日志/UI——**永远不要** 把它当成可回灌的 provider-native 内容。
 
 OpenAI Chat 路径的默认 `Strict` / `SgLangCompatible` dialect 仍然**不回灌** `reasoning_content`；但 `OpenAIChatDialects.DeepSeekV4` 与 `DeepSeekV4ChatClient` 现在会把 `reasoning_content` 产出为 `OpenAIChatReasoningBlock`，并在下一轮 assistant 历史中回灌回 `reasoning_content`。如果你只走真·OpenAI 或 sglang，本段仍可忽略；如果你要接 DeepSeek V4 tool calling continuity，就应保留这个 block。
+
+Gemini 路径的特殊点是：
+
+- `thoughtSignature` 附着在 text / functionCall part 上，而不是独立 thinking 事件里；
+- 因此 Gemini 使用 `GeminiReplayBlock` 保存整轮 provider-native `parts[]` 快照；
+- tool continuation 时应优先保留这份 replay block。
 
 ### 4.5 取消与异常
 
@@ -440,10 +475,15 @@ OpenAI Chat 路径的默认 `Strict` / `SgLangCompatible` dialect 仍然**不回
 ### 5.1 `OpenAIChatClient`
 
 ```csharp
+using Atelia.Completion.Transport;
+
+using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+    new Uri("http://localhost:8000/")
+);
+
 new OpenAIChatClient(
     apiKey: null,
-    httpClient: null,                              // 共享 HttpClient 时传入；不传则内部 new
-    baseAddress: new Uri("http://localhost:8000/"),
+    httpClient: httpClient,
     dialect: OpenAIChatDialects.SgLangCompatible,
     options: OpenAIChatClientOptions.QwenThinkingDisabled()
 );
@@ -464,10 +504,15 @@ new OpenAIChatClient(
 如果目标就是 DeepSeek V4，通常不需要自己选 dialect，直接用 `DeepSeekV4ChatClient` 更省心：
 
 ```csharp
+using Atelia.Completion.Transport;
+
+using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+    new Uri("https://api.deepseek.com/")
+);
+
 new DeepSeekV4ChatClient(
     apiKey: Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"),
-    httpClient: null,
-    baseAddress: null
+    httpClient: httpClient
 );
 ```
 
@@ -484,23 +529,57 @@ new DeepSeekV4ChatClient(
 ### 5.2 `AnthropicClient`
 
 ```csharp
+using Atelia.Completion.Transport;
+
+using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+    new Uri("http://localhost:8000/")
+);
+
 new AnthropicClient(
     apiKey: null,
-    httpClient: null,
-    apiVersion: null,                              // 默认 "2023-06-01"
-    baseAddress: new Uri("http://localhost:8000/")
+    httpClient: httpClient,
+    apiVersion: null // 默认 "2023-06-01"
 );
 ```
 
-走真·Anthropic 时不传 `baseAddress`（默认 `https://api.anthropic.com/`），把真 key 给 `apiKey`。`ApiSpecId == "messages-v1"`。
+走真·Anthropic 时，用 `CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://api.anthropic.com/"))` 创建 `HttpClient`，再把真 key 给 `apiKey`。`ApiSpecId == "messages-v1"`。
 
-### 5.3 `BaseAddress` 行为（两个 client 一致）
+### 5.3 `GeminiClient`
 
-- **总是写尾随 `/`**：URI 相对路径拼接规则下，`http://localhost:8000` 与 `http://localhost:8000/api` 这类带路径前缀的写法忘了 `/` 会拼出错误请求路径。`Program.cs` 的 `EnsureTrailingSlash()` 是稳妥模式。
-- **共享 `HttpClient` 时尊重已设的 BaseAddress**：构造函数 **不会** 偷偷覆盖你已经配好的 `HttpClient.BaseAddress`，除非你显式传了 `baseAddress` 参数。
-- **回退**：未显式传、且 HttpClient 也没设 → 回落各自官方端点。
+```csharp
+using Atelia.Completion.Transport;
 
-### 5.4 何时关心 `ApiSpecId`
+using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+    new Uri("https://generativelanguage.googleapis.com/")
+);
+
+new GeminiClient(
+    apiKey: Environment.GetEnvironmentVariable("GEMINI_API_KEY"),
+    httpClient: httpClient
+);
+```
+
+当前 Gemini 实现走 Google AI Studio / Gemini Developer API：
+
+- 非流式底层接口：`models.generateContent`
+- 流式底层接口：`models.streamGenerateContent?alt=sse`
+- `SystemPrompt` 会投影到 `systemInstruction`
+- `ToolDefinition[]` 会投影到 `tools[].functionDeclarations[]`
+
+Gemini 的特殊点不是构造方式，而是历史回灌：
+
+- 纯文本多轮：可以像其他 provider 一样直接回灌 `CompletionResult.Message`
+- tool continuation：必须保留同轮产出的 `GeminiReplayBlock`，因为 `thoughtSignature` 是 Gemini 验证 function-call continuity 的一部分
+- 如果 `GeminiReplayBlock` 与同一条消息里的可见 `Text` / `ToolCall` 不一致，Gemini converter 会直接失败，而不是静默选择其中一份
+- 因此最稳妥的做法是直接回灌原始 `CompletionResult.Message`，不要手工裁剪 Gemini block 再继续 tool continuation
+
+### 5.4 `BaseAddress` 行为（几个 client 一致）
+
+- **推荐走 `CompletionHttpTransportFactory.CreateLiveClient(...)`**：factory 会把 base address 规范化为适合相对路径拼接的形式；`http://host/prefix` 会自动收敛成 `http://host/prefix/`。
+- **provider 只校验，不改写**：`OpenAIChatClient` / `AnthropicClient` / `GeminiClient` 要求 `HttpClient.BaseAddress` 已配置、为 absolute URI、且以 `/` 结尾；若不满足会立刻抛错。
+- **不要把 query / fragment 放进 BaseAddress**：BaseAddress 只承载稳定 endpoint 前缀；查询参数和 provider 行为开关应走请求参数或 options。
+
+### 5.5 何时关心 `ApiSpecId`
 
 `ApiSpecId` 主要给 `CompletionDescriptor` / thinking replay / Turn lock 用。第一轮调通可以完全无视；只有当你要把 LLM 输出存档并跨进程 replay 时才需要在 descriptor 里携带它。
 
@@ -515,7 +594,7 @@ new AnthropicClient(
 3. **工具参数嵌套** → 当前不支持。扁平化或塞 JSON 字符串字段。
 4. **`ToolCallId` 跨轮错位** → converter 抛 `InvalidOperationException`，不是 400。
 5. **解析 `Thinking.OpaquePayload`** → 不要。原样回灌，`Origin` 与产生它的调用对齐。
-6. **`baseAddress` 漏 `/`** → 带路径前缀时尤其会 404。
+6. **手写 `HttpClient.BaseAddress` 时漏 `/`** → 带路径前缀时尤其会 404；优先走 `CompletionHttpTransportFactory.CreateLiveClient(...)`。
 7. **本地 sglang 用 `Strict` dialect** → 工具流空白噪声会原样保留到文本块里。
 8. **`null` defaultValue 但 `isNullable: false`** → `ToolParamSpec` 构造立刻抛。
 9. **流式调用不传 `CancellationToken`** → HTTP 长连接一直挂着。
@@ -526,7 +605,7 @@ new AnthropicClient(
 | 症状 | 可能原因 | 处理方向 |
 |---|---|---|
 | `HttpRequestException: Connection refused` | sglang 没启动 / 端口不对 | 检查服务进程与端口 |
-| 404 | `baseAddress` 路径错 / 漏 `/` / 服务未暴露该 API | 核对 §5.3 |
+| 404 | `HttpClient.BaseAddress` 路径错 / 手写时漏 `/` / 服务未暴露该 API | 核对 §5.3 |
 | 400 且模型名不存在 | `ModelId` 与本地加载模型不一致 | 用 sglang 的 `/v1/models` 端点确认 |
 | `InvalidOperationException` 提到 tool_call_id | 历史里 `ToolResult.ToolCallId` 与上一个 `ActionBlock.ToolCall` 错位 / 缺失 | 对齐 id；失败工具用 `ExecuteError` 让 converter 合成 |
 | `InvalidOperationException` 提到 first message must be user (Anthropic) | Context 第一条不是 `ObservationMessage`（或空白被跳过后变成第一条不是 user） | 调整历史；Anthropic 协议强制首条 user |

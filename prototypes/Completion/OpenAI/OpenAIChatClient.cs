@@ -35,13 +35,9 @@ public sealed class OpenAIChatClient : ICompletionClient {
         OpenAIChatDialect? dialect = null,
         OpenAIChatClientOptions? options = null
     ) {
-        ArgumentNullException.ThrowIfNull(httpClient);
-
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
-        _ = _httpClient.BaseAddress ?? throw new InvalidOperationException(
-            "OpenAIChatClient requires HttpClient.BaseAddress to be configured by the caller."
-        );
+        _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(OpenAIChatClient));
 
         _dialect = dialect ?? OpenAIChatDialects.Strict;
         _extraBody = options?.ExtraBody is null ? null : (JsonObject)options.ExtraBody.DeepClone();

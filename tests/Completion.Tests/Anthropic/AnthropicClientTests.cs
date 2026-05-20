@@ -34,6 +34,20 @@ public sealed class AnthropicClientTests {
     }
 
     [Fact]
+    public void Constructor_RejectsBaseAddressWithoutTrailingSlash() {
+        using var handler = new EmptyHttpMessageHandler();
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:9000/anthropic")
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => new AnthropicClient(apiKey: null, httpClient: httpClient)
+        );
+
+        Assert.Contains("end with '/'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_EarlyStopAfterReasoningDelta_BalancesThinkingLifecycleWithoutReturningUsage() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {

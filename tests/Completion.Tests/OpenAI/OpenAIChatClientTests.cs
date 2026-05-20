@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Transport;
 using Xunit;
 
 namespace Atelia.Completion.OpenAI.Tests;
@@ -147,6 +148,50 @@ public sealed class OpenAIChatClientTests {
     }
 
     [Fact]
+    public void Constructor_RejectsBaseAddressWithoutTrailingSlash() {
+        using var handler = new SequenceHttpMessageHandler();
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:9000/openai")
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.Strict)
+        );
+
+        Assert.Contains("end with '/'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_UsesNormalizedBaseAddressFromTransportFactory() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":null}
+
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+
+        using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+            new Uri("http://localhost:8000/prefix"),
+            handler
+        );
+        var client = new OpenAIChatClient(apiKey: null, httpClient: httpClient, dialect: OpenAIChatDialects.Strict);
+
+        var aggregated = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal("ok", aggregated.Message.GetFlattenedText());
+        Assert.Equal(new Uri("http://localhost:8000/prefix/"), httpClient.BaseAddress);
+        Assert.Equal("http://localhost:8000/prefix/v1/chat/completions", Assert.Single(handler.RequestUris));
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_EarlyStop_DoesNotFlushIncompleteToolCalls() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {
@@ -277,8 +322,11 @@ public sealed class OpenAIChatClientTests {
         }
 
         public List<string> RequestBodies { get; } = new();
+        public List<string?> RequestUris { get; } = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            RequestUris.Add(request.RequestUri?.ToString());
+
             if (request.Content is not null) {
                 RequestBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
             }

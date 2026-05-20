@@ -39,6 +39,20 @@ public sealed class GeminiClientTests {
     }
 
     [Fact]
+    public void Constructor_RejectsBaseAddressWithoutTrailingSlash() {
+        if (!GeminiProductionTypesPresent()) { return; }
+
+        using var handler = new EmptyHttpMessageHandler();
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:9000/gemini")
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(() => CreateGeminiClient(httpClient));
+
+        Assert.Contains("end with '/'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_NonSuccessStatus_IncludesResponseBodySnippetInException() {
         if (!GeminiProductionTypesPresent()) { return; }
 

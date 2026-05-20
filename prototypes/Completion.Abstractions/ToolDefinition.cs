@@ -244,18 +244,109 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
             bool isNullable = false,
             ParamDefault? defaultValue = default,
             string? description = null,
-            string? example = null
+            string? example = null,
+            IReadOnlyList<string>? stringEnumValues = null,
+            int? minLength = null,
+            int? maxLength = null,
+            string? pattern = null,
+            object? minimum = null,
+            object? maximum = null
         ) : base(description, example) {
             ToolParamSpec.ValidateDefaultCombination("schema", valueKind, isNullable, defaultValue);
+            ValidateStringConstraints(valueKind, stringEnumValues, minLength, maxLength, pattern);
+            ValidateNumericConstraints(valueKind, minimum, maximum);
 
             ValueKind = valueKind;
             IsNullable = isNullable;
             Default = defaultValue;
+            StringEnumValues = stringEnumValues is null
+                ? ImmutableArray<string>.Empty
+                : ImmutableArray.CreateRange(stringEnumValues);
+            MinLength = minLength;
+            MaxLength = maxLength;
+            Pattern = pattern;
+            Minimum = minimum;
+            Maximum = maximum;
         }
 
         public ToolParamType ValueKind { get; }
         public bool IsNullable { get; }
         public ParamDefault? Default { get; }
+        public ImmutableArray<string> StringEnumValues { get; }
+        public int? MinLength { get; }
+        public int? MaxLength { get; }
+        public string? Pattern { get; }
+        public object? Minimum { get; }
+        public object? Maximum { get; }
+
+        private static void ValidateStringConstraints(
+            ToolParamType valueKind,
+            IReadOnlyList<string>? stringEnumValues,
+            int? minLength,
+            int? maxLength,
+            string? pattern
+        ) {
+            if (stringEnumValues is null && minLength is null && maxLength is null && pattern is null) { return; }
+
+            if (valueKind != ToolParamType.String) {
+                throw new ArgumentException("String constraints are only valid for string schemas.");
+            }
+
+            if (minLength < 0) {
+                throw new ArgumentOutOfRangeException(nameof(minLength), minLength, "String minLength cannot be negative.");
+            }
+
+            if (maxLength < 0) {
+                throw new ArgumentOutOfRangeException(nameof(maxLength), maxLength, "String maxLength cannot be negative.");
+            }
+
+            if (minLength.HasValue && maxLength.HasValue && minLength.Value > maxLength.Value) {
+                throw new ArgumentException("String minLength cannot be greater than maxLength.");
+            }
+
+            if (stringEnumValues is not null) {
+                foreach (var value in stringEnumValues) {
+                    if (string.IsNullOrWhiteSpace(value)) {
+                        throw new ArgumentException("String enum values cannot contain null or whitespace entries.", nameof(stringEnumValues));
+                    }
+                }
+            }
+        }
+
+        private static void ValidateNumericConstraints(
+            ToolParamType valueKind,
+            object? minimum,
+            object? maximum
+        ) {
+            if (minimum is null && maximum is null) { return; }
+
+            if (valueKind is not (ToolParamType.Int32 or ToolParamType.Int64 or ToolParamType.Float32 or ToolParamType.Float64 or ToolParamType.Decimal)) {
+                throw new ArgumentException("Numeric constraints are only valid for numeric schemas.");
+            }
+
+            if (minimum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, minimum, out var minError)) {
+                throw new ArgumentException($"Invalid minimum constraint: {minError}", nameof(minimum));
+            }
+
+            if (maximum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, maximum, out var maxError)) {
+                throw new ArgumentException($"Invalid maximum constraint: {maxError}", nameof(maximum));
+            }
+
+            if (minimum is not null && maximum is not null && CompareValues(minimum, maximum, valueKind) > 0) {
+                throw new ArgumentException("Numeric minimum cannot be greater than maximum.");
+            }
+        }
+
+        private static int CompareValues(object left, object right, ToolParamType valueKind) {
+            return valueKind switch {
+                ToolParamType.Int32 => Convert.ToInt32(left).CompareTo(Convert.ToInt32(right)),
+                ToolParamType.Int64 => Convert.ToInt64(left).CompareTo(Convert.ToInt64(right)),
+                ToolParamType.Float32 => Convert.ToSingle(left).CompareTo(Convert.ToSingle(right)),
+                ToolParamType.Float64 => Convert.ToDouble(left).CompareTo(Convert.ToDouble(right)),
+                ToolParamType.Decimal => Convert.ToDecimal(left).CompareTo(Convert.ToDecimal(right)),
+                _ => throw new ArgumentOutOfRangeException(nameof(valueKind), valueKind, "Value kind does not support numeric comparison.")
+            };
+        }
     }
 }
 

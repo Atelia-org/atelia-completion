@@ -105,7 +105,8 @@ internal static class JsonToolSchemaBuilder {
 
         AppendDescription(schema, parameter.Description);
         AppendExamples(schema, parameter.Example);
-        // TODO: 在引入通用参数约束体系后，将枚举等约束信息映射到 schema。
+        AppendStringConstraints(schema, parameter);
+        AppendNumericConstraints(schema, parameter);
 
         return schema;
     }
@@ -118,5 +119,37 @@ internal static class JsonToolSchemaBuilder {
     private static void AppendExamples(JsonObject schema, string? example) {
         if (string.IsNullOrWhiteSpace(example)) { return; }
         schema["examples"] = new JsonArray { JsonValue.Create(example) };
+    }
+
+    private static void AppendStringConstraints(JsonObject schema, ToolSchema.Value parameter) {
+        if (!parameter.StringEnumValues.IsDefaultOrEmpty) {
+            var values = new JsonArray();
+            foreach (var value in parameter.StringEnumValues) {
+                values.Add(value);
+            }
+            schema["enum"] = values;
+        }
+
+        if (parameter.MinLength.HasValue) {
+            schema["minLength"] = parameter.MinLength.Value;
+        }
+
+        if (parameter.MaxLength.HasValue) {
+            schema["maxLength"] = parameter.MaxLength.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(parameter.Pattern)) {
+            schema["pattern"] = parameter.Pattern;
+        }
+    }
+
+    private static void AppendNumericConstraints(JsonObject schema, ToolSchema.Value parameter) {
+        if (parameter.Minimum is not null) {
+            schema["minimum"] = JsonValue.Create(parameter.Minimum);
+        }
+
+        if (parameter.Maximum is not null) {
+            schema["maximum"] = JsonValue.Create(parameter.Maximum);
+        }
     }
 }

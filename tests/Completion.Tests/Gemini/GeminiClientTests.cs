@@ -11,9 +11,7 @@ namespace Atelia.Completion.Gemini.Tests;
 public sealed class GeminiClientTests {
     [Fact]
     public void Constructor_DoesNotOverwriteExternalBaseAddressWhenNoneProvided() {
-        if (!GeminiProductionTypesPresent()) {
-            return;
-        }
+        if (!GeminiProductionTypesPresent()) { return; }
 
         using var handler = new EmptyHttpMessageHandler();
         var preconfigured = new Uri("http://localhost:9000/");
@@ -29,9 +27,7 @@ public sealed class GeminiClientTests {
 
     [Fact]
     public void Constructor_ExplicitBaseAddressOverridesExternalHttpClientBaseAddress() {
-        if (!GeminiProductionTypesPresent()) {
-            return;
-        }
+        if (!GeminiProductionTypesPresent()) { return; }
 
         using var handler = new EmptyHttpMessageHandler();
         using var httpClient = new HttpClient(handler) {
@@ -47,9 +43,7 @@ public sealed class GeminiClientTests {
 
     [Fact]
     public async Task StreamCompletionAsync_NonSuccessStatus_IncludesResponseBodySnippetInException() {
-        if (!GeminiProductionTypesPresent()) {
-            return;
-        }
+        if (!GeminiProductionTypesPresent()) { return; }
 
         using var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) {
@@ -75,6 +69,36 @@ public sealed class GeminiClientTests {
         Assert.Contains("bad input", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_UsesApiKeyHeaderWithoutLeakingKeyIntoRequestUri() {
+        if (!GeminiProductionTypesPresent()) { return; }
+
+        using var handler = new InspectingHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}
+
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = CreateGeminiClient(httpClient, baseAddress: null, apiKey: "secret-key");
+        var result = await InvokeStreamCompletionAsync(client, CreateRequest());
+
+        Assert.Equal("ok", result.Message.GetFlattenedText());
+        Assert.Equal("secret-key", handler.LastRequest?.Headers.GetValues("x-goog-api-key").Single());
+        Assert.DoesNotContain("secret-key", handler.LastRequest?.RequestUri?.ToString(), StringComparison.Ordinal);
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gemini-2.5-flash",
@@ -84,7 +108,7 @@ public sealed class GeminiClientTests {
         );
     }
 
-    private static object CreateGeminiClient(HttpClient httpClient, Uri? baseAddress) {
+    private static object CreateGeminiClient(HttpClient httpClient, Uri? baseAddress, string? apiKey = null) {
         var clientType = typeof(CompletionHttpTransportFactory).Assembly.GetType("Atelia.Completion.Gemini.GeminiClient");
         Assert.NotNull(clientType);
         var constructor = clientType
@@ -95,7 +119,7 @@ public sealed class GeminiClientTests {
 
         var arguments = constructor!
             .GetParameters()
-            .Select(parameter => ResolveConstructorArgument(parameter, httpClient, baseAddress))
+            .Select(parameter => ResolveConstructorArgument(parameter, httpClient, baseAddress, apiKey))
             .ToArray();
 
         try {
@@ -113,22 +137,14 @@ public sealed class GeminiClientTests {
             && parameters.Any(parameter => parameter.ParameterType == typeof(Uri));
     }
 
-    private static object? ResolveConstructorArgument(ParameterInfo parameter, HttpClient httpClient, Uri? baseAddress) {
-        if (parameter.ParameterType == typeof(HttpClient)) {
-            return httpClient;
-        }
+    private static object? ResolveConstructorArgument(ParameterInfo parameter, HttpClient httpClient, Uri? baseAddress, string? apiKey) {
+        if (parameter.ParameterType == typeof(HttpClient)) { return httpClient; }
 
-        if (parameter.ParameterType == typeof(Uri)) {
-            return baseAddress;
-        }
+        if (parameter.ParameterType == typeof(Uri)) { return baseAddress; }
 
-        if (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase)) {
-            return null;
-        }
+        if (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase)) { return apiKey; }
 
-        if (parameter.HasDefaultValue) {
-            return parameter.DefaultValue;
-        }
+        if (parameter.HasDefaultValue) { return parameter.DefaultValue; }
 
         throw new InvalidOperationException(
             $"Unsupported GeminiClient constructor parameter '{parameter.Name}' of type '{parameter.ParameterType}'."
@@ -174,6 +190,21 @@ public sealed class GeminiClientTests {
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             return Task.FromResult(_responses.Dequeue());
+        }
+    }
+
+    private sealed class InspectingHttpMessageHandler : HttpMessageHandler {
+        private readonly HttpResponseMessage _response;
+
+        public InspectingHttpMessageHandler(HttpResponseMessage response) {
+            _response = response;
+        }
+
+        public HttpRequestMessage? LastRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            LastRequest = request;
+            return Task.FromResult(_response);
         }
     }
 }

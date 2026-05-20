@@ -12,9 +12,7 @@ namespace Atelia.Completion.Gemini.Tests;
 public sealed class GeminiMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_MapsSystemPromptToSystemInstruction() {
-        if (!GeminiProductionTypesPresent()) {
-            return;
-        }
+        if (!GeminiProductionTypesPresent()) { return; }
 
         var request = new CompletionRequest(
             ModelId: "gemini-2.5-flash",
@@ -39,9 +37,7 @@ public sealed class GeminiMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_MapsToolResultsToFunctionResponse() {
-        if (!GeminiProductionTypesPresent()) {
-            return;
-        }
+        if (!GeminiProductionTypesPresent()) { return; }
 
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
@@ -80,9 +76,9 @@ public sealed class GeminiMessageConverterTests {
             .GetProperty("parts")
             .EnumerateArray()
             .Single(
-                part => part.TryGetProperty("functionResponse", out var functionResponseElement)
+            part => part.TryGetProperty("functionResponse", out var functionResponseElement)
                     && functionResponseElement.ValueKind is not JsonValueKind.Null
-            );
+        );
         var functionResponse = functionResponsePart.GetProperty("functionResponse");
 
         Assert.Equal("search", functionResponse.GetProperty("name").GetString());
@@ -96,9 +92,7 @@ public sealed class GeminiMessageConverterTests {
 
     [Fact]
     public void ConvertToApiRequest_ToolReplayWithoutGeminiReplayPayloadFailsFast() {
-        if (!GeminiProductionTypesPresent()) {
-            return;
-        }
+        if (!GeminiProductionTypesPresent()) { return; }
 
         var request = new CompletionRequest(
             ModelId: "gemini-2.5-flash",
@@ -132,6 +126,68 @@ public sealed class GeminiMessageConverterTests {
 
         Assert.Contains("Gemini", exception.Message, StringComparison.Ordinal);
         Assert.Contains("replay", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ReplayPayloadThatDriftsFromVisibleTextFailsFast() {
+        if (!GeminiProductionTypesPresent()) { return; }
+
+        var replayBlockType = typeof(CompletionHttpTransportFactory).Assembly.GetType("Atelia.Completion.Gemini.GeminiReplayBlock");
+        Assert.NotNull(replayBlockType);
+
+        var payload = JsonSerializer.SerializeToUtf8Bytes(
+            new JsonObject {
+                ["role"] = "model",
+                ["parts"] = new JsonArray {
+                    new JsonObject {
+                        ["text"] = "provider text",
+                        ["thoughtSignature"] = "sig-text"
+                    }
+                }
+            }
+        );
+
+        var constructor = replayBlockType!.GetConstructor(
+            BindingFlags.Public | BindingFlags.Instance,
+            binder: null,
+            types: new[] { typeof(ReadOnlyMemory<byte>), typeof(CompletionDescriptor), typeof(string) },
+            modifiers: null
+        );
+        Assert.NotNull(constructor);
+
+        var replayBlock = Assert.IsAssignableFrom<ActionBlock>(
+            constructor!.Invoke(
+                new object?[] {
+                    new ReadOnlyMemory<byte>(payload),
+                    new CompletionDescriptor(
+                        "generativelanguage.googleapis.com",
+                        "google-gemini-generate-content-v1beta",
+                        "gemini-2.5-flash"
+                    ),
+                    null
+                }
+            )
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "gemini-2.5-flash",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ActionMessage(
+                    new ActionBlock[] {
+                        new ActionBlock.Text("visible text"),
+                        replayBlock
+                    }
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("two sources of truth", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static object ConvertToApiRequest(CompletionRequest request) {

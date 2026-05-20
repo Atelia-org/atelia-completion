@@ -118,6 +118,24 @@ public sealed class CompletionAggregator {
     }
 
     /// <summary>
+    /// 追加一个仅用于 provider-native replay 的 <see cref="ActionBlock.ReasoningBlock"/>。
+    /// 与 <see cref="AppendThinking"/> / <see cref="EndThinking"/> 不同，此入口不会触发 thinking 生命周期事件，
+    /// 适用于 Gemini 等把 replay metadata 挂在 model turn 上、但并未显式暴露 thinking 开始/结束语义的 provider。
+    /// </summary>
+    /// <param name="block">由 parser 构造的、Origin 已填充的具体 ReasoningBlock 子类型。</param>
+    public void AppendReplayBlock(ActionBlock.ReasoningBlock block) {
+        if (block is null) { throw new ArgumentNullException(nameof(block)); }
+        if (!Equals(block.Origin, _invocation)) {
+            throw new InvalidOperationException(
+                $"ReasoningBlock Origin mismatch: expected {_invocation}, got {block.Origin}."
+            );
+        }
+
+        FlushPendingText();
+        _blocks.Add(block);
+    }
+
+    /// <summary>
     /// 喂入一个已完成的 thinking 块（便捷方法，等价于 BeginThinking + EndThinking 无 delta）。
     /// </summary>
     /// <param name="block">由 StreamParser 构造的、Origin 已填充的具体 ReasoningBlock 子类型。</param>

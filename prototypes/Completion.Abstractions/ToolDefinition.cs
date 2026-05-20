@@ -66,7 +66,7 @@ public sealed class ToolParamSpec {
     // TODO: 当约束需求明确后，引入通用 IToolParamConstraint（包含枚举、数值范围等实现）。
     public string? Example { get; }
 
-    private static void ValidateDefaultCombination(
+    internal static void ValidateDefaultCombination(
         string parameterName,
         ToolParamType valueKind,
         bool isNullable,
@@ -90,7 +90,7 @@ public sealed class ToolParamSpec {
         if (!TryValidateValueKindCompatibility(valueKind, rawDefault, out var errorMessage)) { throw new ArgumentException(errorMessage, nameof(defaultValue)); }
     }
 
-    private static bool TryValidateValueKindCompatibility(ToolParamType valueKind, object value, out string errorMessage) {
+    internal static bool TryValidateValueKindCompatibility(ToolParamType valueKind, object value, out string errorMessage) {
         switch (valueKind) {
             case ToolParamType.String:
                 if (value is string) {
@@ -180,8 +180,180 @@ public enum ToolParamType {
     Decimal
 }
 
-public sealed record ToolDefinition(
-    string Name,
-    string Description,
-    ImmutableArray<ToolParamSpec> Parameters
-);
+public abstract record class ToolSchema(string? Description = null, string? Example = null) {
+    public sealed record class Property {
+        public Property(string name, ToolSchema schema, bool isRequired) {
+            Name = string.IsNullOrWhiteSpace(name)
+                ? throw new ArgumentException("Property name cannot be empty.", nameof(name))
+                : name;
+            Schema = schema ?? throw new ArgumentNullException(nameof(schema));
+            IsRequired = isRequired;
+        }
+
+        public string Name { get; }
+        public ToolSchema Schema { get; }
+        public bool IsRequired { get; }
+    }
+
+    public sealed record class Object : ToolSchema {
+        public Object(
+            IReadOnlyList<Property>? properties = null,
+            bool additionalProperties = false,
+            string? description = null,
+            string? example = null
+        ) : base(description, example) {
+            var builder = ImmutableArray.CreateBuilder<Property>();
+            var names = new HashSet<string>(StringComparer.Ordinal);
+
+            if (properties is not null) {
+                foreach (var property in properties) {
+                    if (!names.Add(property.Name)) {
+                        throw new ArgumentException($"Duplicate property '{property.Name}' detected.", nameof(properties));
+                    }
+
+                    builder.Add(property);
+                }
+            }
+
+            Properties = builder.Count == 0 ? ImmutableArray<Property>.Empty : builder.ToImmutable();
+            AdditionalProperties = additionalProperties;
+        }
+
+        public ImmutableArray<Property> Properties { get; }
+        public bool AdditionalProperties { get; }
+    }
+
+    public sealed record class Array : ToolSchema {
+        public Array(
+            ToolSchema itemSchema,
+            bool isNullable = false,
+            string? description = null,
+            string? example = null
+        ) : base(description, example) {
+            ItemSchema = itemSchema ?? throw new ArgumentNullException(nameof(itemSchema));
+            IsNullable = isNullable;
+        }
+
+        public ToolSchema ItemSchema { get; }
+        public bool IsNullable { get; }
+    }
+
+    public sealed record class Value : ToolSchema {
+        public Value(
+            ToolParamType valueKind,
+            bool isNullable = false,
+            ParamDefault? defaultValue = default,
+            string? description = null,
+            string? example = null
+        ) : base(description, example) {
+            ToolParamSpec.ValidateDefaultCombination("schema", valueKind, isNullable, defaultValue);
+
+            ValueKind = valueKind;
+            IsNullable = isNullable;
+            Default = defaultValue;
+        }
+
+        public ToolParamType ValueKind { get; }
+        public bool IsNullable { get; }
+        public ParamDefault? Default { get; }
+    }
+}
+
+public sealed record class ToolDefinition {
+    public ToolDefinition(string name, string description, ToolSchema inputSchema) {
+        Name = string.IsNullOrWhiteSpace(name)
+            ? throw new ArgumentException("Tool name cannot be empty.", nameof(name))
+            : name;
+        Description = string.IsNullOrWhiteSpace(description)
+            ? throw new ArgumentException("Tool description cannot be empty.", nameof(description))
+            : description;
+        InputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
+
+        if (InputSchema is not ToolSchema.Object objectSchema) {
+            throw new ArgumentException("Tool input schema root must be an object.", nameof(inputSchema));
+        }
+
+        Parameters = TryProjectFlatParameters(objectSchema);
+    }
+
+    public string Name { get; }
+    public string Description { get; }
+    public ToolSchema InputSchema { get; }
+
+    // Compatibility projection for remaining flat-schema display paths.
+    public ImmutableArray<ToolParamSpec> Parameters { get; }
+
+    public static ToolDefinition CreateFlat(
+        string name,
+        string description,
+        IReadOnlyList<ToolParamSpec>? parameters = null
+    ) {
+        var normalizedParameters = NormalizeParameters(parameters);
+        var inputSchema = BuildFlatInputSchema(normalizedParameters);
+        return new ToolDefinition(name, description, inputSchema);
+    }
+
+    private static ImmutableArray<ToolParamSpec> NormalizeParameters(IReadOnlyList<ToolParamSpec>? parameters) {
+        if (parameters is null || parameters.Count == 0) {
+            return ImmutableArray<ToolParamSpec>.Empty;
+        }
+
+        var builder = ImmutableArray.CreateBuilder<ToolParamSpec>(parameters.Count);
+        foreach (var parameter in parameters) {
+            builder.Add(parameter ?? throw new ArgumentException("Tool parameter cannot be null.", nameof(parameters)));
+        }
+
+        return builder.ToImmutable();
+    }
+
+    private static ToolSchema.Object BuildFlatInputSchema(ImmutableArray<ToolParamSpec> parameters) {
+        if (parameters.IsDefaultOrEmpty) {
+            return new ToolSchema.Object();
+        }
+
+        var properties = new ToolSchema.Property[parameters.Length];
+        for (var i = 0; i < parameters.Length; i++) {
+            var parameter = parameters[i];
+            properties[i] = new ToolSchema.Property(
+                parameter.Name,
+                new ToolSchema.Value(
+                    parameter.ValueKind,
+                    parameter.IsNullable,
+                    parameter.Default,
+                    parameter.Description,
+                    parameter.Example
+                ),
+                parameter.IsRequired
+            );
+        }
+
+        return new ToolSchema.Object(properties);
+    }
+
+    private static ImmutableArray<ToolParamSpec> TryProjectFlatParameters(ToolSchema.Object schema) {
+        if (schema.AdditionalProperties || schema.Properties.IsDefaultOrEmpty) {
+            return ImmutableArray<ToolParamSpec>.Empty;
+        }
+
+        var builder = ImmutableArray.CreateBuilder<ToolParamSpec>(schema.Properties.Length);
+        foreach (var property in schema.Properties) {
+            if (property.Schema is not ToolSchema.Value valueSchema || string.IsNullOrWhiteSpace(valueSchema.Description)) {
+                return ImmutableArray<ToolParamSpec>.Empty;
+            }
+
+            var defaultValue = property.IsRequired ? default(ParamDefault?) : valueSchema.Default;
+            builder.Add(
+                new ToolParamSpec(
+                    property.Name,
+                    valueSchema.Description,
+                    valueSchema.ValueKind,
+                    valueSchema.IsNullable,
+                    defaultValue,
+                    valueSchema.Example
+                )
+            );
+        }
+
+        return builder.ToImmutable();
+    }
+}

@@ -14,10 +14,10 @@ public sealed class GeminiProjectionRoundTripTests {
     );
 
     private static readonly ImmutableArray<ToolDefinition> WeatherTools = [
-        new ToolDefinition(
-            Name: "get_weather",
-            Description: "Get weather by city.",
-            Parameters: [
+        ToolDefinition.CreateFlat(
+            name: "get_weather",
+            description: "Get weather by city.",
+            parameters: [
                 new ToolParamSpec("city", "The city name.", ToolParamType.String),
                 new ToolParamSpec("days", "Forecast days.", ToolParamType.Int32)
             ]

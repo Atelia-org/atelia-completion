@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
@@ -8,20 +9,38 @@ internal static class JsonToolSchemaBuilder {
     public static JsonElement BuildSchema(ToolDefinition definition) {
         if (definition is null) { throw new ArgumentNullException(nameof(definition)); }
 
+        return BuildSchema(definition.InputSchema);
+    }
+
+    internal static JsonElement BuildSchema(ToolSchema schema) {
+        if (schema is null) { throw new ArgumentNullException(nameof(schema)); }
+
+        return JsonSerializer.SerializeToElement(BuildSchemaNode(schema));
+    }
+
+    private static JsonNode BuildSchemaNode(ToolSchema schema) {
+        return schema switch {
+            ToolSchema.Object objectSchema => BuildObjectSchema(objectSchema),
+            ToolSchema.Array arraySchema => BuildArraySchema(arraySchema),
+            ToolSchema.Value valueSchema => BuildValueSchema(valueSchema),
+            _ => throw new NotSupportedException($"Unsupported tool schema node '{schema.GetType().FullName}'.")
+        };
+    }
+
+    private static JsonObject BuildObjectSchema(ToolSchema.Object schema) {
         var root = new JsonObject {
             ["type"] = "object",
-            ["additionalProperties"] = false
+            ["additionalProperties"] = schema.AdditionalProperties
         };
 
         var properties = new JsonObject();
         var required = new JsonArray();
 
-        foreach (var parameter in definition.Parameters) {
-            var schema = BuildParameterSchema(parameter);
-            properties[parameter.Name] = schema;
+        foreach (var property in schema.Properties) {
+            properties[property.Name] = BuildSchemaNode(property.Schema);
 
-            if (parameter.IsRequired) {
-                required.Add(parameter.Name);
+            if (property.IsRequired) {
+                required.Add(property.Name);
             }
         }
 
@@ -33,10 +52,23 @@ internal static class JsonToolSchemaBuilder {
             root["required"] = required;
         }
 
-        return JsonSerializer.SerializeToElement(root);
+        AppendDescription(root, schema.Description);
+        AppendExamples(root, schema.Example);
+        return root;
     }
 
-    private static JsonNode BuildParameterSchema(ToolParamSpec parameter) {
+    private static JsonObject BuildArraySchema(ToolSchema.Array schema) {
+        var node = new JsonObject {
+            ["type"] = "array",
+            ["items"] = BuildSchemaNode(schema.ItemSchema)
+        };
+
+        AppendDescription(node, schema.Description);
+        AppendExamples(node, schema.Example);
+        return node;
+    }
+
+    private static JsonObject BuildValueSchema(ToolSchema.Value parameter) {
         var schema = new JsonObject();
 
         switch (parameter.ValueKind) {

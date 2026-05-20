@@ -13,15 +13,15 @@ public sealed class OpenAIChatProjectionRoundTripTests {
     );
 
     private static readonly ImmutableArray<ToolDefinition> WeatherTools = [
-        new ToolDefinition(
-            Name: "get_date",
-            Description: "Get today's date.",
-            Parameters: ImmutableArray<ToolParamSpec>.Empty
+        ToolDefinition.CreateFlat(
+            name: "get_date",
+            description: "Get today's date.",
+            parameters: ImmutableArray<ToolParamSpec>.Empty
         ),
-        new ToolDefinition(
-            Name: "get_weather",
-            Description: "Get weather by location and date.",
-            Parameters: [
+        ToolDefinition.CreateFlat(
+            name: "get_weather",
+            description: "Get weather by location and date.",
+            parameters: [
                 new ToolParamSpec("location", "The city name.", ToolParamType.String),
                 new ToolParamSpec("date", "The date in YYYY-MM-DD format.", ToolParamType.String)
             ]

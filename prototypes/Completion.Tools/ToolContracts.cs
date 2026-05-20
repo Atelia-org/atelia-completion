@@ -11,6 +11,6 @@ internal static class ToolDefinitionBuilder {
             ? ImmutableArray.CreateRange(tool.Parameters)
             : ImmutableArray<ToolParamSpec>.Empty;
 
-        return new ToolDefinition(tool.Name, tool.Description, parameters);
+        return ToolDefinition.CreateFlat(tool.Name, tool.Description, parameters);
     }
 }

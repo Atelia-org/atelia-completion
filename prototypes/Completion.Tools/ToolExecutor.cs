@@ -140,17 +140,7 @@ public sealed class ToolExecutor {
     }
 
     private ResolvedToolCall ResolveToolCall(RawToolCall request, ITool tool) {
-        if (!_definitionByInstance.TryGetValue(tool, out var definition)) {
-            return new ResolvedToolCall(
-                request.ToolName,
-                request.ToolCallId,
-                ImmutableDictionary<string, object?>.Empty,
-                "tool_definition_missing",
-                null
-            );
-        }
-
-        var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, request.RawArgumentsJson);
+        var parsed = JsonArgumentParser.ParseArguments(tool.Parameters, request.RawArgumentsJson);
         return new ResolvedToolCall(
             request.ToolName,
             request.ToolCallId,

@@ -17,24 +17,37 @@ partial class MethodToolWrapper {
     }
 
     private readonly ToolDefinition _definition;
+    private readonly ToolSchema.Object _inputSchema;
     private readonly IReadOnlyList<ArgGetter> _argGetters;
     private readonly Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> _invoker;
 
     private MethodToolWrapper(
         ToolDefinition definition,
+        ToolSchema.Object inputSchema,
         IReadOnlyList<ArgGetter> argGetters,
         Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> invoker
     ) {
         _definition = definition ?? throw new ArgumentNullException(nameof(definition));
+        _inputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
         _argGetters = argGetters;
         _invoker = invoker;
     }
 
     public bool Visible { get; set; } = true;
 
-    public ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken) {
-        var args = BuildArgs(_argGetters, arguments);
-        return _invoker(args, cancellationToken);
+    public async ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
+        if (request is null) { throw new ArgumentNullException(nameof(request)); }
+
+        var parsed = JsonArgumentParser.ParseArguments(_inputSchema, request.RawArgumentsJson);
+        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) {
+            return CreateParseFailureResult(request, parsed);
+        }
+
+        var args = BuildArgs(_argGetters, parsed.Arguments);
+        var result = await _invoker(args, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Tool '{_definition.Name}' returned null result.");
+
+        return result;
     }
 }
 
@@ -92,12 +105,14 @@ partial class MethodToolWrapper {
 
         var methodName = toolAttribute.FormatName(formattingArgs);
         var methodDescription = toolAttribute.FormatDescription(formattingArgs);
-        var definition = new ToolDefinition(methodName, methodDescription, new ToolSchema.Object(schemaProperties));
+        var inputSchema = new ToolSchema.Object(schemaProperties);
+        var definition = new ToolDefinition(methodName, methodDescription, inputSchema);
 
         var invoker = CreateInvoker(method, method.IsStatic ? null : targetInstance);
 
         return new MethodToolWrapper(
             definition,
+            inputSchema,
             argGetters.ToArray(),
             invoker
         );
@@ -220,4 +235,19 @@ partial class MethodToolWrapper {
 
         public static DefaultValueInfo None => new(null, null);
     }
+
+    private static ToolExecuteResult CreateParseFailureResult(RawToolCall request, ToolArgumentParsingResult parsed) {
+        var content = "工具参数解析失败。";
+
+        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) {
+            content = string.Concat(content, "\n解析错误: ", parsed.ParseError);
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.RawArgumentsJson)) {
+            content = string.Concat(content, "\nraw_arguments_json: ", request.RawArgumentsJson);
+        }
+
+        return new ToolExecuteResult(ToolExecutionStatus.Failed, content);
+    }
+
 }

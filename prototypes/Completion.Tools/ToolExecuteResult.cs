@@ -8,6 +8,10 @@ public sealed record ToolExecutionRequest {
         long executionSequence
     ) {
         RawToolCall = rawToolCall ?? throw new ArgumentNullException(nameof(rawToolCall));
+        if (executionSequence <= 0) {
+            throw new ArgumentOutOfRangeException(nameof(executionSequence), executionSequence, "Execution sequence must be greater than zero.");
+        }
+
         ExecutionSequence = executionSequence;
     }
 

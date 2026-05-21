@@ -10,7 +10,7 @@ namespace Atelia.Completion.Declaration.Tests;
 
 public sealed class ReflectedToolDefinitionBuilderTests {
     [Fact]
-    public void Build_FromAttributedRecordClass_GeneratesNestedToolDefinitionSchema() {
+    public void Build_FromAttributedRecordClass_GeneratesNestedToolDefinitionSchema_WithoutFlatCompatibilityProjection() {
         var definition = ReflectedToolDefinitionBuilder.Build<SearchDocsRequest>("search_docs");
 
         Assert.Equal("search_docs", definition.Name);

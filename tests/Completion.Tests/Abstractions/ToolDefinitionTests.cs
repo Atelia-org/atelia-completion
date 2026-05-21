@@ -6,14 +6,24 @@ namespace Atelia.Completion.Abstractions.Tests;
 
 public sealed class ToolDefinitionTests {
     [Fact]
-    public void CreateFlat_PreservesLegacyProviderSchemaShape() {
-        var definition = ToolDefinition.CreateFlat(
+    public void ExplicitFlatValueInputSchema_PreservesLegacyProviderSchemaShape_AndProjectsCompatibilityParameters() {
+        var definition = new ToolDefinition(
             name: "get_weather",
             description: "Get weather by city.",
-            parameters: [
-                new ToolParamSpec("city", "The city name.", ToolParamType.String),
-                new ToolParamSpec("days", "Forecast days.", ToolParamType.Int32)
-            ]
+            inputSchema: new ToolSchema.Object(
+                properties: [
+                    new ToolSchema.Property(
+                        "city",
+                        new ToolSchema.Value(ToolParamType.String, description: "The city name."),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "days",
+                        new ToolSchema.Value(ToolParamType.Int32, description: "Forecast days."),
+                        isRequired: true
+                    )
+                ]
+            )
         );
 
         Assert.Equal(2, definition.Parameters.Length);
@@ -115,7 +125,7 @@ public sealed class ToolDefinitionTests {
     }
 
     [Fact]
-    public void OptionalValueWithoutDefault_DoesNotProjectIncorrectFlatParameters() {
+    public void OptionalValueWithoutDefault_KeepsCompatibilityProjectionEmpty() {
         var definition = new ToolDefinition(
             name: "emit_partial",
             description: "Emit a partially optional payload.",
@@ -131,19 +141,6 @@ public sealed class ToolDefinitionTests {
         );
 
         Assert.Empty(definition.Parameters);
-    }
-
-    [Fact]
-    public void ToolSchemaValue_NonNullableStringWithNullDefault_Throws() {
-        var exception = Assert.Throws<ArgumentException>(
-            () => new ToolSchema.Value(
-                valueKind: ToolParamType.String,
-                isNullable: false,
-                defaultValue: new ParamDefault(null)
-            )
-        );
-
-        Assert.Contains("cannot be null", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -173,22 +170,6 @@ public sealed class ToolDefinitionTests {
                         new ToolSchema.Value(ToolParamType.String),
                         isRequired: false
                     )
-                ]
-            )
-        );
-
-        Assert.Contains("differ only by case", exception.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void CreateFlat_CaseOnlyDuplicateParameterNames_Throws() {
-        var exception = Assert.Throws<ArgumentException>(
-            () => ToolDefinition.CreateFlat(
-                name: "get_weather",
-                description: "Get weather by city.",
-                parameters: [
-                    new ToolParamSpec("City", "The city name.", ToolParamType.String),
-                    new ToolParamSpec("city", "The lowercase city name.", ToolParamType.String)
                 ]
             )
         );

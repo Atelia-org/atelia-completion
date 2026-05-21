@@ -13,17 +13,16 @@ public sealed class OpenAIChatProjectionRoundTripTests {
     );
 
     private static readonly ImmutableArray<ToolDefinition> WeatherTools = [
-        ToolDefinition.CreateFlat(
+        CreateTool(
             name: "get_date",
-            description: "Get today's date.",
-            parameters: ImmutableArray<ToolParamSpec>.Empty
+            description: "Get today's date."
         ),
-        ToolDefinition.CreateFlat(
+        CreateTool(
             name: "get_weather",
             description: "Get weather by location and date.",
-            parameters: [
-                new ToolParamSpec("location", "The city name.", ToolParamType.String),
-                new ToolParamSpec("date", "The date in YYYY-MM-DD format.", ToolParamType.String)
+            properties: [
+                RequiredValueProperty("location", "The city name.", ToolParamType.String),
+                RequiredValueProperty("date", "The date in YYYY-MM-DD format.", ToolParamType.String)
             ]
         )
     ];
@@ -246,6 +245,22 @@ public sealed class OpenAIChatProjectionRoundTripTests {
 
         parser.Complete(aggregator);
         return aggregator.Build().Message;
+    }
+
+    private static ToolDefinition CreateTool(string name, string description, params ToolSchema.Property[] properties) {
+        return new ToolDefinition(
+            name,
+            description,
+            new ToolSchema.Object(properties: properties)
+        );
+    }
+
+    private static ToolSchema.Property RequiredValueProperty(string name, string description, ToolParamType valueKind) {
+        return new ToolSchema.Property(
+            name,
+            new ToolSchema.Value(valueKind, description: description),
+            isRequired: true
+        );
     }
 
     private static void AssertJsonSemanticallyEqual(string expectedJson, string actualJson) {

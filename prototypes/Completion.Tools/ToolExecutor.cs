@@ -18,9 +18,12 @@ public sealed class ToolExecutor {
         foreach (var tool in tools) {
             if (tool is null) { continue; }
 
-            if (dictionary.ContainsKey(tool.Name)) { throw new InvalidOperationException($"Duplicate tool registration detected for '{tool.Name}'."); }
+            var definition = ToolContracts.GetValidatedDefinition(tool);
+            if (dictionary.ContainsKey(definition.Name)) {
+                throw new InvalidOperationException($"Duplicate tool registration detected for '{definition.Name}'.");
+            }
 
-            dictionary[tool.Name] = tool;
+            dictionary[definition.Name] = tool;
         }
 
         _tools = dictionary;
@@ -31,7 +34,7 @@ public sealed class ToolExecutor {
         foreach (var tool in _tools.Values) {
             if (tool is null) { continue; }
 
-            var definition = ToolDefinitionBuilder.FromTool(tool);
+            var definition = tool.Definition;
             definitionMap[tool] = definition;
             definitionBuilder.Add(definition);
         }
@@ -140,7 +143,8 @@ public sealed class ToolExecutor {
     }
 
     private ResolvedToolCall ResolveToolCall(RawToolCall request, ITool tool) {
-        var parsed = JsonArgumentParser.ParseArguments(tool.Parameters, request.RawArgumentsJson);
+        var definition = _definitionByInstance[tool];
+        var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, request.RawArgumentsJson);
         return new ResolvedToolCall(
             request.ToolName,
             request.ToolCallId,

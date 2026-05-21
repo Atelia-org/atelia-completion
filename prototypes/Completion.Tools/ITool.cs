@@ -6,6 +6,7 @@ namespace Atelia.Completion.Tools;
 /// 表示可被 LLM 或宿主运行时调用的工具定义。
 /// </summary>
 public interface ITool {
+    ToolDefinition Definition { get; }
     string Name { get; }
     string Description { get; }
     IReadOnlyList<ToolParamSpec> Parameters { get; }

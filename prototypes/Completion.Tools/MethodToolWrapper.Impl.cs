@@ -16,31 +16,19 @@ partial class MethodToolWrapper {
         }
     }
 
-    private readonly string _name;
-    private readonly string _description;
-    private readonly IReadOnlyList<ToolParamSpec> _parameters;
+    private readonly ToolDefinition _definition;
     private readonly IReadOnlyList<ArgGetter> _argGetters;
     private readonly Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> _invoker;
 
     private MethodToolWrapper(
-        string name,
-        string description,
-        IReadOnlyList<ToolParamSpec> parameters,
+        ToolDefinition definition,
         IReadOnlyList<ArgGetter> argGetters,
         Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> invoker
     ) {
-        _name = name;
-        _description = description;
-        _parameters = parameters;
+        _definition = definition ?? throw new ArgumentNullException(nameof(definition));
         _argGetters = argGetters;
         _invoker = invoker;
     }
-
-    public string Name => _name;
-
-    public string Description => _description;
-
-    public IReadOnlyList<ToolParamSpec> Parameters => _parameters;
 
     public bool Visible { get; set; } = true;
 
@@ -101,13 +89,12 @@ partial class MethodToolWrapper {
 
         var methodName = toolAttribute.FormatName(formattingArgs);
         var methodDescription = toolAttribute.FormatDescription(formattingArgs);
+        var definition = ToolDefinition.CreateFlat(methodName, methodDescription, toolParameters);
 
         var invoker = CreateInvoker(method, method.IsStatic ? null : targetInstance);
 
         return new MethodToolWrapper(
-            methodName,
-            methodDescription,
-            toolParameters.ToArray(),
+            definition,
             argGetters.ToArray(),
             invoker
         );

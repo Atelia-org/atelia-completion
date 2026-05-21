@@ -52,6 +52,14 @@ public sealed partial class MethodToolWrapper : ITool {
     public static MethodToolWrapper FromMethod(object? targetInstance, MethodInfo method, params object?[] formatArgs) {
         return FromMethodImpl(targetInstance, method, formatArgs ?? Array.Empty<object?>());
     }
+
+    public ToolDefinition Definition => _definition;
+
+    public string Name => Definition.Name;
+
+    public string Description => Definition.Description;
+
+    public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
 }
 
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]

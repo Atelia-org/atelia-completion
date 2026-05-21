@@ -54,12 +54,6 @@ public sealed partial class MethodToolWrapper : ITool {
     }
 
     public ToolDefinition Definition => _definition;
-
-    public string Name => Definition.Name;
-
-    public string Description => Definition.Description;
-
-    public IReadOnlyList<ToolParamSpec> Parameters => Definition.Parameters;
 }
 
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]

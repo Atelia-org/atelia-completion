@@ -99,8 +99,9 @@ public sealed class ToolExecutor {
         }
 
         try {
+            var definitionName = _definitionByInstance[tool].Name;
             var executeResult = await tool.ExecuteAsync(resolvedRequest.Arguments, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException($"Tool '{tool.Name}' returned null result.");
+                ?? throw new InvalidOperationException($"Tool '{definitionName}' returned null result.");
             stopwatch.Stop();
 
             DebugUtil.Info(

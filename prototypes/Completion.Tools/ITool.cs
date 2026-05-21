@@ -7,9 +7,6 @@ namespace Atelia.Completion.Tools;
 /// </summary>
 public interface ITool {
     ToolDefinition Definition { get; }
-    string Name { get; }
-    string Description { get; }
-    IReadOnlyList<ToolParamSpec> Parameters { get; }
     bool Visible { get; set; }
     ValueTask<ToolExecuteResult> ExecuteAsync(IReadOnlyDictionary<string, object?>? arguments, CancellationToken cancellationToken);
 }

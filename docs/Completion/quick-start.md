@@ -377,7 +377,7 @@ var request = new CompletionRequest(
 - ⚠️ 给 `defaultValue: new ParamDefault(null)` **必须** 同时设 `isNullable: true`，否则 `ToolParamSpec` 构造函数立刻抛 `ArgumentException`（`ValidateDefaultCombination`）。
 - `defaultValue` 当前 **只影响** Atelia 侧的 optional 判定与 schema `required` 列表——`JsonToolSchemaBuilder` 不会把 default 值写进 JSON Schema 的 `default` 字段。**不要假设模型一定知道默认值**，关键默认行为应在 `description` 里说明。
 - `ToolParamSpec.Name`：调用方应严格按声明拼写。当前 `JsonArgumentParser` 内部使用 `OrdinalIgnoreCase` 的字典做查询，所以模型大小写不一致 *暂时* 能过——但请视为实现细节，**不要依赖**。
-- 执行侧目前仍是 flat-only：`ToolExecutor` 在工具执行边界继续使用 `ITool.Parameters` 解析参数。也就是说，递归 `InputSchema` 已可用于 provider 声明，但还**没有**自动变成递归执行参数绑定。
+- 执行侧主链已经切到 schema-driven：`ToolExecutor` 在工具执行边界按当前 `ToolDefinition.InputSchema` 解析 `RawArgumentsJson`；`ToolDefinition.Parameters` / `ITool.Parameters` 只剩兼容展示投影，不再是执行真源。
 
 ---
 
@@ -436,7 +436,7 @@ public record RawToolCall(
 读取建议：
 
 1. `RawArgumentsJson` 是 **provider 发来的完整 arguments 文本**。Completion 抽象层不再替你做 schema-aware 解析。
-2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ITool.Parameters` 解析；解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
+2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ToolDefinition.InputSchema` 解析；工具注册、冲突检测与执行分发也统一以 validated `ToolDefinition.Name` 为准，`ITool.Name` 只是兼容表面。解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
 3. **持久化 / replay**：直接保存 `RawArgumentsJson`。回放给 OpenAI Chat 时原样作为 `function.arguments`；回放给 Anthropic/Gemini 这类结构化参数协议时，再把这段 JSON parse 成对象。
 4. **法证价值**：相比旧设计，当前抽象会保留完整原始 JSON 文本；即使 arguments malformed，也不会因为 provider 预解析失败而丢证据。
 

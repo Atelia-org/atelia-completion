@@ -24,6 +24,12 @@ public static class ToolContracts {
         if (authoritativeDefinition is null) { throw new ArgumentNullException(nameof(authoritativeDefinition)); }
         if (overrideDefinition is null) { throw new ArgumentNullException(nameof(overrideDefinition)); }
 
+        if (!string.Equals(authoritativeDefinition.Name, overrideDefinition.Name, StringComparison.Ordinal)) {
+            throw new InvalidOperationException(
+                $"工具 '{authoritativeDefinition.Name}' 的 metadata override 不能改名；override name 必须保持完全一致。"
+            );
+        }
+
         if (!SchemasAreMetadataCompatible(authoritativeDefinition.InputSchema, overrideDefinition.InputSchema)) {
             throw new InvalidOperationException(
                 $"工具 '{authoritativeDefinition.Name}' 的 metadata override 不能修改 provider-visible schema 语义。"

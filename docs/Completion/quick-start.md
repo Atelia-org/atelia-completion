@@ -27,7 +27,7 @@
 
 | 程序集 | 命名空间 | 你需要的核心符号 |
 |---|---|---|
-| `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `ActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolParamSpec`、`CompletionDescriptor`、`CompletionResult`、`ThinkingChunk` |
+| `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `ActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolSchema`、`CompletionDescriptor`、`CompletionResult`、`ThinkingChunk` |
 | `Atelia.Completion` | `Atelia.Completion.Anthropic`、`Atelia.Completion.OpenAI`、`Atelia.Completion.Gemini` | `AnthropicClient`、`OpenAIChatClient`、`OpenAIChatDialects`（静态访问点：`.Strict` / `.SgLangCompatible`）、`GeminiClient` |
 
 **只引 Abstractions** 用来定义请求/历史/工具——provider-neutral，不会拉出 HttpClient。
@@ -332,30 +332,35 @@ var history = new List<IHistoryMessage> {
 
 ### 3.2 `Tools`：声明工具签名
 
-`ToolDefinition` 现在以 `InputSchema` 为 provider-facing 声明真源。对现有扁平工具，最简单的写法仍然是用 `ToolDefinition.CreateFlat(...)` 从 `ToolParamSpec[]` 过渡构造。
+`ToolDefinition` 现在直接以 `InputSchema` 作为唯一 schema 真源。推荐显式写 `ToolSchema.Object / Array / Value`，不要再按旧 flat API 去想工具签名。
 
 ```csharp
 using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 
-var readFile = ToolDefinition.CreateFlat(
+var readFile = new ToolDefinition(
     name: "fs.read",
     description: "读取文本文件全文。",
-    parameters: ImmutableArray.Create(
-        new ToolParamSpec(
-            name: "path",
-            description: "相对仓库根的路径。",
-            valueKind: ToolParamType.String,
-            isNullable: false,
-            example: "docs/README.md"
-        ),
-        new ToolParamSpec(
-            name: "max_bytes",
-            description: "最多读取的字节数；省略表示不限制。",
-            valueKind: ToolParamType.Int32,
-            isNullable: true,                                  // ← null 默认值要求 isNullable=true
-            defaultValue: new ParamDefault(null)               // ← 有 default 即视为 optional
-        )
+    inputSchema: new ToolSchema.Object(
+        properties: [
+            new ToolSchema.Property(
+                name: "path",
+                schema: new ToolSchema.Value(
+                    ToolParamType.String,
+                    description: "相对仓库根的路径。",
+                    example: "docs/README.md"
+                ),
+                isRequired: true
+            ),
+            new ToolSchema.Property(
+                name: "max_bytes",
+                schema: new ToolSchema.Value(
+                    ToolParamType.Int32,
+                    description: "最多读取的字节数；省略表示不限制。"
+                ),
+                isRequired: false
+            ),
+        ]
     )
 );
 
@@ -369,15 +374,17 @@ var request = new CompletionRequest(
 
 **已知能力边界**：
 
-- `ToolDefinition.InputSchema` 已支持 object / array / value 的递归声明树；provider schema projection 走这条路径。
-- `ToolParamType` 和 `ToolDefinition.CreateFlat(...)` 仍只覆盖扁平标量：`String / Boolean / Int32 / Int64 / Float32 / Float64 / Decimal`。
+- `ToolDefinition` / `ITool` 当前主线已经收口到 `Definition -> InputSchema -> ToolSchema`；工具声明请直接围绕 `ToolSchema` 思考。
+- `ToolDefinition.InputSchema` 根节点必须是 `ToolSchema.Object`；其内部可递归声明 `object / array / value`。
+- `ToolSchema.Property.IsRequired` 负责表达字段是否必填；不要再把 `defaultValue` 当成 optional 语义来源。
+- `ToolSchema.Value` 的标量 kind 仍由 `ToolParamType` 表达：`String / Boolean / Int32 / Int64 / Float32 / Float64 / Decimal`。
+- `ToolSchema.Object.AdditionalProperties` 默认是 `false`；模型传入未知字段时，执行边界会把它当 parse error，而不是 warning 后透传。
+- 字段名按 `Ordinal` 精确匹配；大小写不一致会被当成不同字段，不要依赖“大小写差一点也能过”。
 - 若你要从 `record class` / `class` 直接生成递归声明，可用 `Atelia.Completion.Declaration.ReflectedToolDefinitionBuilder.Build<TInput>(toolName)`；当前它是声明侧 helper，不会自动接管默认 `ToolExecutor` 管线。
 - **LLM JSON 没有 `uint`**：超过 `int.MaxValue` 的整数会先解析成 `long`，自己做范围检查。
-- `IsOptional` 由 **是否提供 default** 决定（`ToolParamSpec.IsOptional` 等价于 `Default.HasValue`）。
-- ⚠️ 给 `defaultValue: new ParamDefault(null)` **必须** 同时设 `isNullable: true`，否则 `ToolParamSpec` 构造函数立刻抛 `ArgumentException`（`ValidateDefaultCombination`）。
-- `defaultValue` 当前 **只影响** Atelia 侧的 optional 判定与 schema `required` 列表——`JsonToolSchemaBuilder` 不会把 default 值写进 JSON Schema 的 `default` 字段。**不要假设模型一定知道默认值**，关键默认行为应在 `description` 里说明。
-- `ToolParamSpec.Name`：调用方应严格按声明拼写。当前 `JsonArgumentParser` 内部使用 `OrdinalIgnoreCase` 的字典做查询，所以模型大小写不一致 *暂时* 能过——但请视为实现细节，**不要依赖**。
-- 执行侧主链已经切到 schema-driven：`ToolExecutor` 在工具执行边界按当前 `ToolDefinition.InputSchema` 解析 `RawArgumentsJson`；`ToolDefinition.Parameters` / `ITool.Parameters` 只剩兼容展示投影，不再是执行真源。
+- 若你给 `ToolSchema.Value(defaultValue: new ParamDefault(null))`，仍然必须同时设 `isNullable: true`，否则构造函数会抛 `ArgumentException`。
+- `defaultValue` 当前不会被 `JsonToolSchemaBuilder` 写进 JSON Schema 的 `default` 字段。关键默认行为请继续写进 `description`。
+- 执行侧主链已经完全 schema-driven：`ToolExecutor` 在工具执行边界按当前 `ToolDefinition.InputSchema` 解析 `RawArgumentsJson`；工具注册、冲突检测与执行分发也统一按 `ToolDefinition.Name`。
 
 ---
 
@@ -436,7 +443,7 @@ public record RawToolCall(
 读取建议：
 
 1. `RawArgumentsJson` 是 **provider 发来的完整 arguments 文本**。Completion 抽象层不再替你做 schema-aware 解析。
-2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ToolDefinition.InputSchema` 解析；工具注册、冲突检测与执行分发也统一以 validated `ToolDefinition.Name` 为准，`ITool.Name` 只是兼容表面。解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
+2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ToolDefinition.InputSchema` 解析；工具注册、冲突检测与执行分发统一以 validated `ToolDefinition.Name` 为准。解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
 3. **持久化 / replay**：直接保存 `RawArgumentsJson`。回放给 OpenAI Chat 时原样作为 `function.arguments`；回放给 Anthropic/Gemini 这类结构化参数协议时，再把这段 JSON parse 成对象。
 4. **法证价值**：相比旧设计，当前抽象会保留完整原始 JSON 文本；即使 arguments malformed，也不会因为 provider 预解析失败而丢证据。
 
@@ -594,12 +601,12 @@ Gemini 的特殊点不是构造方式，而是历史回灌：
 
 1. **`Tools` 用 `default(ImmutableArray<T>)`** → converter 内部 `foreach` NRE。永远用 `ImmutableArray.Create(...)` 或 `.Empty`。
 2. **拼 `role="system"` 进 `Context`** → system 走独立 `SystemPrompt` 字段。
-3. **工具参数嵌套** → 当前不支持。扁平化或塞 JSON 字符串字段。
+3. **把嵌套 schema 当成旧 flat 参数来读** → `ToolSchema` 已支持嵌套 object / array；执行结果会物化为 dictionary/list，不会自动绑成你的自定义 CLR 类型。
 4. **`ToolCallId` 跨轮错位** → converter 抛 `InvalidOperationException`，不是 400。
 5. **解析 `Thinking.OpaquePayload`** → 不要。原样回灌，`Origin` 与产生它的调用对齐。
 6. **手写 `HttpClient.BaseAddress` 时漏 `/`** → 带路径前缀时尤其会 404；优先走 `CompletionHttpTransportFactory.CreateLiveClient(...)`。
 7. **本地 sglang 用 `Strict` dialect** → 工具流空白噪声会原样保留到文本块里。
-8. **`null` defaultValue 但 `isNullable: false`** → `ToolParamSpec` 构造立刻抛。
+8. **`ToolSchema.Value(defaultValue: new ParamDefault(null))` 但 `isNullable: false`** → 构造立刻抛。
 9. **流式调用不传 `CancellationToken`** → HTTP 长连接一直挂着。
 10. **指望模型看到 `defaultValue`** → 当前 schema 不输出 `default`，请把关键默认行为写进 `description`。
 
@@ -612,7 +619,7 @@ Gemini 的特殊点不是构造方式，而是历史回灌：
 | 400 且模型名不存在 | `ModelId` 与本地加载模型不一致 | 用 sglang 的 `/v1/models` 端点确认 |
 | `InvalidOperationException` 提到 tool_call_id | 历史里 `ToolResult.ToolCallId` 与上一个 `ActionBlock.ToolCall` 错位 / 缺失 | 对齐 id；失败工具用 `ExecuteError` 让 converter 合成 |
 | `InvalidOperationException` 提到 first message must be user (Anthropic) | Context 第一条不是 `ObservationMessage`（或空白被跳过后变成第一条不是 user） | 调整历史；Anthropic 协议强制首条 user |
-| `ArgumentException: Default value ... isNullable` | `ToolParamSpec` 构造时 default+nullable 组合非法 | 见 §3.2 |
+| `ArgumentException: Default value ... isNullable` | `ToolSchema.Value` 构造时 default+nullable 组合非法 | 见 §3.2 |
 
 ---
 

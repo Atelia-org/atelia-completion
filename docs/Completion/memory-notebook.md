@@ -76,13 +76,13 @@
 
 错误（解析根本失败）和警告（个别字段类型不匹配）在执行边界通过 `ResolvedToolCall.ParseError` / `ParseWarning` 分离传播。
 
-### 5. ToolDefinition 现已以 `InputSchema` 为声明真源
+### 5. Tool schema 已完成单一真源收口
 
-`ToolDefinition` 现在以 `InputSchema` 作为 provider-facing 声明真源；`JsonToolSchemaBuilder.BuildSchema(...)` 直接把 `ToolDefinition.InputSchema` 转成 Anthropic / OpenAI 通用 JSON Schema。
+`ToolDefinition` 现在只保留 `Name` / `Description` / `InputSchema`；`ITool` 现在只暴露 `Definition`。`JsonToolSchemaBuilder.BuildSchema(...)` 直接把 `ToolDefinition.InputSchema` 转成 Anthropic / OpenAI / Gemini 的 provider schema。
 
-- 旧的扁平工具仍可通过 `ToolDefinition.CreateFlat(...)` 从 `ToolParamSpec[]` 过渡构造
-- `ToolDefinition.Parameters` 仍保留为兼容投影件，主要给剩余 flat 展示路径使用；嵌套 schema 不保证能稳定投影回 flat 参数
-- `ToolExecutor` / `AgentEngine` 主链现在统一按 validated `ToolDefinition` 工作：注册与冲突检测看 `Definition.Name`，执行解析看 `Definition.InputSchema`
+- `ToolSchema` 是唯一 schema 真源，负责 object / array / value 的递归声明
+- `ToolExecutor` / `AgentEngine` / `MethodToolWrapper` 主链统一按 validated `ToolDefinition` 工作：注册与冲突检测看 `Definition.Name`，执行解析看 `Definition.InputSchema`
+- `ToolParamSpec` / `ToolDefinition.CreateFlat(...)` / `ToolDefinition.Parameters` 已完成清退；若在文档中看到这些名字，应视为历史阶段记录
 
 ### 6. 当前有三套 provider：Anthropic Messages + OpenAI Chat Completions + Google Gemini generateContent
 
@@ -184,7 +184,7 @@ prototypes/Completion.Abstractions/
 ├─ ThinkingChunk.cs          thinking 块的 provider-neutral 容器
 ├─ IHistoryMessage.cs         消息家族 + HistoryMessageKind 枚举
 ├─ RawToolCall.cs             原始工具调用 + ToolExecutionStatus 枚举（Success/Failed/Skipped）
-└─ ToolDefinition.cs          ToolDefinition + ToolParamSpec
+└─ ToolDefinition.cs          ToolDefinition + ToolSchema
 
 prototypes/Completion/
 ├─ Transport/
@@ -233,7 +233,7 @@ prototypes/Completion/
 ### 工具参数表达力有限
 
 - `ToolDefinition.InputSchema` 已支持递归 object / array / value 声明
-- `ToolParamSpec` / `ITool.Parameters` 仍主要服务于旧的 flat 展示与过渡构造，不再是执行真源
+- provider 请求投影与执行期参数解析都走同一条 `ToolDefinition.InputSchema` 主链，不再存在 flat 公共 API 作为第二真源
 - `ReflectedToolDefinitionBuilder` 当前是声明侧 helper；若要让模型真正看到这些递归 schema，调用方需要把生成出的 `ToolDefinition` 显式放进 `CompletionRequest.Tools`
 - `ReflectedToolDefinitionBuilder` 位于 `prototypes/Completion/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
 - LLM JSON 没有 uint，调用方需自行做 long → uint 的范围检查

@@ -384,7 +384,7 @@ var request = new CompletionRequest(
 - **LLM JSON 没有 `uint`**：超过 `int.MaxValue` 的整数会先解析成 `long`，自己做范围检查。
 - 若你给 `ToolSchema.Value(defaultValue: new ParamDefault(null))`，仍然必须同时设 `isNullable: true`，否则构造函数会抛 `ArgumentException`。
 - `defaultValue` 当前不会被 `JsonToolSchemaBuilder` 写进 JSON Schema 的 `default` 字段。关键默认行为请继续写进 `description`。
-- 执行侧主链已经完全 schema-driven：`ToolExecutor` 在工具执行边界按当前 `ToolDefinition.InputSchema` 解析 `RawArgumentsJson`；工具注册、冲突检测与执行分发也统一按 `ToolDefinition.Name`。
+- 执行侧主链现在是“`ToolExecutor` 负责按 `ToolDefinition.Name` 调度 `RawToolCall`；具体 `ITool` 再按自身需要消费 `ToolDefinition.InputSchema`”。像 `MethodToolWrapper` 这类 schema-bound tool 会在内部解析 `RawArgumentsJson`。
 
 ---
 
@@ -443,9 +443,14 @@ public record RawToolCall(
 读取建议：
 
 1. `RawArgumentsJson` 是 **provider 发来的完整 arguments 文本**。Completion 抽象层不再替你做 schema-aware 解析。
-2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ToolDefinition.InputSchema` 解析；工具注册、冲突检测与执行分发统一以 validated `ToolDefinition.Name` 为准。解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
+2. 需要执行工具时，把 `RawToolCall` 交给 `Atelia.Completion.Tools.ToolExecutor`；它负责按 validated `ToolDefinition.Name` 查找并分发给具体 `ITool`。若该工具需要 schema 绑定，例如 `MethodToolWrapper`，会在自己的 `ExecuteAsync(RawToolCall, ...)` 内部按当前 `ToolDefinition.InputSchema` 解析 `RawArgumentsJson`。
 3. **持久化 / replay**：直接保存 `RawArgumentsJson`。回放给 OpenAI Chat 时原样作为 `function.arguments`；回放给 Anthropic/Gemini 这类结构化参数协议时，再把这段 JSON parse 成对象。
 4. **法证价值**：相比旧设计，当前抽象会保留完整原始 JSON 文本；即使 arguments malformed，也不会因为 provider 预解析失败而丢证据。
+
+补充边界：
+
+- `ParseError` / `ParseWarning` 不再是 `ToolExecutor` 的统一产物；它们是否存在、以什么形式体现，取决于具体 tool 的内部绑定策略。
+- `ArtifactToolWrapper<T>` 已有类型骨架并采用同一 `RawToolCall` 执行协议，但当前仍未落地主线实现；把它视为预留位置，不要当成现成能力。
 
 执行完一定要回灌一条 `ToolResultsMessage`，且 `ToolResult.ToolCallId` 必须等于 `RawToolCall.ToolCallId`。
 

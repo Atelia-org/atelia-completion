@@ -6,7 +6,7 @@ namespace Atelia.Completion.Abstractions.Tests;
 
 public sealed class ToolDefinitionTests {
     [Fact]
-    public void ExplicitFlatValueInputSchema_PreservesLegacyProviderSchemaShape_AndProjectsCompatibilityParameters() {
+    public void ExplicitFlatValueInputSchema_PreservesLegacyProviderSchemaShape_AndProjectsC2CompatibilityParameters() {
         var definition = new ToolDefinition(
             name: "get_weather",
             description: "Get weather by city.",
@@ -26,6 +26,7 @@ public sealed class ToolDefinitionTests {
             )
         );
 
+        // C2 still needs the conservative flat projection for legacy display paths.
         Assert.Equal(2, definition.Parameters.Length);
 
         var schema = JsonToolSchemaBuilder.BuildSchema(definition);
@@ -54,7 +55,7 @@ public sealed class ToolDefinitionTests {
     }
 
     [Fact]
-    public void NestedInputSchema_BuildsRecursively_WithoutProjectingFlatParameters() {
+    public void NestedInputSchema_BuildsRecursively_AndKeepsC2CompatibilityProjectionEmpty() {
         var definition = new ToolDefinition(
             name: "search_docs",
             description: "Search docs with nested filters.",
@@ -86,6 +87,7 @@ public sealed class ToolDefinitionTests {
             )
         );
 
+        // C2 compatibility must fail closed for nested schemas that cannot round-trip as flat parameters.
         Assert.Empty(definition.Parameters);
 
         var schema = JsonToolSchemaBuilder.BuildSchema(definition);
@@ -125,7 +127,7 @@ public sealed class ToolDefinitionTests {
     }
 
     [Fact]
-    public void OptionalValueWithoutDefault_KeepsCompatibilityProjectionEmpty() {
+    public void OptionalValueWithoutDefault_KeepsC2CompatibilityProjectionEmpty() {
         var definition = new ToolDefinition(
             name: "emit_partial",
             description: "Emit a partially optional payload.",
@@ -140,6 +142,7 @@ public sealed class ToolDefinitionTests {
             )
         );
 
+        // C2 compatibility must stay empty because ToolParamSpec cannot represent optional-without-default.
         Assert.Empty(definition.Parameters);
     }
 

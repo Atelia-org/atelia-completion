@@ -180,6 +180,22 @@ public sealed class ToolDefinitionTests {
         Assert.Contains("differ only by case", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void CreateFlat_CaseOnlyDuplicateParameterNames_Throws() {
+        var exception = Assert.Throws<ArgumentException>(
+            () => ToolDefinition.CreateFlat(
+                name: "get_weather",
+                description: "Get weather by city.",
+                parameters: [
+                    new ToolParamSpec("City", "The city name.", ToolParamType.String),
+                    new ToolParamSpec("city", "The lowercase city name.", ToolParamType.String)
+                ]
+            )
+        );
+
+        Assert.Contains("differ only by case", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void AssertJsonSemanticallyEqual(string expectedJson, JsonElement actual) {
         using var expectedDocument = JsonDocument.Parse(expectedJson);
         Assert.True(

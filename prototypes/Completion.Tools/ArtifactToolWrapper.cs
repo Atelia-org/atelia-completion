@@ -25,17 +25,11 @@ public partial class ArtifactToolWrapper<T> : ITool where T: notnull {
 
     private static partial ArtifactToolWrapper<T> Bind(string toolName, ArtifactHandler<T> handler);
 
-    public ToolDefinition Definition {
-        get {
-            throw new NotImplementedException();
-        }
-    }
+    public ToolDefinition Definition => _definition;
 
     public bool Visible {get;set;}
 
-    public ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
-        throw new NotImplementedException();
-    }
+    public partial ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken);
 }
 
 public record struct ValidateResult(bool IsValid, string? message);

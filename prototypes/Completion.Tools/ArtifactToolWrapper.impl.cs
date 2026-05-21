@@ -21,8 +21,6 @@ partial class ArtifactToolWrapper<T> {
     private readonly ToolDefinition _definition;
     private readonly ToolSchema.Object _inputSchema;
     private readonly ArtifactHandler<T> _handler;
-    private readonly object _sequenceGate = new();
-    private int _nextSequence;
 
     private ArtifactToolWrapper(
         ToolDefinition definition,
@@ -46,13 +44,14 @@ partial class ArtifactToolWrapper<T> {
         return new ArtifactToolWrapper<T>(definition, inputSchema, handler);
     }
 
-    public partial ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
+    public partial ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken) {
         if (request is null) { throw new ArgumentNullException(nameof(request)); }
 
-        var parsed = JsonArgumentParser.ParseArguments(_inputSchema, request.RawArgumentsJson);
-        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) { return ValueTask.FromResult(CreateParseFailureResult(request, parsed)); }
+        var rawToolCall = request.RawToolCall;
+        var parsed = JsonArgumentParser.ParseArguments(_inputSchema, rawToolCall.RawArgumentsJson);
+        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) { return ValueTask.FromResult(CreateParseFailureResult(rawToolCall, parsed)); }
 
-        var normalizedRawArguments = NormalizeRawArguments(request.RawArgumentsJson);
+        var normalizedRawArguments = NormalizeRawArguments(rawToolCall.RawArgumentsJson);
         T artifact;
 
         try {
@@ -77,29 +76,21 @@ partial class ArtifactToolWrapper<T> {
                 AttachParseWarning(
                     new ToolExecuteResult(
                         ToolExecutionStatus.Failed,
-                        BuildAnnotationFailureContent(request, validationErrors)
+                        BuildAnnotationFailureContent(rawToolCall, validationErrors)
                     ),
                     parsed.ParseWarning
                 )
             );
         }
 
-        int sequence;
-        ValidateResult handlerResult;
-
-        lock (_sequenceGate) {
-            sequence = _nextSequence + 1;
-            handlerResult = _handler(sequence, artifact);
-            if (handlerResult.IsValid) {
-                _nextSequence = sequence;
-            }
-        }
+        var executionSequence = request.ExecutionSequence;
+        var handlerResult = _handler(artifact, executionSequence);
 
         var result = handlerResult.IsValid
             ? new ToolExecuteResult(
                 ToolExecutionStatus.Success,
                 string.IsNullOrWhiteSpace(handlerResult.message)
-                    ? $"产物已接收。sequence={sequence}"
+                    ? $"产物已接收。sequence={executionSequence}"
                     : handlerResult.message
             )
             : new ToolExecuteResult(

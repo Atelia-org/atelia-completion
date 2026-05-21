@@ -35,12 +35,13 @@ partial class MethodToolWrapper {
 
     public bool Visible { get; set; } = true;
 
-    public async ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken) {
+    public async ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken) {
         if (request is null) { throw new ArgumentNullException(nameof(request)); }
 
-        var parsed = JsonArgumentParser.ParseArguments(_inputSchema, request.RawArgumentsJson);
+        var rawToolCall = request.RawToolCall;
+        var parsed = JsonArgumentParser.ParseArguments(_inputSchema, rawToolCall.RawArgumentsJson);
         if (!string.IsNullOrWhiteSpace(parsed.ParseError)) {
-            return CreateParseFailureResult(request, parsed);
+            return CreateParseFailureResult(rawToolCall, parsed);
         }
 
         var args = BuildArgs(_argGetters, parsed.Arguments);

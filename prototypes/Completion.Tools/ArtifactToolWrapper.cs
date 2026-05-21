@@ -24,9 +24,9 @@ public partial class ArtifactToolWrapper<T> : ITool where T : class {
 
     public bool Visible { get; set; }
 
-    public partial ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken);
+    public partial ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken);
 }
 
 public record struct ValidateResult(bool IsValid, string? message);
 
-public delegate ValidateResult ArtifactHandler<T>(int sequence, T artifact) where T : class;
+public delegate ValidateResult ArtifactHandler<T>(T artifact, long executionSequence) where T : class;

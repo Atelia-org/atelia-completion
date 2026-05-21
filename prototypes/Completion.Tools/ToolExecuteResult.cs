@@ -2,6 +2,20 @@ using Atelia.Completion.Abstractions;
 
 namespace Atelia.Completion.Tools;
 
+public sealed record ToolExecutionRequest {
+    public ToolExecutionRequest(
+        RawToolCall rawToolCall,
+        long executionSequence
+    ) {
+        RawToolCall = rawToolCall ?? throw new ArgumentNullException(nameof(rawToolCall));
+        ExecutionSequence = executionSequence;
+    }
+
+    public RawToolCall RawToolCall { get; }
+
+    public long ExecutionSequence { get; }
+}
+
 public sealed record ToolExecuteResult {
     public ToolExecuteResult(
         ToolExecutionStatus status,

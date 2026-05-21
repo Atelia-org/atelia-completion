@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Threading;
 using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
 
@@ -10,6 +11,7 @@ public sealed class ToolExecutor {
     private readonly IReadOnlyDictionary<string, ITool> _tools;
     private readonly ImmutableArray<ToolDefinition> _allToolDefinitions;
     private readonly Dictionary<ITool, ToolDefinition> _definitionByInstance;
+    private long _nextExecutionSequence;
 
     public ToolExecutor(IEnumerable<ITool> tools) {
         if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
@@ -72,10 +74,13 @@ public sealed class ToolExecutor {
         RawToolCall request,
         CancellationToken cancellationToken
     ) {
-        DebugUtil.Info(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId}");
+        var executionSequence = Interlocked.Increment(ref _nextExecutionSequence);
+        var toolExecutionRequest = new ToolExecutionRequest(request, executionSequence);
+
+        DebugUtil.Info(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
 
         if (!_tools.TryGetValue(request.ToolName, out var tool)) {
-            DebugUtil.Warning(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName}");
+            DebugUtil.Warning(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName} executionSequence={executionSequence}");
 
             var message = $"未找到工具: {request.ToolName}";
             return new ToolCallExecutionResult(
@@ -89,20 +94,20 @@ public sealed class ToolExecutor {
 
         try {
             var definitionName = _definitionByInstance[tool].Name;
-            var executeResult = await tool.ExecuteAsync(request, cancellationToken).ConfigureAwait(false)
+            var executeResult = await tool.ExecuteAsync(toolExecutionRequest, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Tool '{definitionName}' returned null result.");
             stopwatch.Stop();
 
             DebugUtil.Info(
                 DebugCategory,
-                $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
+                $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
             return new ToolCallExecutionResult(executeResult, request.ToolName, request.ToolCallId, stopwatch.Elapsed);
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
-            DebugUtil.Warning(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId}");
+            DebugUtil.Warning(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
 
             return new ToolCallExecutionResult(
                 new ToolExecuteResult(ToolExecutionStatus.Skipped, "工具执行被取消"),
@@ -113,7 +118,7 @@ public sealed class ToolExecutor {
         }
         catch (Exception ex) {
             stopwatch.Stop();
-            DebugUtil.Error(DebugCategory, $"[Executor] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={ex.Message}", ex);
+            DebugUtil.Error(DebugCategory, $"[Executor] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} error={ex.Message}", ex);
 
             var message = $"工具执行异常: {ex.Message}";
             return new ToolCallExecutionResult(

@@ -10,14 +10,12 @@ namespace Atelia.Completion.Declaration.Tests;
 
 public sealed class ReflectedToolDefinitionBuilderTests {
     [Fact]
-    public void Build_FromAttributedRecordClass_GeneratesNestedToolDefinitionSchema_AndKeepsC2CompatibilityProjectionEmpty() {
+    public void Build_FromAttributedRecordClass_GeneratesNestedToolDefinitionSchema() {
         var definition = ReflectedToolDefinitionBuilder.Build<SearchDocsRequest>("search_docs");
 
         Assert.Equal("search_docs", definition.Name);
         Assert.Equal("Search documentation with structured filters.", definition.Description);
         Assert.IsType<ToolSchema.Object>(definition.InputSchema);
-        // C2 compatibility must not invent a flat projection for reflected nested schemas.
-        Assert.Empty(definition.Parameters);
 
         var schema = JsonToolSchemaBuilder.BuildSchema(definition);
 

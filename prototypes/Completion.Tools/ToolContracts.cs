@@ -9,15 +9,7 @@ public static class ToolContracts {
         return tool.Definition;
     }
 
-    public static void EnsureStableFlatProjection(ToolDefinition definition, string subject) {
-        if (definition is null) { throw new ArgumentNullException(nameof(definition)); }
-
-        if (TryExplainFlatProjectionFailure(definition, out var reason)) {
-            throw new InvalidOperationException($"{subject} 的 InputSchema 当前无法稳定投影为 flat 参数。原因: {reason}");
-        }
-    }
-
-    public static ToolDefinition CreateCompatibleFlatOverride(
+    public static ToolDefinition CreateCompatibleMetadataOverride(
         ToolDefinition authoritativeDefinition,
         ToolDefinition overrideDefinition
     ) {
@@ -81,48 +73,6 @@ public static class ToolContracts {
         if (!Equals(authoritative.Minimum, candidate.Minimum)) { return false; }
         if (!Equals(authoritative.Maximum, candidate.Maximum)) { return false; }
         return true;
-    }
-
-    private static bool TryExplainFlatProjectionFailure(ToolDefinition definition, out string reason) {
-        if (definition.InputSchema is not ToolSchema.Object objectSchema) {
-            reason = "tool input schema root is not an object.";
-            return true;
-        }
-
-        if (objectSchema.AdditionalProperties) {
-            reason = "additionalProperties=true is not supported by the flat parser.";
-            return true;
-        }
-
-        if (objectSchema.Properties.IsDefaultOrEmpty) {
-            reason = string.Empty;
-            return false;
-        }
-
-        foreach (var property in objectSchema.Properties) {
-            if (property.Schema is not ToolSchema.Value valueSchema) {
-                reason = $"property '{property.Name}' is not a flat value schema.";
-                return true;
-            }
-
-            if (string.IsNullOrWhiteSpace(valueSchema.Description)) {
-                reason = $"property '{property.Name}' is missing description required by flat projection.";
-                return true;
-            }
-
-            if (!property.IsRequired && !valueSchema.Default.HasValue) {
-                reason = $"property '{property.Name}' is optional without default, which ToolParamSpec cannot represent.";
-                return true;
-            }
-        }
-
-        if (definition.Parameters.Length != objectSchema.Properties.Length) {
-            reason = "ToolDefinition.Parameters does not match the schema property count.";
-            return true;
-        }
-
-        reason = string.Empty;
-        return false;
     }
 
     private static bool ParamDefaultEquals(ParamDefault? left, ParamDefault? right) {

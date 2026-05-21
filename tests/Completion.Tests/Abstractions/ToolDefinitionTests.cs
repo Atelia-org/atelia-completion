@@ -6,7 +6,7 @@ namespace Atelia.Completion.Abstractions.Tests;
 
 public sealed class ToolDefinitionTests {
     [Fact]
-    public void ExplicitFlatValueInputSchema_PreservesLegacyProviderSchemaShape_AndProjectsC2CompatibilityParameters() {
+    public void ExplicitFlatValueInputSchema_PreservesProviderSchemaShape() {
         var definition = new ToolDefinition(
             name: "get_weather",
             description: "Get weather by city.",
@@ -25,9 +25,6 @@ public sealed class ToolDefinitionTests {
                 ]
             )
         );
-
-        // C2 still needs the conservative flat projection for legacy display paths.
-        Assert.Equal(2, definition.Parameters.Length);
 
         var schema = JsonToolSchemaBuilder.BuildSchema(definition);
 
@@ -55,7 +52,7 @@ public sealed class ToolDefinitionTests {
     }
 
     [Fact]
-    public void NestedInputSchema_BuildsRecursively_AndKeepsC2CompatibilityProjectionEmpty() {
+    public void NestedInputSchema_BuildsRecursively() {
         var definition = new ToolDefinition(
             name: "search_docs",
             description: "Search docs with nested filters.",
@@ -86,9 +83,6 @@ public sealed class ToolDefinitionTests {
                 ]
             )
         );
-
-        // C2 compatibility must fail closed for nested schemas that cannot round-trip as flat parameters.
-        Assert.Empty(definition.Parameters);
 
         var schema = JsonToolSchemaBuilder.BuildSchema(definition);
 
@@ -127,7 +121,7 @@ public sealed class ToolDefinitionTests {
     }
 
     [Fact]
-    public void OptionalValueWithoutDefault_KeepsC2CompatibilityProjectionEmpty() {
+    public void OptionalValueWithoutDefault_PreservesOptionalSchemaSemantics() {
         var definition = new ToolDefinition(
             name: "emit_partial",
             description: "Emit a partially optional payload.",
@@ -141,9 +135,14 @@ public sealed class ToolDefinitionTests {
                 ]
             )
         );
+        var rootSchema = Assert.IsType<ToolSchema.Object>(definition.InputSchema);
+        var titleProperty = Assert.Single(rootSchema.Properties);
+        Assert.Equal("title", titleProperty.Name);
+        Assert.False(titleProperty.IsRequired);
 
-        // C2 compatibility must stay empty because ToolParamSpec cannot represent optional-without-default.
-        Assert.Empty(definition.Parameters);
+        var titleSchema = Assert.IsType<ToolSchema.Value>(titleProperty.Schema);
+        Assert.False(titleSchema.Default.HasValue);
+        Assert.False(titleSchema.IsNullable);
     }
 
     [Fact]

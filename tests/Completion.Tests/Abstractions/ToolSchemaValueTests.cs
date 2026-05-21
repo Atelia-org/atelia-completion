@@ -32,7 +32,7 @@ public sealed class ToolSchemaValueTests {
     }
 
     [Fact]
-    public void Ctor_NullableStringWithNullDefault_PreservesExplicitSchemaMetadata_AndProjectsC2CompatibilityDefault() {
+    public void Ctor_NullableStringWithNullDefault_PreservesExplicitSchemaMetadata() {
         var definition = new ToolDefinition(
             name: "set_profile",
             description: "Set profile options.",
@@ -62,12 +62,5 @@ public sealed class ToolSchemaValueTests {
         Assert.True(schema.Default.HasValue);
         var defaultValue = schema.Default.Value.Value;
         Assert.Null(defaultValue);
-
-        // C2 compatibility still needs to preserve nullable + null default when a flat projection is representable.
-        var projectedParameter = Assert.Single(definition.Parameters);
-        Assert.Equal("nickname", projectedParameter.Name);
-        Assert.True(projectedParameter.IsNullable);
-        Assert.True(projectedParameter.TryGetDefaultValue(out var projectedDefault));
-        Assert.Null(projectedDefault);
     }
 }

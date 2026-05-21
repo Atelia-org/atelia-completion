@@ -47,7 +47,7 @@ partial class MethodToolWrapper {
         var result = await _invoker(args, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Tool '{_definition.Name}' returned null result.");
 
-        return result;
+        return AttachParseWarning(result, parsed.ParseWarning);
     }
 }
 
@@ -248,6 +248,13 @@ partial class MethodToolWrapper {
         }
 
         return new ToolExecuteResult(ToolExecutionStatus.Failed, content);
+    }
+
+    private static ToolExecuteResult AttachParseWarning(ToolExecuteResult result, string? parseWarning) {
+        if (string.IsNullOrWhiteSpace(parseWarning)) { return result; }
+
+        var mergedContent = string.Concat(result.Content, "\n[ParseWarning] ", parseWarning);
+        return new ToolExecuteResult(result.Status, mergedContent);
     }
 
 }

@@ -9,7 +9,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Diagnostics\Diagnostics.csproj" />
     <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
-    <ProjectReference Include="..\Completion\Completion.csproj" />
   </ItemGroup>
 
   <ItemGroup>

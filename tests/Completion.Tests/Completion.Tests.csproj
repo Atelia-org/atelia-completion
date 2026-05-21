@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\prototypes\Completion\Completion.csproj" />
+    <ProjectReference Include="..\..\prototypes\Completion.Tools\Completion.Tools.csproj" />
   </ItemGroup>
 </Project>

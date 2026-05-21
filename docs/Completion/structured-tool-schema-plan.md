@@ -143,7 +143,7 @@ public sealed record class ToolDefinition {
 
 ### 3.2 `ReflectedToolDefinitionBuilder`
 
-当前 builder 已放在 [ReflectedToolDefinitionBuilder.cs](/repos/focus/atelia/prototypes/Completion/Declaration/ReflectedToolDefinitionBuilder.cs)：
+当前 builder 已放在 [ReflectedToolDefinitionBuilder.cs](/repos/focus/atelia/prototypes/Completion.Tools/Declaration/ReflectedToolDefinitionBuilder.cs)：
 
 ```csharp
 public static class ReflectedToolDefinitionBuilder {

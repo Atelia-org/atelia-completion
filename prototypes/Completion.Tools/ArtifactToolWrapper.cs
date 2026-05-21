@@ -11,7 +11,7 @@ namespace Atelia.Completion.Tools;
 /// 这个类型的功能就是依托反射和ExpressionTree等底层技术，对外提供一种便捷方式，将业务代码需要的结构化产物（用带有Attribute的class）包装为可供LLM调用的<see cref="ITool"/>。
 /// 业务逻辑代码通过<see cref="ArtifactHandler{T}"/>获取LLM输出的产物，以及进行可选的validation。
 /// 本类型是<see cref="MethodToolWrapper"/>的姐妹类型。
-/// 通过Attribute 声明式的为 class / record class 创建<see cref="ToolDefinition"/>的代码已有，但似乎我放错程序集了，现在在`/repos/focus/atelia/prototypes/Completion/Declaration/ReflectedToolDefinitionBuilder.cs`。
+/// 通过Attribute 声明式的为 class / record class 创建<see cref="ToolDefinition"/>的代码位于 Completion.Tools.Declaration 中，便于与 Artifact/Method tool wrapper 一起复用。
 /// </summary>
 public partial class ArtifactToolWrapper<T> : ITool where T : class {
     public static ArtifactToolWrapper<T> Create(string toolName, ArtifactHandler<T> handler) {
@@ -22,7 +22,7 @@ public partial class ArtifactToolWrapper<T> : ITool where T : class {
 
     public ToolDefinition Definition => _definition;
 
-    public bool Visible {get;set;}
+    public bool Visible { get; set; }
 
     public partial ValueTask<ToolExecuteResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken);
 }

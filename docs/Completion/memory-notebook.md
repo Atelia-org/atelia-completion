@@ -244,7 +244,7 @@ prototypes/Completion.Tools/
 - `ToolDefinition.InputSchema` 已支持递归 object / array / value 声明
 - provider 请求投影与执行期参数解析都走同一条 `ToolDefinition.InputSchema` 主链，不再存在 flat 公共 API 作为第二真源
 - `ReflectedToolDefinitionBuilder` 当前是声明侧 helper；若要让模型真正看到这些递归 schema，调用方需要把生成出的 `ToolDefinition` 显式放进 `CompletionRequest.Tools`
-- `ReflectedToolDefinitionBuilder` 位于 `prototypes/Completion/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
+- `ReflectedToolDefinitionBuilder` 位于 `prototypes/Completion.Tools/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
 - LLM JSON 没有 uint，调用方需自行做 long → uint 的范围检查
 
 ### 计费 token usage 已从 Completion 抽象层移除

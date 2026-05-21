@@ -4,7 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Declaration;
+using Atelia.Completion.Tools.Declaration;
 
 namespace Atelia.Completion.Tools;
 
@@ -50,9 +50,7 @@ partial class ArtifactToolWrapper<T> {
         if (request is null) { throw new ArgumentNullException(nameof(request)); }
 
         var parsed = JsonArgumentParser.ParseArguments(_inputSchema, request.RawArgumentsJson);
-        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) {
-            return ValueTask.FromResult(CreateParseFailureResult(request, parsed));
-        }
+        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) { return ValueTask.FromResult(CreateParseFailureResult(request, parsed)); }
 
         var normalizedRawArguments = NormalizeRawArguments(request.RawArgumentsJson);
         T artifact;

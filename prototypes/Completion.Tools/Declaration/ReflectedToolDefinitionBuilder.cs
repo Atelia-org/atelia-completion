@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 
-namespace Atelia.Completion.Declaration;
+namespace Atelia.Completion.Tools.Declaration;
 
 public static class ReflectedToolDefinitionBuilder {
     private static readonly NullabilityInfoContext NullabilityContext = new();
@@ -31,9 +31,7 @@ public static class ReflectedToolDefinitionBuilder {
     private static ToolSchema.Object BuildObjectSchema(Type type, string? schemaDescription, HashSet<Type> typePath) {
         EnsureSupportedObjectType(type, "object schema");
 
-        if (!typePath.Add(type)) {
-            throw new NotSupportedException($"Cycle detected while reflecting tool declaration type '{type.FullName}'.");
-        }
+        if (!typePath.Add(type)) { throw new NotSupportedException($"Cycle detected while reflecting tool declaration type '{type.FullName}'."); }
 
         try {
             var properties = ImmutableArray.CreateBuilder<ToolSchema.Property>();
@@ -44,9 +42,7 @@ public static class ReflectedToolDefinitionBuilder {
                 if (property.GetIndexParameters().Length != 0) { continue; }
 
                 if (TryShouldIgnore(property, out var ignoreError)) {
-                    if (ignoreError is not null) {
-                        throw ignoreError;
-                    }
+                    if (ignoreError is not null) { throw ignoreError; }
 
                     continue;
                 }
@@ -82,19 +78,13 @@ public static class ReflectedToolDefinitionBuilder {
         var underlyingNullableType = Nullable.GetUnderlyingType(propertyType);
         var effectiveType = underlyingNullableType ?? propertyType;
 
-        if (TryBuildScalarSchema(effectiveType, propertyDescription, property, out var scalarSchema)) {
-            return scalarSchema;
-        }
+        if (TryBuildScalarSchema(effectiveType, propertyDescription, property, out var scalarSchema)) { return scalarSchema; }
 
         if (TryGetSupportedCollectionElementType(effectiveType, out var elementType)) {
-            if (AllowsNull(propertyType, nullability)) {
-                throw new NotSupportedException($"Nullable array/object property '{property.DeclaringType?.FullName}.{property.Name}' is not supported.");
-            }
+            if (AllowsNull(propertyType, nullability)) { throw new NotSupportedException($"Nullable array/object property '{property.DeclaringType?.FullName}.{property.Name}' is not supported."); }
 
             var elementNullability = GetCollectionElementNullability(nullability);
-            if (elementNullability is not null && AllowsNull(elementType, elementNullability)) {
-                throw new NotSupportedException($"Nullable collection elements are not supported for property '{property.DeclaringType?.FullName}.{property.Name}'.");
-            }
+            if (elementNullability is not null && AllowsNull(elementType, elementNullability)) { throw new NotSupportedException($"Nullable collection elements are not supported for property '{property.DeclaringType?.FullName}.{property.Name}'."); }
 
             var itemSchema = BuildSchemaForNestedType(
                 elementType,
@@ -107,13 +97,9 @@ public static class ReflectedToolDefinitionBuilder {
             return new ToolSchema.Array(itemSchema, description: propertyDescription);
         }
 
-        if (effectiveType.IsValueType) {
-            throw new NotSupportedException($"Unsupported tool declaration type '{effectiveType.FullName}' on property '{property.DeclaringType?.FullName}.{property.Name}'.");
-        }
+        if (effectiveType.IsValueType) { throw new NotSupportedException($"Unsupported tool declaration type '{effectiveType.FullName}' on property '{property.DeclaringType?.FullName}.{property.Name}'."); }
 
-        if (AllowsNull(propertyType, nullability)) {
-            throw new NotSupportedException($"Nullable array/object property '{property.DeclaringType?.FullName}.{property.Name}' is not supported.");
-        }
+        if (AllowsNull(propertyType, nullability)) { throw new NotSupportedException($"Nullable array/object property '{property.DeclaringType?.FullName}.{property.Name}' is not supported."); }
 
         return BuildObjectSchema(effectiveType, propertyDescription, typePath);
     }
@@ -128,9 +114,7 @@ public static class ReflectedToolDefinitionBuilder {
         var underlyingNullableType = Nullable.GetUnderlyingType(type);
         var effectiveType = underlyingNullableType ?? type;
 
-        if (TryBuildScalarSchema(effectiveType, schemaDescription, declaringProperty, out var scalarSchema)) {
-            return scalarSchema;
-        }
+        if (TryBuildScalarSchema(effectiveType, schemaDescription, declaringProperty, out var scalarSchema)) { return scalarSchema; }
 
         if (TryGetSupportedCollectionElementType(effectiveType, out _)) {
             throw new NotSupportedException(
@@ -144,9 +128,7 @@ public static class ReflectedToolDefinitionBuilder {
             );
         }
 
-        if (nullability is not null && AllowsNull(type, nullability)) {
-            throw new NotSupportedException($"Nullable array/object property '{declaringProperty.DeclaringType?.FullName}.{declaringProperty.Name}' is not supported.");
-        }
+        if (nullability is not null && AllowsNull(type, nullability)) { throw new NotSupportedException($"Nullable array/object property '{declaringProperty.DeclaringType?.FullName}.{declaringProperty.Name}' is not supported."); }
 
         return BuildObjectSchema(effectiveType, schemaDescription, typePath);
     }
@@ -196,9 +178,7 @@ public static class ReflectedToolDefinitionBuilder {
         }
 
         if (type.IsEnum) {
-            if (type.GetCustomAttribute<FlagsAttribute>() is not null) {
-                throw new NotSupportedException($"Flags enum '{type.FullName}' is not supported for tool declarations.");
-            }
+            if (type.GetCustomAttribute<FlagsAttribute>() is not null) { throw new NotSupportedException($"Flags enum '{type.FullName}' is not supported for tool declarations."); }
 
             schema = new ToolSchema.Value(
                 ToolParamType.String,
@@ -248,9 +228,7 @@ public static class ReflectedToolDefinitionBuilder {
 
     private static string ResolvePropertyName(PropertyInfo property) {
         var name = property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? property.Name;
-        if (string.IsNullOrWhiteSpace(name)) {
-            throw new InvalidOperationException($"Property '{property.DeclaringType?.FullName}.{property.Name}' resolved to an empty JSON property name.");
-        }
+        if (string.IsNullOrWhiteSpace(name)) { throw new InvalidOperationException($"Property '{property.DeclaringType?.FullName}.{property.Name}' resolved to an empty JSON property name."); }
 
         return name;
     }
@@ -260,9 +238,7 @@ public static class ReflectedToolDefinitionBuilder {
 
     private static string GetRequiredDescription(MemberInfo member, string targetName) {
         var description = GetOptionalDescription(member);
-        if (description is null) {
-            throw new InvalidOperationException($"Type '{member.DeclaringType?.FullName ?? member.Name}' is missing [Description] for {targetName}.");
-        }
+        if (description is null) { throw new InvalidOperationException($"Type '{member.DeclaringType?.FullName ?? member.Name}' is missing [Description] for {targetName}."); }
 
         return description;
     }
@@ -281,9 +257,7 @@ public static class ReflectedToolDefinitionBuilder {
         => property.GetCustomAttribute<StringLengthAttribute>()?.MaximumLength;
 
     private static void EnsureSupportedObjectType(Type type, string role) {
-        if (!type.IsClass || type == typeof(string) || type.IsAbstract || type.IsInterface) {
-            throw new NotSupportedException($"Only concrete class / record class declarations are supported for {role}. Actual type: '{type.FullName}'.");
-        }
+        if (!type.IsClass || type == typeof(string) || type.IsAbstract || type.IsInterface) { throw new NotSupportedException($"Only concrete class / record class declarations are supported for {role}. Actual type: '{type.FullName}'."); }
     }
 
     private static bool AllowsNull(Type type, NullabilityInfo nullability) {

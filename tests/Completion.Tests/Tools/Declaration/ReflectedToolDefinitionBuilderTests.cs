@@ -3,10 +3,11 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools.Declaration;
 using Atelia.Completion.Utils;
 using Xunit;
 
-namespace Atelia.Completion.Declaration.Tests;
+namespace Atelia.Completion.Tools.Declaration.Tests;
 
 public sealed class ReflectedToolDefinitionBuilderTests {
     [Fact]
@@ -181,30 +182,30 @@ public sealed class ReflectedToolDefinitionBuilderTests {
 
     private sealed class CyclicNode {
         [Description("Next node.")]
-        public CyclicNode Next { get; init; } = new();
-    }
-
-    [Description("Flags enum request.")]
-    private sealed class FlagsEnumRequest {
-        [Description("Flag values.")]
-        public BadFlags Flags { get; init; }
+        public CyclicNode Next { get; init; } = null!;
     }
 
     [Flags]
-    private enum BadFlags {
-        One = 1,
-        Two = 2
+    private enum UnsupportedFlags {
+        None = 0,
+        One = 1
     }
 
-    [Description("Conditional ignore request.")]
+    [Description("Flags enum.")]
+    private sealed class FlagsEnumRequest {
+        [Description("Bad flags.")]
+        public UnsupportedFlags Value { get; init; }
+    }
+
+    [Description("Conditional ignore.")]
     private sealed class ConditionalIgnoreRequest {
-        [Description("Ignored conditionally.")]
+        [Description("Conditionally ignored property.")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public string? OptionalValue { get; init; }
+        public string? Value { get; init; }
     }
 
     private sealed class MissingRootDescriptionRequest {
-        [Description("Value.")]
+        [Description("Visible value.")]
         public string Value { get; init; } = string.Empty;
     }
 }

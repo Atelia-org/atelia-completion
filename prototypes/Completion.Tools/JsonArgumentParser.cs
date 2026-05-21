@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Atelia.Completion.Abstractions;
 
 namespace Atelia.Completion.Tools;
@@ -11,33 +12,28 @@ internal static class JsonArgumentParser {
         CommentHandling = JsonCommentHandling.Skip
     };
 
-    public static ToolArgumentParsingResult ParseArguments(IReadOnlyList<ToolParamSpec> parameters, string rawArguments) {
-        if (parameters is null) { throw new ArgumentNullException(nameof(parameters)); }
+    public static ToolArgumentParsingResult ParseArguments(ToolSchema.Object schema, string rawArguments) {
+        if (schema is null) { throw new ArgumentNullException(nameof(schema)); }
 
         var warnings = new List<string>();
         var errors = new List<string>();
-        var arguments = ImmutableDictionary<string, object?>.Empty;
-        var rawBuilder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.OrdinalIgnoreCase);
+        var arguments = ImmutableDictionary<string, object?>.Empty.WithComparers(StringComparer.Ordinal);
+        var rawBuilder = ImmutableDictionary.CreateBuilder<string, string>(StringComparer.Ordinal);
         var text = string.IsNullOrWhiteSpace(rawArguments) ? "{}" : rawArguments;
 
         try {
             using var document = JsonDocument.Parse(text, DocumentOptions);
             if (document.RootElement.ValueKind != JsonValueKind.Object) {
-                errors.Add("arguments_must_be_object");
+                errors.Add(ErrorAt("$", "arguments_must_be_object"));
                 rawBuilder.Clear();
             }
             else {
-                arguments = ParseObject(parameters, document.RootElement, warnings, errors, rawBuilder);
+                var parsed = ParseObject(schema, document.RootElement, null, warnings, errors, rawBuilder);
+                arguments = parsed;
             }
         }
         catch (JsonException ex) {
             errors.Add($"json_parse_error:{ex.Message}");
-        }
-
-        foreach (var parameter in parameters) {
-            if (parameter.IsRequired && !arguments.ContainsKey(parameter.Name)) {
-                errors.Add($"missing_required:{parameter.Name}");
-            }
         }
 
         var parseError = errors.Count == 0 ? null : string.Join("; ", errors);
@@ -47,44 +43,228 @@ internal static class JsonArgumentParser {
     }
 
     private static ImmutableDictionary<string, object?> ParseObject(
-        IReadOnlyList<ToolParamSpec> parameters,
+        ToolSchema.Object schema,
         JsonElement element,
+        string? path,
         List<string> warnings,
         List<string> errors,
         ImmutableDictionary<string, string>.Builder rawBuilder
     ) {
-        var builder = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var lookup = CreateParameterLookup(parameters);
+        var builder = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.Ordinal);
+        var lookup = CreatePropertyLookup(schema.Properties);
+        var seenProperties = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var property in element.EnumerateObject()) {
-            rawBuilder[property.Name] = ExtractRawValue(property.Value);
+            var propertyPath = AppendPropertyPath(path, property.Name);
+            rawBuilder[propertyPath] = ExtractRawValue(property.Value);
 
-            if (!lookup.TryGetValue(property.Name, out var parameter)) {
+            if (!lookup.TryGetValue(property.Name, out var schemaProperty)) {
+                if (!schema.AdditionalProperties) {
+                    errors.Add(ErrorAt(propertyPath, "unknown_property"));
+                    continue;
+                }
+
                 builder[property.Name] = ConvertUntyped(property.Value);
-                warnings.Add($"unknown_parameter:{property.Name}");
                 continue;
             }
 
-            var parsed = ParseValue(parameter, property.Value);
+            seenProperties.Add(property.Name);
+
+            var parsed = ParseSchemaValue(schemaProperty.Schema, property.Value, propertyPath, warnings, errors, rawBuilder);
             if (!parsed.IsSuccess) {
-                errors.Add($"{parameter.Name}:{parsed.Error}");
+                if (!string.IsNullOrEmpty(parsed.Error)) {
+                    errors.Add(parsed.Error);
+                }
+
                 continue;
             }
 
             if (!string.IsNullOrEmpty(parsed.Warning)) {
-                warnings.Add($"{parameter.Name}:{parsed.Warning}");
+                warnings.Add(parsed.Warning);
             }
 
-            builder[parameter.Name] = parsed.Value;
+            builder[schemaProperty.Name] = parsed.Value;
+        }
+
+        foreach (var property in schema.Properties) {
+            if (property.IsRequired && !seenProperties.Contains(property.Name)) {
+                errors.Add(ErrorAt(AppendPropertyPath(path, property.Name), "missing_required"));
+            }
         }
 
         return builder.ToImmutable();
     }
 
-    private static Dictionary<string, ToolParamSpec> CreateParameterLookup(IReadOnlyList<ToolParamSpec> parameters) {
-        var lookup = new Dictionary<string, ToolParamSpec>(StringComparer.OrdinalIgnoreCase);
-        foreach (var parameter in parameters) {
-            lookup[parameter.Name] = parameter;
+    private static ParseResult ParseSchemaValue(
+        ToolSchema schema,
+        JsonElement element,
+        string path,
+        List<string> warnings,
+        List<string> errors,
+        ImmutableDictionary<string, string>.Builder rawBuilder
+    ) {
+        switch (schema) {
+            case ToolSchema.Object objectSchema:
+                if (element.ValueKind == JsonValueKind.Null) {
+                    return ParseResult.CreateError(ErrorAt(path, "null_not_allowed"));
+                }
+
+                if (element.ValueKind != JsonValueKind.Object) {
+                    return ParseResult.CreateError(ErrorAt(path, "expected_object"));
+                }
+
+                var objectErrorCount = errors.Count;
+                var parsedObject = ParseObject(objectSchema, element, path, warnings, errors, rawBuilder);
+                return errors.Count == objectErrorCount
+                    ? ParseResult.CreateSuccess(parsedObject)
+                    : ParseResult.CreateFailure();
+
+            case ToolSchema.Array arraySchema:
+                return ParseArray(arraySchema, element, path, warnings, errors, rawBuilder);
+
+            case ToolSchema.Value valueSchema:
+                return ParseValue(valueSchema, element, path);
+
+            default:
+                return ParseResult.CreateError(ErrorAt(path, "unsupported_schema"));
+        }
+    }
+
+    private static ParseResult ParseArray(
+        ToolSchema.Array schema,
+        JsonElement element,
+        string path,
+        List<string> warnings,
+        List<string> errors,
+        ImmutableDictionary<string, string>.Builder rawBuilder
+    ) {
+        if (element.ValueKind == JsonValueKind.Null) {
+            return schema.IsNullable
+                ? ParseResult.CreateSuccess(null)
+                : ParseResult.CreateError(ErrorAt(path, "null_not_allowed"));
+        }
+
+        if (element.ValueKind != JsonValueKind.Array) {
+            return ParseResult.CreateError(ErrorAt(path, "expected_array"));
+        }
+
+        var builder = ImmutableArray.CreateBuilder<object?>(element.GetArrayLength());
+        var errorCount = errors.Count;
+
+        var index = 0;
+        foreach (var item in element.EnumerateArray()) {
+            var itemPath = AppendArrayIndex(path, index++);
+            rawBuilder[itemPath] = ExtractRawValue(item);
+
+            var parsed = ParseSchemaValue(schema.ItemSchema, item, itemPath, warnings, errors, rawBuilder);
+            if (!parsed.IsSuccess) {
+                if (!string.IsNullOrEmpty(parsed.Error)) {
+                    errors.Add(parsed.Error);
+                }
+
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(parsed.Warning)) {
+                warnings.Add(parsed.Warning);
+            }
+
+            builder.Add(parsed.Value);
+        }
+
+        return errors.Count == errorCount
+            ? ParseResult.CreateSuccess(builder.ToImmutable())
+            : ParseResult.CreateFailure();
+    }
+
+    private static ParseResult ParseValue(ToolSchema.Value schema, JsonElement element, string path) {
+        if (element.ValueKind == JsonValueKind.Null) {
+            return schema.IsNullable
+                ? ParseResult.CreateSuccess(null)
+                : ParseResult.CreateError(ErrorAt(path, "null_not_allowed"));
+        }
+
+        var parsed = schema.ValueKind switch {
+            ToolParamType.String => ParseString(element),
+            ToolParamType.Boolean => ParseBoolean(element),
+            ToolParamType.Int32 => ParseInt32(element),
+            ToolParamType.Int64 => ParseInt64(element),
+            ToolParamType.Float32 => ParseFloat32(element),
+            ToolParamType.Float64 => ParseFloat64(element),
+            ToolParamType.Decimal => ParseDecimal(element),
+            _ => ParseResult.CreateError("unsupported_value_kind")
+        };
+
+        if (!parsed.IsSuccess) {
+            return ParseResult.CreateError(ErrorAt(path, parsed.Error ?? "invalid_value"));
+        }
+
+        var constraintError = ValidateValueConstraints(schema, parsed.Value);
+        if (constraintError is not null) {
+            return ParseResult.CreateError(ErrorAt(path, constraintError));
+        }
+
+        return ParseResult.CreateSuccess(parsed.Value, WarningAt(path, parsed.Warning));
+    }
+
+    private static string? ValidateValueConstraints(ToolSchema.Value schema, object? value) {
+        if (value is null) { return null; }
+
+        if (schema.ValueKind == ToolParamType.String) {
+            var text = (string)value;
+
+            if (!schema.StringEnumValues.IsDefaultOrEmpty && !schema.StringEnumValues.Contains(text, StringComparer.Ordinal)) {
+                return "string_enum_mismatch";
+            }
+
+            if (schema.MinLength.HasValue && text.Length < schema.MinLength.Value) {
+                return "string_too_short";
+            }
+
+            if (schema.MaxLength.HasValue && text.Length > schema.MaxLength.Value) {
+                return "string_too_long";
+            }
+
+            if (!string.IsNullOrEmpty(schema.Pattern)) {
+                try {
+                    if (!Regex.IsMatch(text, schema.Pattern, RegexOptions.CultureInvariant)) {
+                        return "string_pattern_mismatch";
+                    }
+                }
+                catch (ArgumentException) {
+                    return "invalid_string_pattern";
+                }
+            }
+
+            return null;
+        }
+
+        if (schema.Minimum is not null && CompareNumericValues(value, schema.Minimum, schema.ValueKind) < 0) {
+            return "number_below_minimum";
+        }
+
+        if (schema.Maximum is not null && CompareNumericValues(value, schema.Maximum, schema.ValueKind) > 0) {
+            return "number_above_maximum";
+        }
+
+        return null;
+    }
+
+    private static int CompareNumericValues(object left, object right, ToolParamType valueKind) {
+        return valueKind switch {
+            ToolParamType.Int32 => Convert.ToInt32(left, CultureInfo.InvariantCulture).CompareTo(Convert.ToInt32(right, CultureInfo.InvariantCulture)),
+            ToolParamType.Int64 => Convert.ToInt64(left, CultureInfo.InvariantCulture).CompareTo(Convert.ToInt64(right, CultureInfo.InvariantCulture)),
+            ToolParamType.Float32 => Convert.ToSingle(left, CultureInfo.InvariantCulture).CompareTo(Convert.ToSingle(right, CultureInfo.InvariantCulture)),
+            ToolParamType.Float64 => Convert.ToDouble(left, CultureInfo.InvariantCulture).CompareTo(Convert.ToDouble(right, CultureInfo.InvariantCulture)),
+            ToolParamType.Decimal => Convert.ToDecimal(left, CultureInfo.InvariantCulture).CompareTo(Convert.ToDecimal(right, CultureInfo.InvariantCulture)),
+            _ => throw new ArgumentOutOfRangeException(nameof(valueKind), valueKind, "Value kind does not support numeric comparison.")
+        };
+    }
+
+    private static Dictionary<string, ToolSchema.Property> CreatePropertyLookup(ImmutableArray<ToolSchema.Property> properties) {
+        var lookup = new Dictionary<string, ToolSchema.Property>(StringComparer.Ordinal);
+        foreach (var property in properties) {
+            lookup[property.Name] = property;
         }
 
         return lookup;
@@ -103,29 +283,10 @@ internal static class JsonArgumentParser {
         };
     }
 
-    private static ParseResult ParseValue(ToolParamSpec parameter, JsonElement element) {
-        if (element.ValueKind == JsonValueKind.Null) {
-            return parameter.IsNullable
-                ? ParseResult.CreateSuccess(null)
-                : ParseResult.CreateError("null_not_allowed");
-        }
-
-        return parameter.ValueKind switch {
-            ToolParamType.String => ParseString(element),
-            ToolParamType.Boolean => ParseBoolean(element),
-            ToolParamType.Int32 => ParseInt32(element),
-            ToolParamType.Int64 => ParseInt64(element),
-            ToolParamType.Float32 => ParseFloat32(element),
-            ToolParamType.Float64 => ParseFloat64(element),
-            ToolParamType.Decimal => ParseDecimal(element),
-            _ => ParseResult.CreateError("unsupported_value_kind")
-        };
-    }
-
     private static ParseResult ParseString(JsonElement element) {
         return element.ValueKind switch {
             JsonValueKind.String => ParseResult.CreateSuccess(element.GetString()),
-            JsonValueKind.True or JsonValueKind.False => ParseResult.CreateSuccess(element.GetBoolean().ToString()),
+            JsonValueKind.True or JsonValueKind.False => ParseResult.CreateSuccess(element.GetBoolean().ToString(), "non_string_literal_retained"),
             JsonValueKind.Number => ParseResult.CreateSuccess(element.GetRawText(), "non_string_literal_retained"),
             _ => ParseResult.CreateSuccess(element.GetRawText(), "non_string_literal_retained")
         };
@@ -306,7 +467,7 @@ internal static class JsonArgumentParser {
     }
 
     private static ImmutableDictionary<string, object?> ConvertObject(JsonElement element) {
-        var builder = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.OrdinalIgnoreCase);
+        var builder = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.Ordinal);
         foreach (var property in element.EnumerateObject()) {
             builder[property.Name] = ConvertUntyped(property.Value);
         }
@@ -334,6 +495,18 @@ internal static class JsonArgumentParser {
         };
     }
 
+    private static string AppendPropertyPath(string? prefix, string propertyName)
+        => string.IsNullOrEmpty(prefix) ? propertyName : string.Concat(prefix, ".", propertyName);
+
+    private static string AppendArrayIndex(string prefix, int index)
+        => string.Concat(prefix, "[", index.ToString(CultureInfo.InvariantCulture), "]");
+
+    private static string ErrorAt(string path, string error)
+        => string.Concat(path, ":", error);
+
+    private static string? WarningAt(string path, string? warning)
+        => string.IsNullOrEmpty(warning) ? null : string.Concat(path, ":", warning);
+
     private readonly struct ParseResult {
         private ParseResult(bool isSuccess, object? value, string? warning, string? error) {
             IsSuccess = isSuccess;
@@ -352,5 +525,8 @@ internal static class JsonArgumentParser {
 
         public static ParseResult CreateError(string error)
             => new(false, null, null, error);
+
+        public static ParseResult CreateFailure()
+            => new(false, null, null, null);
     }
 }

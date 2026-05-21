@@ -15,6 +15,9 @@ public sealed class ToolExecutor {
         if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
 
         var dictionary = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
+        var definitionMap = new Dictionary<ITool, ToolDefinition>(ReferenceEqualityComparer.Instance);
+        var definitionBuilder = ImmutableArray.CreateBuilder<ToolDefinition>();
+
         foreach (var tool in tools) {
             if (tool is null) { continue; }
 
@@ -24,20 +27,11 @@ public sealed class ToolExecutor {
             }
 
             dictionary[definition.Name] = tool;
-        }
-
-        _tools = dictionary;
-
-        var definitionMap = new Dictionary<ITool, ToolDefinition>(ReferenceEqualityComparer.Instance);
-        var definitionBuilder = ImmutableArray.CreateBuilder<ToolDefinition>(_tools.Count);
-
-        foreach (var tool in _tools.Values) {
-            if (tool is null) { continue; }
-
-            var definition = tool.Definition;
             definitionMap[tool] = definition;
             definitionBuilder.Add(definition);
         }
+
+        _tools = dictionary;
 
         _definitionByInstance = definitionMap;
         _allToolDefinitions = definitionBuilder.Count == 0
@@ -144,7 +138,7 @@ public sealed class ToolExecutor {
 
     private ResolvedToolCall ResolveToolCall(RawToolCall request, ITool tool) {
         var definition = _definitionByInstance[tool];
-        var parsed = JsonArgumentParser.ParseArguments(definition.Parameters, request.RawArgumentsJson);
+        var parsed = JsonArgumentParser.ParseArguments((ToolSchema.Object)definition.InputSchema, request.RawArgumentsJson);
         return new ResolvedToolCall(
             request.ToolName,
             request.ToolCallId,

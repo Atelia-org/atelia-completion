@@ -6,8 +6,6 @@ public static class ToolContracts {
     public static ToolDefinition GetValidatedDefinition(ITool tool) {
         if (tool is null) { throw new ArgumentNullException(nameof(tool)); }
         if (tool.Definition is null) { throw new InvalidOperationException($"Tool '{tool.GetType().FullName}' returned null Definition."); }
-
-        EnsureStableFlatProjection(tool.Definition, $"工具 '{tool.Definition.Name}'");
         return tool.Definition;
     }
 
@@ -15,7 +13,7 @@ public static class ToolContracts {
         if (definition is null) { throw new ArgumentNullException(nameof(definition)); }
 
         if (TryExplainFlatProjectionFailure(definition, out var reason)) {
-            throw new InvalidOperationException($"{subject} 的 InputSchema 当前无法稳定投影为 flat 参数；在 parser/binder 仍是 flat-only 时禁止注册。原因: {reason}");
+            throw new InvalidOperationException($"{subject} 的 InputSchema 当前无法稳定投影为 flat 参数。原因: {reason}");
         }
     }
 
@@ -26,42 +24,57 @@ public static class ToolContracts {
         if (authoritativeDefinition is null) { throw new ArgumentNullException(nameof(authoritativeDefinition)); }
         if (overrideDefinition is null) { throw new ArgumentNullException(nameof(overrideDefinition)); }
 
-        EnsureStableFlatProjection(authoritativeDefinition, $"工具 '{authoritativeDefinition.Name}'");
-        EnsureStableFlatProjection(overrideDefinition, $"工具 '{overrideDefinition.Name}'");
-
-        var authoritativeParameters = authoritativeDefinition.Parameters;
-        var overrideParameters = overrideDefinition.Parameters;
-
-        if (authoritativeParameters.Length != overrideParameters.Length) {
+        if (!SchemasAreMetadataCompatible(authoritativeDefinition.InputSchema, overrideDefinition.InputSchema)) {
             throw new InvalidOperationException(
-                $"工具 '{authoritativeDefinition.Name}' 的 metadata override 参数数量不兼容：authoritative={authoritativeParameters.Length}, override={overrideParameters.Length}."
+                $"工具 '{authoritativeDefinition.Name}' 的 metadata override 不能修改 provider-visible schema 语义。"
             );
         }
 
-        for (var i = 0; i < authoritativeParameters.Length; i++) {
-            var expected = authoritativeParameters[i];
-            var actual = overrideParameters[i];
+        return overrideDefinition;
+    }
 
-            if (!string.Equals(expected.Name, actual.Name, StringComparison.Ordinal)) {
-                throw new InvalidOperationException(
-                    $"工具 '{authoritativeDefinition.Name}' 的 metadata override 不能修改参数名：index={i}, authoritative='{expected.Name}', override='{actual.Name}'."
-                );
-            }
+    private static bool SchemasAreMetadataCompatible(ToolSchema authoritative, ToolSchema candidate) {
+        if (authoritative.GetType() != candidate.GetType()) { return false; }
 
-            if (expected.ValueKind != actual.ValueKind || expected.IsNullable != actual.IsNullable) {
-                throw new InvalidOperationException(
-                    $"工具 '{authoritativeDefinition.Name}' 的 metadata override 不能修改参数类型或 nullability：parameter='{expected.Name}'."
-                );
-            }
+        return authoritative switch {
+            ToolSchema.Object authoritativeObject when candidate is ToolSchema.Object candidateObject
+                => ObjectsAreMetadataCompatible(authoritativeObject, candidateObject),
+            ToolSchema.Array authoritativeArray when candidate is ToolSchema.Array candidateArray
+                => authoritativeArray.IsNullable == candidateArray.IsNullable
+                   && SchemasAreMetadataCompatible(authoritativeArray.ItemSchema, candidateArray.ItemSchema),
+            ToolSchema.Value authoritativeValue when candidate is ToolSchema.Value candidateValue
+                => ValuesAreMetadataCompatible(authoritativeValue, candidateValue),
+            _ => false
+        };
+    }
 
-            if (expected.IsRequired != actual.IsRequired || !ParamDefaultEquals(expected.Default, actual.Default)) {
-                throw new InvalidOperationException(
-                    $"工具 '{authoritativeDefinition.Name}' 的 metadata override 不能修改参数 required/default：parameter='{expected.Name}'."
-                );
-            }
+    private static bool ObjectsAreMetadataCompatible(ToolSchema.Object authoritative, ToolSchema.Object candidate) {
+        if (authoritative.AdditionalProperties != candidate.AdditionalProperties) { return false; }
+        if (authoritative.Properties.Length != candidate.Properties.Length) { return false; }
+
+        for (var i = 0; i < authoritative.Properties.Length; i++) {
+            var left = authoritative.Properties[i];
+            var right = candidate.Properties[i];
+
+            if (!string.Equals(left.Name, right.Name, StringComparison.Ordinal)) { return false; }
+            if (left.IsRequired != right.IsRequired) { return false; }
+            if (!SchemasAreMetadataCompatible(left.Schema, right.Schema)) { return false; }
         }
 
-        return overrideDefinition;
+        return true;
+    }
+
+    private static bool ValuesAreMetadataCompatible(ToolSchema.Value authoritative, ToolSchema.Value candidate) {
+        if (authoritative.ValueKind != candidate.ValueKind) { return false; }
+        if (authoritative.IsNullable != candidate.IsNullable) { return false; }
+        if (!ParamDefaultEquals(authoritative.Default, candidate.Default)) { return false; }
+        if (!authoritative.StringEnumValues.SequenceEqual(candidate.StringEnumValues, StringComparer.Ordinal)) { return false; }
+        if (authoritative.MinLength != candidate.MinLength) { return false; }
+        if (authoritative.MaxLength != candidate.MaxLength) { return false; }
+        if (!string.Equals(authoritative.Pattern, candidate.Pattern, StringComparison.Ordinal)) { return false; }
+        if (!Equals(authoritative.Minimum, candidate.Minimum)) { return false; }
+        if (!Equals(authoritative.Maximum, candidate.Maximum)) { return false; }
+        return true;
     }
 
     private static bool TryExplainFlatProjectionFailure(ToolDefinition definition, out string reason) {

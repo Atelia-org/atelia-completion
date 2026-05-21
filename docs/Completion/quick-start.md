@@ -3,7 +3,7 @@
 > **读者**：要在自己的代码里通过 `Atelia.Completion[.Abstractions]` 调用 LLM 的高级 LLM Agent / 上层应用作者。
 > **不读这份**：要给 Completion 层加新 provider、改 SSE 解析的人——请去 [memory-notebook.md](./memory-notebook.md) 与 [openai-compatible-evolution.md](./openai-compatible-evolution.md)。
 > **配套环境**：本机 `http://localhost:8000/` 上有 sglang 服务，同时暴露 Anthropic Messages (`/v1/messages`) 与 OpenAI Chat (`/v1/chat/completions`) 两类端点。
-> **最后更新**：2026-05-02
+> **最后更新**：2026-05-21
 
 ---
 
@@ -332,16 +332,16 @@ var history = new List<IHistoryMessage> {
 
 ### 3.2 `Tools`：声明工具签名
 
-`ToolDefinition` + `ToolParamSpec` 是最小够用的扁平参数模型，会被 `JsonToolSchemaBuilder` 翻成 Anthropic / OpenAI 通用 JSON Schema。
+`ToolDefinition` 现在以 `InputSchema` 为 provider-facing 声明真源。对现有扁平工具，最简单的写法仍然是用 `ToolDefinition.CreateFlat(...)` 从 `ToolParamSpec[]` 过渡构造。
 
 ```csharp
 using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 
-var readFile = new ToolDefinition(
-    Name: "fs.read",
-    Description: "读取文本文件全文。",
-    Parameters: ImmutableArray.Create(
+var readFile = ToolDefinition.CreateFlat(
+    name: "fs.read",
+    description: "读取文本文件全文。",
+    parameters: ImmutableArray.Create(
         new ToolParamSpec(
             name: "path",
             description: "相对仓库根的路径。",
@@ -369,12 +369,15 @@ var request = new CompletionRequest(
 
 **已知能力边界**：
 
-- `ToolParamType` 当前只支持扁平标量：`String / Boolean / Int32 / Int64 / Float32 / Float64 / Decimal`。**没有** Object / Array——嵌套结构请扁平化或塞 JSON 字符串字段，自己在工具实现里二次解析。
+- `ToolDefinition.InputSchema` 已支持 object / array / value 的递归声明树；provider schema projection 走这条路径。
+- `ToolParamType` 和 `ToolDefinition.CreateFlat(...)` 仍只覆盖扁平标量：`String / Boolean / Int32 / Int64 / Float32 / Float64 / Decimal`。
+- 若你要从 `record class` / `class` 直接生成递归声明，可用 `Atelia.Completion.Declaration.ReflectedToolDefinitionBuilder.Build<TInput>(toolName)`；当前它是声明侧 helper，不会自动接管默认 `ToolExecutor` 管线。
 - **LLM JSON 没有 `uint`**：超过 `int.MaxValue` 的整数会先解析成 `long`，自己做范围检查。
 - `IsOptional` 由 **是否提供 default** 决定（`ToolParamSpec.IsOptional` 等价于 `Default.HasValue`）。
 - ⚠️ 给 `defaultValue: new ParamDefault(null)` **必须** 同时设 `isNullable: true`，否则 `ToolParamSpec` 构造函数立刻抛 `ArgumentException`（`ValidateDefaultCombination`）。
 - `defaultValue` 当前 **只影响** Atelia 侧的 optional 判定与 schema `required` 列表——`JsonToolSchemaBuilder` 不会把 default 值写进 JSON Schema 的 `default` 字段。**不要假设模型一定知道默认值**，关键默认行为应在 `description` 里说明。
 - `ToolParamSpec.Name`：调用方应严格按声明拼写。当前 `JsonArgumentParser` 内部使用 `OrdinalIgnoreCase` 的字典做查询，所以模型大小写不一致 *暂时* 能过——但请视为实现细节，**不要依赖**。
+- 执行侧目前仍是 flat-only：`ToolExecutor` 在工具执行边界继续使用 `ITool.Parameters` 解析参数。也就是说，递归 `InputSchema` 已可用于 provider 声明，但还**没有**自动变成递归执行参数绑定。
 
 ---
 
@@ -433,7 +436,7 @@ public record RawToolCall(
 读取建议：
 
 1. `RawArgumentsJson` 是 **provider 发来的完整 arguments 文本**。Completion 抽象层不再替你做 schema-aware 解析。
-2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ToolDefinition` 解析；解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
+2. 需要执行工具时，让 `Agent.Core/Tool/ToolExecutor` 按当前 `ITool.Parameters` 解析；解析产物与 `ParseError/ParseWarning` 只存在于执行边界，不进入 history。
 3. **持久化 / replay**：直接保存 `RawArgumentsJson`。回放给 OpenAI Chat 时原样作为 `function.arguments`；回放给 Anthropic/Gemini 这类结构化参数协议时，再把这段 JSON parse 成对象。
 4. **法证价值**：相比旧设计，当前抽象会保留完整原始 JSON 文本；即使 arguments malformed，也不会因为 provider 预解析失败而丢证据。
 

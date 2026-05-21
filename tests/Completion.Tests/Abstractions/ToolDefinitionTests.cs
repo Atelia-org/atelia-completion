@@ -114,6 +114,25 @@ public sealed class ToolDefinitionTests {
         );
     }
 
+    [Fact]
+    public void OptionalValueWithoutDefault_DoesNotProjectIncorrectFlatParameters() {
+        var definition = new ToolDefinition(
+            name: "emit_partial",
+            description: "Emit a partially optional payload.",
+            inputSchema: new ToolSchema.Object(
+                properties: [
+                    new ToolSchema.Property(
+                        "title",
+                        new ToolSchema.Value(ToolParamType.String, description: "Optional title."),
+                        isRequired: false
+                    )
+                ]
+            )
+        );
+
+        Assert.Empty(definition.Parameters);
+    }
+
     private static void AssertJsonSemanticallyEqual(string expectedJson, JsonElement actual) {
         using var expectedDocument = JsonDocument.Parse(expectedJson);
         Assert.True(

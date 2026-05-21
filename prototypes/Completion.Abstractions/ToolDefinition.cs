@@ -207,9 +207,7 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
 
             if (properties is not null) {
                 foreach (var property in properties) {
-                    if (!names.Add(property.Name)) {
-                        throw new ArgumentException($"Duplicate property '{property.Name}' detected.", nameof(properties));
-                    }
+                    if (!names.Add(property.Name)) { throw new ArgumentException($"Duplicate property '{property.Name}' detected.", nameof(properties)); }
 
                     builder.Add(property);
                 }
@@ -288,27 +286,17 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
         ) {
             if (stringEnumValues is null && minLength is null && maxLength is null && pattern is null) { return; }
 
-            if (valueKind != ToolParamType.String) {
-                throw new ArgumentException("String constraints are only valid for string schemas.");
-            }
+            if (valueKind != ToolParamType.String) { throw new ArgumentException("String constraints are only valid for string schemas."); }
 
-            if (minLength < 0) {
-                throw new ArgumentOutOfRangeException(nameof(minLength), minLength, "String minLength cannot be negative.");
-            }
+            if (minLength < 0) { throw new ArgumentOutOfRangeException(nameof(minLength), minLength, "String minLength cannot be negative."); }
 
-            if (maxLength < 0) {
-                throw new ArgumentOutOfRangeException(nameof(maxLength), maxLength, "String maxLength cannot be negative.");
-            }
+            if (maxLength < 0) { throw new ArgumentOutOfRangeException(nameof(maxLength), maxLength, "String maxLength cannot be negative."); }
 
-            if (minLength.HasValue && maxLength.HasValue && minLength.Value > maxLength.Value) {
-                throw new ArgumentException("String minLength cannot be greater than maxLength.");
-            }
+            if (minLength.HasValue && maxLength.HasValue && minLength.Value > maxLength.Value) { throw new ArgumentException("String minLength cannot be greater than maxLength."); }
 
             if (stringEnumValues is not null) {
                 foreach (var value in stringEnumValues) {
-                    if (string.IsNullOrWhiteSpace(value)) {
-                        throw new ArgumentException("String enum values cannot contain null or whitespace entries.", nameof(stringEnumValues));
-                    }
+                    if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("String enum values cannot contain null or whitespace entries.", nameof(stringEnumValues)); }
                 }
             }
         }
@@ -320,21 +308,13 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
         ) {
             if (minimum is null && maximum is null) { return; }
 
-            if (valueKind is not (ToolParamType.Int32 or ToolParamType.Int64 or ToolParamType.Float32 or ToolParamType.Float64 or ToolParamType.Decimal)) {
-                throw new ArgumentException("Numeric constraints are only valid for numeric schemas.");
-            }
+            if (valueKind is not (ToolParamType.Int32 or ToolParamType.Int64 or ToolParamType.Float32 or ToolParamType.Float64 or ToolParamType.Decimal)) { throw new ArgumentException("Numeric constraints are only valid for numeric schemas."); }
 
-            if (minimum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, minimum, out var minError)) {
-                throw new ArgumentException($"Invalid minimum constraint: {minError}", nameof(minimum));
-            }
+            if (minimum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, minimum, out var minError)) { throw new ArgumentException($"Invalid minimum constraint: {minError}", nameof(minimum)); }
 
-            if (maximum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, maximum, out var maxError)) {
-                throw new ArgumentException($"Invalid maximum constraint: {maxError}", nameof(maximum));
-            }
+            if (maximum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, maximum, out var maxError)) { throw new ArgumentException($"Invalid maximum constraint: {maxError}", nameof(maximum)); }
 
-            if (minimum is not null && maximum is not null && CompareValues(minimum, maximum, valueKind) > 0) {
-                throw new ArgumentException("Numeric minimum cannot be greater than maximum.");
-            }
+            if (minimum is not null && maximum is not null && CompareValues(minimum, maximum, valueKind) > 0) { throw new ArgumentException("Numeric minimum cannot be greater than maximum."); }
         }
 
         private static int CompareValues(object left, object right, ToolParamType valueKind) {
@@ -360,9 +340,7 @@ public sealed record class ToolDefinition {
             : description;
         InputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
 
-        if (InputSchema is not ToolSchema.Object objectSchema) {
-            throw new ArgumentException("Tool input schema root must be an object.", nameof(inputSchema));
-        }
+        if (InputSchema is not ToolSchema.Object objectSchema) { throw new ArgumentException("Tool input schema root must be an object.", nameof(inputSchema)); }
 
         Parameters = TryProjectFlatParameters(objectSchema);
     }
@@ -385,9 +363,7 @@ public sealed record class ToolDefinition {
     }
 
     private static ImmutableArray<ToolParamSpec> NormalizeParameters(IReadOnlyList<ToolParamSpec>? parameters) {
-        if (parameters is null || parameters.Count == 0) {
-            return ImmutableArray<ToolParamSpec>.Empty;
-        }
+        if (parameters is null || parameters.Count == 0) { return ImmutableArray<ToolParamSpec>.Empty; }
 
         var builder = ImmutableArray.CreateBuilder<ToolParamSpec>(parameters.Count);
         foreach (var parameter in parameters) {
@@ -398,9 +374,7 @@ public sealed record class ToolDefinition {
     }
 
     private static ToolSchema.Object BuildFlatInputSchema(ImmutableArray<ToolParamSpec> parameters) {
-        if (parameters.IsDefaultOrEmpty) {
-            return new ToolSchema.Object();
-        }
+        if (parameters.IsDefaultOrEmpty) { return new ToolSchema.Object(); }
 
         var properties = new ToolSchema.Property[parameters.Length];
         for (var i = 0; i < parameters.Length; i++) {
@@ -422,15 +396,15 @@ public sealed record class ToolDefinition {
     }
 
     private static ImmutableArray<ToolParamSpec> TryProjectFlatParameters(ToolSchema.Object schema) {
-        if (schema.AdditionalProperties || schema.Properties.IsDefaultOrEmpty) {
-            return ImmutableArray<ToolParamSpec>.Empty;
-        }
+        if (schema.AdditionalProperties || schema.Properties.IsDefaultOrEmpty) { return ImmutableArray<ToolParamSpec>.Empty; }
 
         var builder = ImmutableArray.CreateBuilder<ToolParamSpec>(schema.Properties.Length);
         foreach (var property in schema.Properties) {
-            if (property.Schema is not ToolSchema.Value valueSchema || string.IsNullOrWhiteSpace(valueSchema.Description)) {
-                return ImmutableArray<ToolParamSpec>.Empty;
-            }
+            if (property.Schema is not ToolSchema.Value valueSchema || string.IsNullOrWhiteSpace(valueSchema.Description)) { return ImmutableArray<ToolParamSpec>.Empty; }
+
+            // ToolParamSpec cannot represent "optional without default".
+            // Fail closed instead of projecting incorrect required metadata.
+            if (!property.IsRequired && !valueSchema.Default.HasValue) { return ImmutableArray<ToolParamSpec>.Empty; }
 
             var defaultValue = property.IsRequired ? default(ParamDefault?) : valueSchema.Default;
             builder.Add(

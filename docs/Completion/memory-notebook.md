@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `prototypes/Completion*` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-05-02
+> **最后更新**：2026-05-21
 
 ---
 
@@ -71,18 +71,18 @@
 `Agent.Core/Tool/JsonArgumentParser` 内部三层：
 
 1. 原始 JSON 反序列化为 `Dictionary<string, JsonElement>`
-2. 按 `ToolDefinition.Parameters[i].Type` 做类型转换（基本类型 / 枚举 / nullable）
+2. 按执行中 `ITool.Parameters[i]` 的 flat 参数定义做类型转换（基本类型 / nullable）
 3. 转换失败则降级为原值 + 收集 warning
 
 错误（解析根本失败）和警告（个别字段类型不匹配）在执行边界通过 `ResolvedToolCall.ParseError` / `ParseWarning` 分离传播。
 
-### 5. JsonSchema 由 ToolParamSpec 单方向生成
+### 5. ToolDefinition 现已以 `InputSchema` 为声明真源
 
-`JsonToolSchemaBuilder.BuildToolInputSchema(...)` 把 `ToolDefinition.Parameters[]` 转成 Anthropic / OpenAI 通用的 JSON Schema。
+`ToolDefinition` 现在以 `InputSchema` 作为 provider-facing 声明真源；`JsonToolSchemaBuilder.BuildSchema(...)` 直接把 `ToolDefinition.InputSchema` 转成 Anthropic / OpenAI 通用 JSON Schema。
 
-- 当前不支持反向（schema → ToolParamSpec）
-- 嵌套对象/数组的 schema 表达有限，主要面向"扁平的标量参数"
-- 默认值、可空性、enum 通过 spec 字段直接表达
+- 旧的扁平工具仍可通过 `ToolDefinition.CreateFlat(...)` 从 `ToolParamSpec[]` 过渡构造
+- `ToolDefinition.Parameters` 仍保留为兼容投影件，主要给剩余 flat 展示路径使用；嵌套 schema 不保证能稳定投影回 flat 参数
+- 执行侧目前仍是 flat-only：`ToolExecutor` 在执行边界继续使用 `ITool.Parameters`，尚未升级为递归 schema 执行解析
 
 ### 6. 当前有三套 provider：Anthropic Messages + OpenAI Chat Completions + Google Gemini generateContent
 
@@ -213,7 +213,7 @@ prototypes/Completion/
 ├─ CompletionAggregator.cs          流式增量 → CompletionResult 的内部聚合器
 └─ Utils/
    ├─ JsonArgumentParser.cs         工具参数 JSON → Dictionary
-   ├─ JsonToolSchemaBuilder.cs      ToolParamSpec → JSON Schema
+   ├─ JsonToolSchemaBuilder.cs      ToolSchema/InputSchema → JSON Schema
    ├─ StreamParserToolUtility.cs    StreamParser 共享工具
    └─ ToolArgumentParsingResult.cs  解析结果 DTO
 ```
@@ -232,8 +232,10 @@ prototypes/Completion/
 
 ### 工具参数表达力有限
 
-- `ToolParamSpec` 主要面向扁平标量参数
-- 嵌套对象 / 数组的 schema 表达不完整
+- `ToolDefinition.InputSchema` 已支持递归 object / array / value 声明
+- `ToolParamSpec` / `ITool.Parameters` 这条执行侧心智模型仍主要面向扁平标量参数
+- `ReflectedToolDefinitionBuilder` 当前是声明侧 helper；若要让模型真正看到这些递归 schema，调用方需要把生成出的 `ToolDefinition` 显式放进 `CompletionRequest.Tools`
+- `ReflectedToolDefinitionBuilder` 位于 `prototypes/Completion/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
 - LLM JSON 没有 uint，调用方需自行做 long → uint 的范围检查
 
 ### 计费 token usage 已从 Completion 抽象层移除

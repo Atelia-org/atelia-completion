@@ -59,7 +59,7 @@ partial class MethodToolWrapper {
         if (!method.IsStatic && targetInstance is not null && method.DeclaringType is not null && !method.DeclaringType.IsInstanceOfType(targetInstance)) { throw new InvalidOperationException($"Target instance for method '{method.Name}' must be assignable to '{method.DeclaringType.FullName}'."); }
 
         var signatureParameters = parameters[..^1];
-        var toolParameters = new List<ToolParamSpec>(signatureParameters.Length);
+        var schemaProperties = new List<ToolSchema.Property>(signatureParameters.Length);
         var argGetters = new List<ArgGetter>(signatureParameters.Length);
 
         foreach (var parameter in signatureParameters) {
@@ -75,13 +75,16 @@ partial class MethodToolWrapper {
             var formattedDescription = parameterAttribute.FormatDescription(formattingArgs);
             var effectiveDescription = BuildDescription(formattedDescription, allowsNull, defaultInfo);
 
-            toolParameters.Add(
-                new ToolParamSpec(
+            schemaProperties.Add(
+                new ToolSchema.Property(
                     displayName,
-                    effectiveDescription,
-                    valueKind,
-                    allowsNull,
-                    defaultInfo.DefaultValue
+                    new ToolSchema.Value(
+                        valueKind,
+                        allowsNull,
+                        defaultInfo.DefaultValue,
+                        effectiveDescription
+                    ),
+                    isRequired: !defaultInfo.IsOptional
                 )
             );
             argGetters.Add(new ArgGetter(displayName, defaultInfo.DefaultValue));
@@ -89,7 +92,7 @@ partial class MethodToolWrapper {
 
         var methodName = toolAttribute.FormatName(formattingArgs);
         var methodDescription = toolAttribute.FormatDescription(formattingArgs);
-        var definition = ToolDefinition.CreateFlat(methodName, methodDescription, toolParameters);
+        var definition = new ToolDefinition(methodName, methodDescription, new ToolSchema.Object(schemaProperties));
 
         var invoker = CreateInvoker(method, method.IsStatic ? null : targetInstance);
 

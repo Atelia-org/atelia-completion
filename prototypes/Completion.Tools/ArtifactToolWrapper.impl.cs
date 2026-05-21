@@ -21,6 +21,7 @@ partial class ArtifactToolWrapper<T> {
     private readonly ToolDefinition _definition;
     private readonly ToolSchema.Object _inputSchema;
     private readonly ArtifactHandler<T> _handler;
+    private readonly object _sequenceGate = new();
     private int _nextSequence;
 
     private ArtifactToolWrapper(
@@ -37,10 +38,6 @@ partial class ArtifactToolWrapper<T> {
     private static partial ArtifactToolWrapper<T> Bind(string toolName, ArtifactHandler<T> handler) {
         if (string.IsNullOrWhiteSpace(toolName)) { throw new ArgumentException("Tool name cannot be null or whitespace.", nameof(toolName)); }
         ArgumentNullException.ThrowIfNull(handler);
-
-        if (!typeof(T).IsClass) {
-            throw new NotSupportedException($"ArtifactToolWrapper only supports reference declaration types. '{typeof(T).FullName}' is not supported.");
-        }
 
         var definition = ReflectedToolDefinitionBuilder.Build(toolName, typeof(T));
         var inputSchema = definition.InputSchema as ToolSchema.Object
@@ -89,8 +86,16 @@ partial class ArtifactToolWrapper<T> {
             );
         }
 
-        var sequence = Interlocked.Increment(ref _nextSequence) - 1;
-        var handlerResult = _handler(sequence, artifact);
+        int sequence;
+        ValidateResult handlerResult;
+
+        lock (_sequenceGate) {
+            sequence = _nextSequence + 1;
+            handlerResult = _handler(sequence, artifact);
+            if (handlerResult.IsValid) {
+                _nextSequence = sequence;
+            }
+        }
 
         var result = handlerResult.IsValid
             ? new ToolExecuteResult(
@@ -134,6 +139,9 @@ partial class ArtifactToolWrapper<T> {
             var memberNames = validationResult.MemberNames?.ToArray();
             if (memberNames is { Length: > 0 }) {
                 foreach (var memberName in memberNames) {
+                    var property = type.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public);
+                    if (property is not null && !IsSchemaVisibleProperty(property)) { continue; }
+
                     errors.Add($"{AppendMemberPath(path, ResolveJsonMemberName(type, memberName))}:{validationResult.ErrorMessage}");
                 }
             }
@@ -145,6 +153,7 @@ partial class ArtifactToolWrapper<T> {
         foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public)) {
             if (property.GetMethod is not { IsPublic: true, IsStatic: false }) { continue; }
             if (property.GetIndexParameters().Length != 0) { continue; }
+            if (!IsSchemaVisibleProperty(property)) { continue; }
 
             var propertyValue = property.GetValue(value);
             if (propertyValue is null || property.PropertyType == typeof(string)) { continue; }
@@ -174,6 +183,11 @@ partial class ArtifactToolWrapper<T> {
 
     private static string ResolveJsonMemberName(PropertyInfo property)
         => property.GetCustomAttribute<System.Text.Json.Serialization.JsonPropertyNameAttribute>()?.Name ?? property.Name;
+
+    private static bool IsSchemaVisibleProperty(PropertyInfo property) {
+        var ignoreAttribute = property.GetCustomAttribute<JsonIgnoreAttribute>();
+        return ignoreAttribute is null || ignoreAttribute.Condition != JsonIgnoreCondition.Always;
+    }
 
     private static ToolExecuteResult CreateParseFailureResult(RawToolCall request, ToolArgumentParsingResult parsed) {
         var content = "工具参数解析失败。";

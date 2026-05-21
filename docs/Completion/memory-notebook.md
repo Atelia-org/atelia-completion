@@ -83,7 +83,7 @@
 - `ToolSchema` 是唯一 schema 真源，负责 object / array / value 的递归声明
 - `ToolExecutor` / `AgentEngine` / `MethodToolWrapper` 主链统一按 validated `ToolDefinition` 工作：注册与冲突检测看 `Definition.Name`；`ToolExecutor` 只按工具名分发 `RawToolCall`，具体工具若需要 schema 绑定，则在内部消费 `Definition.InputSchema`
 - `ToolParamSpec` / `ToolDefinition.CreateFlat(...)` / `ToolDefinition.Parameters` 已完成清退；若在文档中看到这些名字，应视为历史阶段记录
-- `ArtifactToolWrapper<T>` 已进入当前代码库并采用同一 `ITool.ExecuteAsync(RawToolCall, ...)` 协议，但实现仍是占位态，现阶段不应把它写成已接入主线能力
+- `ArtifactToolWrapper<T>` 已落地为当前主线能力：它与 `MethodToolWrapper` 一样采用 `ITool.ExecuteAsync(RawToolCall, ...)` 协议，但执行链是“schema 校验 -> 反序列化 -> DataAnnotations/model validation -> handler validation”
 
 ### 6. 当前有三套 provider：Anthropic Messages + OpenAI Chat Completions + Google Gemini generateContent
 
@@ -224,7 +224,7 @@ prototypes/Completion.Tools/
 ├─ ToolExecutor.cs              按工具名调度 RawToolCall，并统一处理缺失/取消/异常
 ├─ JsonArgumentParser.cs        schema-driven JSON 参数解析 helper
 ├─ MethodToolWrapper.cs         反射包装 method 为 ITool
-└─ ArtifactToolWrapper.cs       结构化产物 wrapper 占位类型（尚未落地主线实现）
+└─ ArtifactToolWrapper.cs       结构化产物 wrapper（schema 校验 + 反序列化 + model validation + handler）
 ```
 
 ---

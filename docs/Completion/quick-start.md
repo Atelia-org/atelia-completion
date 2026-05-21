@@ -450,7 +450,7 @@ public record RawToolCall(
 补充边界：
 
 - `ParseError` / `ParseWarning` 不再是 `ToolExecutor` 的统一产物；它们是否存在、以什么形式体现，取决于具体 tool 的内部绑定策略。
-- `ArtifactToolWrapper<T>` 已有类型骨架并采用同一 `RawToolCall` 执行协议，但当前仍未落地主线实现；把它视为预留位置，不要当成现成能力。
+- `ArtifactToolWrapper<T>` 已落地为现行能力：它同样直接消费 `RawToolCall`，内部先做 schema 校验，再反序列化为声明式类型，并补做 model validation / handler validation。
 
 执行完一定要回灌一条 `ToolResultsMessage`，且 `ToolResult.ToolCallId` 必须等于 `RawToolCall.ToolCallId`。
 

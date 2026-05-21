@@ -13,13 +13,8 @@ namespace Atelia.Completion.Tools;
 /// 本类型是<see cref="MethodToolWrapper"/>的姐妹类型。
 /// 通过Attribute 声明式的为 class / record class 创建<see cref="ToolDefinition"/>的代码已有，但似乎我放错程序集了，现在在`/repos/focus/atelia/prototypes/Completion/Declaration/ReflectedToolDefinitionBuilder.cs`。
 /// </summary>
-public partial class ArtifactToolWrapper<T> : ITool where T: notnull {
-    internal static string? ErrorMessage{get;}
-
+public partial class ArtifactToolWrapper<T> : ITool where T : class {
     public static ArtifactToolWrapper<T> Create(string toolName, ArtifactHandler<T> handler) {
-        if (ErrorMessage is {} errMsg) {
-            throw new Exception(errMsg); // AI TODO: 用更合适的Exception替代。
-        }
         return Bind(toolName, handler);
     }
 
@@ -34,4 +29,4 @@ public partial class ArtifactToolWrapper<T> : ITool where T: notnull {
 
 public record struct ValidateResult(bool IsValid, string? message);
 
-public delegate ValidateResult ArtifactHandler<T>(int sequence, T artifact) where T: notnull;
+public delegate ValidateResult ArtifactHandler<T>(int sequence, T artifact) where T : class;

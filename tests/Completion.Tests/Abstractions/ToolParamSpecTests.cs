@@ -33,4 +33,18 @@ public sealed class ToolParamSpecTests {
 
         Assert.Contains("cannot be assigned", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Ctor_NullableStringWithNullDefault_Allows() {
+        var spec = new ToolParamSpec(
+            name: "nickname",
+            description: "optional nickname",
+            valueKind: ToolParamType.String,
+            isNullable: true,
+            defaultValue: new ParamDefault(null)
+        );
+
+        Assert.True(spec.TryGetDefaultValue(out var defaultValue));
+        Assert.Null(defaultValue);
+    }
 }

@@ -195,6 +195,111 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
         public bool IsRequired { get; }
     }
 
+    private static void ValidateDefaultCombination(
+        string schemaName,
+        ToolParamType valueKind,
+        bool isNullable,
+        ParamDefault? defaultValue
+    ) {
+        if (!defaultValue.HasValue) { return; }
+
+        var rawDefault = defaultValue.Value.Value;
+
+        if (rawDefault is null) {
+            if (!isNullable) {
+                throw new ArgumentException(
+                    $"Default value for schema '{schemaName}' cannot be null when 'isNullable' is false.",
+                    nameof(defaultValue)
+                );
+            }
+
+            return;
+        }
+
+        if (!TryValidateValueKindCompatibility(valueKind, rawDefault, out var errorMessage)) {
+            throw new ArgumentException(errorMessage, nameof(defaultValue));
+        }
+    }
+
+    private static bool TryValidateValueKindCompatibility(ToolParamType valueKind, object value, out string errorMessage) {
+        switch (valueKind) {
+            case ToolParamType.String:
+                if (value is string) {
+                    errorMessage = string.Empty;
+                    return true;
+                }
+                break;
+            case ToolParamType.Boolean:
+                if (value is bool) {
+                    errorMessage = string.Empty;
+                    return true;
+                }
+                break;
+            case ToolParamType.Int32:
+                if (IsIntegerInRange(value, int.MinValue, int.MaxValue)) {
+                    errorMessage = string.Empty;
+                    return true;
+                }
+                break;
+            case ToolParamType.Int64:
+                if (IsIntegerInRange(value, long.MinValue, long.MaxValue)) {
+                    errorMessage = string.Empty;
+                    return true;
+                }
+                break;
+            case ToolParamType.Float32:
+                if (value is float) {
+                    errorMessage = string.Empty;
+                    return true;
+                }
+                break;
+            case ToolParamType.Float64:
+                if (value is double) {
+                    errorMessage = string.Empty;
+                    return true;
+                }
+                break;
+            case ToolParamType.Decimal:
+                if (value is decimal) {
+                    errorMessage = string.Empty;
+                    return true;
+                }
+                break;
+            default:
+                break;
+        }
+
+        errorMessage = $"Default value type '{value.GetType()}' cannot be assigned to parameter kind '{valueKind}'. Expected {GetExpectedTypeName(valueKind)}.";
+        return false;
+    }
+
+    private static bool IsIntegerInRange(object value, long minValue, long maxValue) {
+        return value switch {
+            sbyte s => s >= minValue && s <= maxValue,
+            byte b => b >= minValue && b <= maxValue,
+            short s => s >= minValue && s <= maxValue,
+            ushort s => s >= minValue && s <= maxValue,
+            int i => i >= minValue && i <= maxValue,
+            uint u => u <= maxValue,
+            long l => l >= minValue && l <= maxValue,
+            ulong ul => minValue <= 0 && maxValue >= 0 && ul <= (ulong)maxValue,
+            _ => false
+        };
+    }
+
+    private static string GetExpectedTypeName(ToolParamType valueKind) {
+        return valueKind switch {
+            ToolParamType.String => typeof(string).FullName!,
+            ToolParamType.Boolean => typeof(bool).FullName!,
+            ToolParamType.Int32 => typeof(int).FullName!,
+            ToolParamType.Int64 => typeof(long).FullName!,
+            ToolParamType.Float32 => typeof(float).FullName!,
+            ToolParamType.Float64 => typeof(double).FullName!,
+            ToolParamType.Decimal => typeof(decimal).FullName!,
+            _ => valueKind.ToString()
+        };
+    }
+
     public sealed record class Object : ToolSchema {
         public Object(
             IReadOnlyList<Property>? properties = null,
@@ -203,11 +308,22 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
             string? example = null
         ) : base(description, example) {
             var builder = ImmutableArray.CreateBuilder<Property>();
-            var names = new HashSet<string>(StringComparer.Ordinal);
+            var exactNames = new HashSet<string>(StringComparer.Ordinal);
+            var caseInsensitiveNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             if (properties is not null) {
                 foreach (var property in properties) {
-                    if (!names.Add(property.Name)) { throw new ArgumentException($"Duplicate property '{property.Name}' detected.", nameof(properties)); }
+                    if (!exactNames.Add(property.Name)) {
+                        throw new ArgumentException($"Duplicate property '{property.Name}' detected.", nameof(properties));
+                    }
+
+                    if (!caseInsensitiveNames.TryAdd(property.Name, property.Name)) {
+                        var existingName = caseInsensitiveNames[property.Name];
+                        throw new ArgumentException(
+                            $"Properties '{existingName}' and '{property.Name}' differ only by case.",
+                            nameof(properties)
+                        );
+                    }
 
                     builder.Add(property);
                 }
@@ -250,7 +366,7 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
             object? minimum = null,
             object? maximum = null
         ) : base(description, example) {
-            ToolParamSpec.ValidateDefaultCombination("schema", valueKind, isNullable, defaultValue);
+            ValidateDefaultCombination("schema", valueKind, isNullable, defaultValue);
             ValidateStringConstraints(valueKind, stringEnumValues, minLength, maxLength, pattern);
             ValidateNumericConstraints(valueKind, minimum, maximum);
 
@@ -310,9 +426,9 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
 
             if (valueKind is not (ToolParamType.Int32 or ToolParamType.Int64 or ToolParamType.Float32 or ToolParamType.Float64 or ToolParamType.Decimal)) { throw new ArgumentException("Numeric constraints are only valid for numeric schemas."); }
 
-            if (minimum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, minimum, out var minError)) { throw new ArgumentException($"Invalid minimum constraint: {minError}", nameof(minimum)); }
+            if (minimum is not null && !TryValidateValueKindCompatibility(valueKind, minimum, out var minError)) { throw new ArgumentException($"Invalid minimum constraint: {minError}", nameof(minimum)); }
 
-            if (maximum is not null && !ToolParamSpec.TryValidateValueKindCompatibility(valueKind, maximum, out var maxError)) { throw new ArgumentException($"Invalid maximum constraint: {maxError}", nameof(maximum)); }
+            if (maximum is not null && !TryValidateValueKindCompatibility(valueKind, maximum, out var maxError)) { throw new ArgumentException($"Invalid maximum constraint: {maxError}", nameof(maximum)); }
 
             if (minimum is not null && maximum is not null && CompareValues(minimum, maximum, valueKind) > 0) { throw new ArgumentException("Numeric minimum cannot be greater than maximum."); }
         }

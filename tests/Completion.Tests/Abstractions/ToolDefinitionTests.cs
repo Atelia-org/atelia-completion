@@ -133,6 +133,53 @@ public sealed class ToolDefinitionTests {
         Assert.Empty(definition.Parameters);
     }
 
+    [Fact]
+    public void ToolSchemaValue_NonNullableStringWithNullDefault_Throws() {
+        var exception = Assert.Throws<ArgumentException>(
+            () => new ToolSchema.Value(
+                valueKind: ToolParamType.String,
+                isNullable: false,
+                defaultValue: new ParamDefault(null)
+            )
+        );
+
+        Assert.Contains("cannot be null", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ToolSchemaValue_Int32WithNonIntegerMinimum_Throws() {
+        var exception = Assert.Throws<ArgumentException>(
+            () => new ToolSchema.Value(
+                valueKind: ToolParamType.Int32,
+                minimum: 3.14
+            )
+        );
+
+        Assert.Contains("Invalid minimum constraint", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ToolSchemaObject_CaseOnlyDuplicatePropertyNames_Throws() {
+        var exception = Assert.Throws<ArgumentException>(
+            () => new ToolSchema.Object(
+                properties: [
+                    new ToolSchema.Property(
+                        "City",
+                        new ToolSchema.Value(ToolParamType.String),
+                        isRequired: true
+                    ),
+                    new ToolSchema.Property(
+                        "city",
+                        new ToolSchema.Value(ToolParamType.String),
+                        isRequired: false
+                    )
+                ]
+            )
+        );
+
+        Assert.Contains("differ only by case", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static void AssertJsonSemanticallyEqual(string expectedJson, JsonElement actual) {
         using var expectedDocument = JsonDocument.Parse(expectedJson);
         Assert.True(

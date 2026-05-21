@@ -86,21 +86,10 @@ public sealed class ToolExecutor {
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var resolvedRequest = ResolveToolCall(request, tool);
-
-        if (!string.IsNullOrWhiteSpace(resolvedRequest.ParseError)) {
-            stopwatch.Stop();
-            DebugUtil.Warning(
-                DebugCategory,
-                $"[Executor] Argument parse failed toolName={request.ToolName} toolCallId={request.ToolCallId} error={resolvedRequest.ParseError}"
-            );
-
-            return CreateParseFailureResult(request, resolvedRequest);
-        }
 
         try {
             var definitionName = _definitionByInstance[tool].Name;
-            var executeResult = await tool.ExecuteAsync(resolvedRequest.Arguments, cancellationToken).ConfigureAwait(false)
+            var executeResult = await tool.ExecuteAsync(request, cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException($"Tool '{definitionName}' returned null result.");
             stopwatch.Stop();
 
@@ -109,8 +98,7 @@ public sealed class ToolExecutor {
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            var enrichedResult = AttachParseWarning(executeResult, resolvedRequest.ParseWarning);
-            return new ToolCallExecutionResult(enrichedResult, request.ToolName, request.ToolCallId, stopwatch.Elapsed);
+            return new ToolCallExecutionResult(executeResult, request.ToolName, request.ToolCallId, stopwatch.Elapsed);
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
@@ -135,42 +123,5 @@ public sealed class ToolExecutor {
                 stopwatch.Elapsed
             );
         }
-    }
-
-    private ResolvedToolCall ResolveToolCall(RawToolCall request, ITool tool) {
-        var definition = _definitionByInstance[tool];
-        var parsed = JsonArgumentParser.ParseArguments((ToolSchema.Object)definition.InputSchema, request.RawArgumentsJson);
-        return new ResolvedToolCall(
-            request.ToolName,
-            request.ToolCallId,
-            parsed.Arguments,
-            parsed.ParseError,
-            parsed.ParseWarning
-        );
-    }
-
-    private static ToolCallExecutionResult CreateParseFailureResult(RawToolCall request, ResolvedToolCall resolvedRequest) {
-        var content = "工具参数解析失败。";
-
-        if (!string.IsNullOrWhiteSpace(resolvedRequest.ParseError)) {
-            content = string.Concat(content, "\n解析错误: ", resolvedRequest.ParseError);
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.RawArgumentsJson)) {
-            content = string.Concat(content, "\nraw_arguments_json: ", request.RawArgumentsJson);
-        }
-
-        return new ToolCallExecutionResult(
-            new ToolExecuteResult(ToolExecutionStatus.Failed, content),
-            request.ToolName,
-            request.ToolCallId
-        );
-    }
-
-    private static ToolExecuteResult AttachParseWarning(ToolExecuteResult content, string? parseWarning) {
-        if (string.IsNullOrWhiteSpace(parseWarning)) { return content; }
-
-        var mergedContent = string.Concat(content.Content, "\n[ParseWarning] ", parseWarning);
-        return new ToolExecuteResult(content.Status, mergedContent);
     }
 }

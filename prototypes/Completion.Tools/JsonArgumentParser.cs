@@ -284,122 +284,31 @@ internal static class JsonArgumentParser {
     }
 
     private static ParseResult ParseString(JsonElement element) {
-        return element.ValueKind switch {
-            JsonValueKind.String => ParseResult.CreateSuccess(element.GetString()),
-            JsonValueKind.True or JsonValueKind.False => ParseResult.CreateSuccess(element.GetBoolean().ToString(), "non_string_literal_retained"),
-            JsonValueKind.Number => ParseResult.CreateSuccess(element.GetRawText(), "non_string_literal_retained"),
-            _ => ParseResult.CreateSuccess(element.GetRawText(), "non_string_literal_retained")
-        };
+        return element.ValueKind == JsonValueKind.String
+            ? ParseResult.CreateSuccess(element.GetString())
+            : ParseResult.CreateError("expected_string");
     }
 
     private static ParseResult ParseBoolean(JsonElement element) {
         return element.ValueKind switch {
             JsonValueKind.True => ParseResult.CreateSuccess(true),
             JsonValueKind.False => ParseResult.CreateSuccess(false),
-            JsonValueKind.String => ParseBooleanString(element.GetString()),
-            JsonValueKind.Number => ParseBooleanNumber(element),
-            _ => ParseResult.CreateError("unsupported_boolean_literal")
+            _ => ParseResult.CreateError("expected_boolean")
         };
     }
 
-    private static ParseResult ParseBooleanString(string? text) {
-        if (string.Equals(text, "true", StringComparison.OrdinalIgnoreCase)) { return ParseResult.CreateSuccess(true, "string_literal_converted_to_boolean"); }
-        if (string.Equals(text, "false", StringComparison.OrdinalIgnoreCase)) { return ParseResult.CreateSuccess(false, "string_literal_converted_to_boolean"); }
-        return ParseResult.CreateError("invalid_boolean_string");
-    }
-
-    private static ParseResult ParseBooleanNumber(JsonElement element) {
-        if (!element.TryGetDouble(out var value)) { return ParseResult.CreateError("invalid_boolean_number"); }
-        return ParseResult.CreateSuccess(Math.Abs(value) > double.Epsilon, "number_coerced_to_boolean");
-    }
-
     private static ParseResult ParseInt32(JsonElement element) {
-        if (element.ValueKind == JsonValueKind.Number) {
-            if (element.TryGetInt32(out var value32)) { return ParseResult.CreateSuccess(value32); }
-
-            if (element.TryGetInt64(out var value64)) {
-                return value64 is >= int.MinValue and <= int.MaxValue
-                    ? ParseResult.CreateSuccess((int)value64, "int64_coerced_to_int32")
-                    : ParseResult.CreateError("int32_out_of_range");
-            }
-
-            if (element.TryGetDouble(out var number)) {
-                if (double.IsNaN(number) || double.IsInfinity(number)) { return ParseResult.CreateError("int32_invalid_number"); }
-
-                var truncated = Math.Truncate(number);
-                if (truncated is < int.MinValue or > int.MaxValue) { return ParseResult.CreateError("int32_out_of_range"); }
-
-                var warning = Math.Abs(number - truncated) > double.Epsilon
-                    ? "fractional_number_truncated_to_int32"
-                    : "float64_coerced_to_int32";
-                return ParseResult.CreateSuccess((int)truncated, warning);
-            }
-
-            return ParseResult.CreateError("int32_invalid_literal");
-        }
-
-        if (element.ValueKind == JsonValueKind.String) {
-            var text = element.GetString();
-            if (int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)) { return ParseResult.CreateSuccess(value, "string_literal_converted_to_int32"); }
-            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var longValue)) {
-                return longValue is >= int.MinValue and <= int.MaxValue
-                    ? ParseResult.CreateSuccess((int)longValue, "string_literal_converted_to_int32")
-                    : ParseResult.CreateError("int32_out_of_range");
-            }
-
-            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) {
-                var truncated = Math.Truncate(number);
-                if (truncated is < int.MinValue or > int.MaxValue) { return ParseResult.CreateError("int32_out_of_range"); }
-
-                var warning = Math.Abs(number - truncated) > double.Epsilon
-                    ? "fractional_string_truncated_to_int32"
-                    : "string_literal_converted_to_int32";
-                return ParseResult.CreateSuccess((int)truncated, warning);
-            }
-
-            return ParseResult.CreateError("int32_invalid_string");
-        }
-
-        return ParseResult.CreateError("int32_unsupported_literal");
+        if (element.ValueKind != JsonValueKind.Number) { return ParseResult.CreateError("expected_integer"); }
+        if (element.TryGetInt32(out var value32)) { return ParseResult.CreateSuccess(value32); }
+        if (!IsIntegerLiteral(element)) { return ParseResult.CreateError("expected_integer"); }
+        return ParseResult.CreateError("int32_out_of_range");
     }
 
     private static ParseResult ParseInt64(JsonElement element) {
-        if (element.ValueKind == JsonValueKind.Number) {
-            if (element.TryGetInt64(out var integer)) { return ParseResult.CreateSuccess(integer); }
-
-            if (element.TryGetDouble(out var number)) {
-                if (double.IsNaN(number) || double.IsInfinity(number)) { return ParseResult.CreateError("int64_invalid_number"); }
-
-                var truncated = Math.Truncate(number);
-                if (truncated is < long.MinValue or > long.MaxValue) { return ParseResult.CreateError("int64_out_of_range"); }
-
-                var warning = Math.Abs(number - truncated) > double.Epsilon
-                    ? "fractional_number_truncated_to_int64"
-                    : "float64_coerced_to_int64";
-                return ParseResult.CreateSuccess((long)truncated, warning);
-            }
-
-            return ParseResult.CreateError("int64_invalid_literal");
-        }
-
-        if (element.ValueKind == JsonValueKind.String) {
-            var text = element.GetString();
-            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer)) { return ParseResult.CreateSuccess(integer, "string_literal_converted_to_int64"); }
-
-            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)) {
-                var truncated = Math.Truncate(number);
-                if (truncated is < long.MinValue or > long.MaxValue) { return ParseResult.CreateError("int64_out_of_range"); }
-
-                var warning = Math.Abs(number - truncated) > double.Epsilon
-                    ? "fractional_string_truncated_to_int64"
-                    : "string_literal_converted_to_int64";
-                return ParseResult.CreateSuccess((long)truncated, warning);
-            }
-
-            return ParseResult.CreateError("int64_invalid_string");
-        }
-
-        return ParseResult.CreateError("int64_unsupported_literal");
+        if (element.ValueKind != JsonValueKind.Number) { return ParseResult.CreateError("expected_integer"); }
+        if (element.TryGetInt64(out var integer)) { return ParseResult.CreateSuccess(integer); }
+        if (!IsIntegerLiteral(element)) { return ParseResult.CreateError("expected_integer"); }
+        return ParseResult.CreateError("int64_out_of_range");
     }
 
     private static ParseResult ParseFloat32(JsonElement element) {
@@ -409,11 +318,7 @@ internal static class JsonArgumentParser {
         if (sourceKind == JsonValueKind.Number) {
             if (!element.TryGetDouble(out number)) { return ParseResult.CreateError("float32_invalid_literal"); }
         }
-        else if (sourceKind == JsonValueKind.String) {
-            var text = element.GetString();
-            if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)) { return ParseResult.CreateError("float32_invalid_string"); }
-        }
-        else { return ParseResult.CreateError("float32_unsupported_literal"); }
+        else { return ParseResult.CreateError("expected_number"); }
 
         if (double.IsNaN(number) || double.IsInfinity(number)) { return ParseResult.CreateError("float32_invalid_literal"); }
         if (number is < -float.MaxValue or > float.MaxValue) { return ParseResult.CreateError("float32_out_of_range"); }
@@ -421,13 +326,7 @@ internal static class JsonArgumentParser {
         var converted = (float)number;
         var delta = Math.Abs(number - converted);
 
-        string? warning = null;
-        if (sourceKind == JsonValueKind.String) {
-            warning = delta > double.Epsilon ? "string_literal_precision_loss" : "string_literal_converted_to_float32";
-        }
-        else if (delta > double.Epsilon) {
-            warning = "float64_precision_loss";
-        }
+        string? warning = delta > double.Epsilon ? "float64_precision_loss" : null;
 
         return ParseResult.CreateSuccess(converted, warning);
     }
@@ -439,14 +338,7 @@ internal static class JsonArgumentParser {
                 : ParseResult.CreateError("float64_invalid_literal");
         }
 
-        if (element.ValueKind == JsonValueKind.String) {
-            var text = element.GetString();
-            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
-                ? ParseResult.CreateSuccess(value, "string_literal_converted_to_float64")
-                : ParseResult.CreateError("float64_invalid_string");
-        }
-
-        return ParseResult.CreateError("float64_unsupported_literal");
+        return ParseResult.CreateError("expected_number");
     }
 
     private static ParseResult ParseDecimal(JsonElement element) {
@@ -456,14 +348,7 @@ internal static class JsonArgumentParser {
                 : ParseResult.CreateError("decimal_invalid_literal");
         }
 
-        if (element.ValueKind == JsonValueKind.String) {
-            var text = element.GetString();
-            return decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
-                ? ParseResult.CreateSuccess(value, "string_literal_converted_to_decimal")
-                : ParseResult.CreateError("decimal_invalid_string");
-        }
-
-        return ParseResult.CreateError("decimal_unsupported_literal");
+        return ParseResult.CreateError("expected_number");
     }
 
     private static ImmutableDictionary<string, object?> ConvertObject(JsonElement element) {
@@ -506,6 +391,17 @@ internal static class JsonArgumentParser {
 
     private static string? WarningAt(string path, string? warning)
         => string.IsNullOrEmpty(warning) ? null : string.Concat(path, ":", warning);
+
+    private static bool IsIntegerLiteral(JsonElement element) {
+        if (element.ValueKind != JsonValueKind.Number) { return false; }
+
+        var rawText = element.GetRawText();
+        foreach (var ch in rawText) {
+            if (ch is '.' or 'e' or 'E') { return false; }
+        }
+
+        return true;
+    }
 
     private readonly struct ParseResult {
         private ParseResult(bool isSuccess, object? value, string? warning, string? error) {

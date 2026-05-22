@@ -45,9 +45,7 @@ partial class MethodToolWrapper {
 
         var rawToolCall = context.RawToolCall;
         var parsed = JsonArgumentParser.ParseArguments(_inputSchema, rawToolCall.RawArgumentsJson);
-        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) {
-            return CreateParseFailureResult(rawToolCall, parsed);
-        }
+        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) { return CreateParseFailureResult(rawToolCall, parsed); }
 
         var args = BuildArgs(_argGetters, parsed.Arguments);
         var result = await _invoker(args, context, cancellationToken).ConfigureAwait(false)
@@ -58,15 +56,11 @@ partial class MethodToolWrapper {
 }
 
 partial class MethodToolWrapper {
-    internal static MethodToolWrapper FromMethodImpl(object? targetInstance, MethodInfo method, object?[]? formatArgs) {
+    internal static MethodToolWrapper FromMethodImpl(object? targetInstance, MethodInfo method) {
         if (method is null) { throw new ArgumentNullException(nameof(method)); }
 
         var toolAttribute = method.GetCustomAttribute<ToolAttribute>()
             ?? throw new InvalidOperationException($"Method '{method.DeclaringType?.FullName}.{method.Name}' is missing ToolAttribute.");
-
-        var formattingArgs = formatArgs is { Length: > 0 }
-            ? formatArgs
-            : Array.Empty<object?>();
 
         if (method.ReturnType != typeof(ValueTask<ToolExecuteResult>)) { throw new InvalidOperationException($"Method '{method.Name}' must return ValueTask<ToolExecuteResult>."); }
 
@@ -88,9 +82,7 @@ partial class MethodToolWrapper {
             if (parameter.ParameterType.IsByRef) { throw new NotSupportedException($"Parameter '{parameter.Name}' on method '{method.Name}' cannot be passed by reference."); }
 
             if (parameter.ParameterType == typeof(ToolExecutionContext)) {
-                if (hasExecutionContextParameter) {
-                    throw new InvalidOperationException($"Method '{method.Name}' can declare ToolExecutionContext at most once.");
-                }
+                if (hasExecutionContextParameter) { throw new InvalidOperationException($"Method '{method.Name}' can declare ToolExecutionContext at most once."); }
 
                 hasExecutionContextParameter = true;
                 invocationParameters[parameterIndex] = new InvocationParameter(InvocationParameterKind.ToolExecutionContext);
@@ -104,8 +96,7 @@ partial class MethodToolWrapper {
             var valueKind = ResolveValueKind(parameter.ParameterType);
             var allowsNull = ResolveNullability(parameter);
             var defaultInfo = ResolveDefaultValue(parameter, allowsNull);
-            var formattedDescription = parameterAttribute.FormatDescription(formattingArgs);
-            var effectiveDescription = BuildDescription(formattedDescription, allowsNull, defaultInfo);
+            var effectiveDescription = BuildDescription(parameterAttribute.Description, allowsNull, defaultInfo);
 
             schemaProperties.Add(
                 new ToolSchema.Property(
@@ -123,10 +114,8 @@ partial class MethodToolWrapper {
             invocationParameters[parameterIndex] = new InvocationParameter(InvocationParameterKind.SchemaArgument, argGetters.Count - 1);
         }
 
-        var methodName = toolAttribute.FormatName(formattingArgs);
-        var methodDescription = toolAttribute.FormatDescription(formattingArgs);
         var inputSchema = new ToolSchema.Object(schemaProperties);
-        var definition = new ToolDefinition(methodName, methodDescription, inputSchema);
+        var definition = new ToolDefinition(toolAttribute.Name, toolAttribute.Description, inputSchema);
 
         var invoker = CreateInvoker(method, method.IsStatic ? null : targetInstance, invocationParameters);
 
@@ -184,11 +173,11 @@ partial class MethodToolWrapper {
 
         return Expression
             .Lambda<Func<object?[], ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>>>(
-                callExpression,
-                argsParameter,
-                toolExecutionContextParameter,
-                cancellationTokenParameter
-            )
+            callExpression,
+            argsParameter,
+            toolExecutionContextParameter,
+            cancellationTokenParameter
+        )
             .Compile();
     }
 

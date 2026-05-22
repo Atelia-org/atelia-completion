@@ -69,10 +69,47 @@ public sealed class ArtifactToolWrapperTests {
         Assert.Contains("raw_arguments_json", result.Content, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenDeserializationFails_DoesNotInvokeArtifactHandler() {
+        var handlerCalled = false;
+        var wrapper = ArtifactToolWrapper<UndeserializableArtifactEnvelope>.Create(
+            "artifact.deserialize_failure",
+            (artifact, context) => {
+                _ = artifact;
+                _ = context;
+                handlerCalled = true;
+                return new ValidateResult(true, "should not happen");
+            }
+        );
+
+        var context = new ToolExecutionContext(
+            new ToolSessionState(),
+            new RawToolCall("artifact.deserialize_failure", "call-4", """{"Title":"draft"}"""),
+            executionSequence: 13
+        );
+
+        var result = await wrapper.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.False(handlerCalled);
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        Assert.Contains("工具参数反序列化失败", result.Content, StringComparison.Ordinal);
+        Assert.Contains("raw_arguments_json", result.Content, StringComparison.Ordinal);
+    }
+
     [Description("Artifact envelope.")]
     private sealed class ArtifactEnvelope {
         [Description("Artifact title.")]
         [MinLength(2)]
         public string Title { get; init; } = string.Empty;
+    }
+
+    [Description("Artifact envelope that cannot be deserialized by System.Text.Json.")]
+    private sealed class UndeserializableArtifactEnvelope {
+        private UndeserializableArtifactEnvelope(string title) {
+            Title = title;
+        }
+
+        [Description("Artifact title.")]
+        public string Title { get; } = string.Empty;
     }
 }

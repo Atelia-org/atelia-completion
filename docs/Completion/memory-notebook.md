@@ -213,7 +213,7 @@ prototypes/Completion/
 │  └─ GeminiReplayPayloadCodec.cs   replay payload 编解码
 ├─ CompletionAggregator.cs          流式增量 → CompletionResult 的内部聚合器
 ├─ Declaration/
-│  └─ ReflectedToolDefinitionBuilder.cs class/record class → ToolDefinition 的声明侧 helper
+│  └─ ReflectedToolDefinitionBuilder.cs class/record class → ToolDefinition / wrapper 输入 schema 的共享声明 helper
 └─ Utils/
    ├─ JsonToolSchemaBuilder.cs      ToolSchema/InputSchema → JSON Schema
    ├─ StreamParserToolUtility.cs    StreamParser 共享工具
@@ -243,7 +243,7 @@ prototypes/Completion.Tools/
 
 - `ToolDefinition.InputSchema` 已支持递归 object / array / value 声明
 - provider 请求投影与执行期参数解析都走同一条 `ToolDefinition.InputSchema` 主链，不再存在 flat 公共 API 作为第二真源
-- `ReflectedToolDefinitionBuilder` 当前是声明侧 helper；若要让模型真正看到这些递归 schema，调用方需要把生成出的 `ToolDefinition` 显式放进 `CompletionRequest.Tools`
+- `ReflectedToolDefinitionBuilder` 是共享声明 helper；若只需要 `ToolDefinition`，调用方仍需显式放进 `CompletionRequest.Tools`，若要直接拿到可执行工具则优先用 `MethodToolWrapper` / `ArtifactToolWrapper<T>`
 - `ReflectedToolDefinitionBuilder` 位于 `prototypes/Completion.Tools/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
 - LLM JSON 没有 uint，调用方需自行做 long → uint 的范围检查
 

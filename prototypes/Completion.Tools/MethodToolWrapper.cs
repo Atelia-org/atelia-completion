@@ -46,16 +46,3 @@ public sealed class ToolAttribute : Attribute {
 
     public string Description => _description;
 }
-
-[AttributeUsage(AttributeTargets.Parameter, AllowMultiple = false, Inherited = false)]
-public sealed class ToolParamAttribute : Attribute {
-    private readonly string _description;
-
-    public ToolParamAttribute(string description) {
-        if (string.IsNullOrWhiteSpace(description)) { throw new ArgumentException("Parameter description cannot be null or whitespace.", nameof(description)); }
-
-        _description = description.Trim();
-    }
-
-    public string Description => _description;
-}

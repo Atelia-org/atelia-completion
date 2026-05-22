@@ -42,6 +42,23 @@ public sealed class MethodToolWrapperTests {
     }
 
     [Fact]
+    public void FromMethod_UsesToolAttributeDescriptionAsToolDescription() {
+        var target = new DescriptionSourceMethodToolTarget();
+        var wrapper = MethodToolWrapper.FromMethod(
+            target,
+            typeof(DescriptionSourceMethodToolTarget).GetMethod(nameof(DescriptionSourceMethodToolTarget.ExecuteAsync))!
+        );
+
+        var definition = wrapper.Definition;
+        Assert.Equal("Tool description from attribute.", definition.Description);
+        Assert.NotEqual("Input description that should not become the tool description.", definition.Description);
+
+        var inputSchema = Assert.IsType<ToolSchema.Object>(definition.InputSchema);
+        var property = Assert.Single(inputSchema.Properties);
+        Assert.Equal("Visible text from property description.", property.Schema.Description);
+    }
+
+    [Fact]
     public void FromMethod_RequiresSingleInputObjectFollowedByContextAndCancellationToken() {
         var target = new InvalidMethodToolTarget();
 
@@ -53,6 +70,29 @@ public sealed class MethodToolWrapperTests {
         );
 
         Assert.Contains("exactly one business input parameter", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenArgumentParsingFails_DoesNotInvokeMethod() {
+        var target = new ParseFailureMethodToolTarget();
+        var wrapper = MethodToolWrapper.FromMethod(
+            target,
+            typeof(ParseFailureMethodToolTarget).GetMethod(nameof(ParseFailureMethodToolTarget.ExecuteAsync))!
+        );
+
+        var context = new ToolExecutionContext(
+            new ToolSessionState(),
+            new RawToolCall("method.parse_failure", "call-parse", """{"text":"hello","unexpected":123}"""),
+            executionSequence: 9
+        );
+
+        var result = await wrapper.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.False(target.Invoked);
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        Assert.Contains("工具参数解析失败", result.Content, StringComparison.Ordinal);
+        Assert.Contains("unknown_property", result.Content, StringComparison.Ordinal);
+        Assert.Contains("raw_arguments_json", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -97,6 +137,20 @@ public sealed class MethodToolWrapperTests {
         }
     }
 
+    private sealed class DescriptionSourceMethodToolTarget {
+        [Tool("method.description_source", "Tool description from attribute.")]
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            DescriptionSourceInput input,
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) {
+            _ = input;
+            _ = context;
+            _ = cancellationToken;
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "unused"));
+        }
+    }
+
     private sealed class InvalidMethodToolTarget {
         [Tool("method.invalid_signature", "Invalid signature.")]
         public ValueTask<ToolExecuteResult> ExecuteAsync(
@@ -108,6 +162,23 @@ public sealed class MethodToolWrapperTests {
             _ = context;
             _ = cancellationToken;
             return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, input.Text + anotherInput.Text));
+        }
+    }
+
+    private sealed class ParseFailureMethodToolTarget {
+        public bool Invoked { get; private set; }
+
+        [Tool("method.parse_failure", "Reject invalid schema input before invocation.")]
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            ExecuteInput input,
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) {
+            _ = input;
+            _ = context;
+            _ = cancellationToken;
+            Invoked = true;
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "should not happen"));
         }
     }
 
@@ -127,6 +198,13 @@ public sealed class MethodToolWrapperTests {
             return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "should not happen"));
         }
     }
+
+    [Description("Input description that should not become the tool description.")]
+    private sealed record class DescriptionSourceInput(
+        [property: Description("Visible text from property description.")]
+        [property: JsonPropertyName("text")]
+        string Text
+    );
 
     [Description("Input for method tool execution.")]
     private sealed record class ExecuteInput(

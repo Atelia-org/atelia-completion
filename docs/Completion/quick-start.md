@@ -380,11 +380,11 @@ var request = new CompletionRequest(
 - `ToolSchema.Value` 的标量 kind 仍由 `ToolParamType` 表达：`String / Boolean / Int32 / Int64 / Float32 / Float64 / Decimal`。
 - `ToolSchema.Object.AdditionalProperties` 默认是 `false`；模型传入未知字段时，执行边界会把它当 parse error，而不是 warning 后透传。
 - 字段名按 `Ordinal` 精确匹配；大小写不一致会被当成不同字段，不要依赖“大小写差一点也能过”。
-- 若你要从 `record class` / `class` 直接生成递归声明，可用 `Atelia.Completion.Tools.Declaration.ReflectedToolDefinitionBuilder.Build<TInput>(toolName)`；当前它是声明侧 helper，不会自动接管默认 `ToolExecutor` 管线。
+- 若你只想从 `record class` / `class` 直接生成 `ToolDefinition`，可用 `Atelia.Completion.Tools.Declaration.ReflectedToolDefinitionBuilder.BuildDefinitionUsingTypeDescription<TInput>(toolName)`；若你要拿到可执行工具，则优先用 `MethodToolWrapper.FromMethod/FromDelegate` 或 `ArtifactToolWrapper<T>.Create(...)`。
 - **LLM JSON 没有 `uint`**：超过 `int.MaxValue` 的整数会先解析成 `long`，自己做范围检查。
 - 若你给 `ToolSchema.Value(defaultValue: new ParamDefault(null))`，仍然必须同时设 `isNullable: true`，否则构造函数会抛 `ArgumentException`。
 - `defaultValue` 当前不会被 `JsonToolSchemaBuilder` 写进 JSON Schema 的 `default` 字段。关键默认行为请继续写进 `description`。
-- 执行侧主链现在是“共享 `ToolRegistry` 持有工具能力；每个 `ToolSessionState` 通过 `ToolAccessPolicy` 投影可见工具；`ToolExecutor` 作为 session 级执行壳负责分发 `RawToolCall`”。像 `MethodToolWrapper` 这类 schema-bound tool 会在内部解析 `RawArgumentsJson`，并通过 `ToolExecutionContext` 读取 session/items/services。
+- 执行侧主链现在是“共享 `ToolRegistry` 持有工具能力；每个 `ToolSessionState` 通过 `ToolAccessPolicy` 投影可见工具；`ToolExecutor` 作为 session 级执行壳负责分发 `RawToolCall`”。像 `MethodToolWrapper` 这类 schema-bound tool 会在内部解析 `RawArgumentsJson`；其 tool-level description 来自 `[Tool]`，字段 description 来自输入 DTO 属性上的 `[Description]` 等声明，再通过 `ToolExecutionContext` 读取 session/items/services。
 
 ---
 

@@ -2,22 +2,28 @@ using Atelia.Completion.Abstractions;
 
 namespace Atelia.Completion.Tools;
 
-public sealed record ToolExecutionRequest {
-    public ToolExecutionRequest(
+public sealed record ToolExecutionContext {
+    public ToolExecutionContext(
+        ToolSessionState session,
         RawToolCall rawToolCall,
         long executionSequence
     ) {
+        Session = session ?? throw new ArgumentNullException(nameof(session));
         RawToolCall = rawToolCall ?? throw new ArgumentNullException(nameof(rawToolCall));
-        if (executionSequence <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(executionSequence), executionSequence, "Execution sequence must be greater than zero.");
-        }
+        if (executionSequence <= 0) { throw new ArgumentOutOfRangeException(nameof(executionSequence), executionSequence, "Execution sequence must be greater than zero."); }
 
         ExecutionSequence = executionSequence;
     }
 
+    public ToolSessionState Session { get; }
+
     public RawToolCall RawToolCall { get; }
 
     public long ExecutionSequence { get; }
+
+    public IServiceProvider? Services => Session.Services;
+
+    public IReadOnlyDictionary<string, object?>? Items => Session.Items;
 }
 
 public sealed record ToolExecuteResult {

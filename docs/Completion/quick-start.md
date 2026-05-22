@@ -384,7 +384,7 @@ var request = new CompletionRequest(
 - **LLM JSON 没有 `uint`**：超过 `int.MaxValue` 的整数会先解析成 `long`，自己做范围检查。
 - 若你给 `ToolSchema.Value(defaultValue: new ParamDefault(null))`，仍然必须同时设 `isNullable: true`，否则构造函数会抛 `ArgumentException`。
 - `defaultValue` 当前不会被 `JsonToolSchemaBuilder` 写进 JSON Schema 的 `default` 字段。关键默认行为请继续写进 `description`。
-- 执行侧主链现在是“`ToolExecutor` 负责按 `ToolDefinition.Name` 调度 `RawToolCall`；具体 `ITool` 再按自身需要消费 `ToolDefinition.InputSchema`”。像 `MethodToolWrapper` 这类 schema-bound tool 会在内部解析 `RawArgumentsJson`。
+- 执行侧主链现在是“共享 `ToolRegistry` 持有工具能力；每个 `ToolSessionState` 通过 `ToolAccessPolicy` 投影可见工具；`ToolExecutor` 作为 session 级执行壳负责分发 `RawToolCall`”。像 `MethodToolWrapper` 这类 schema-bound tool 会在内部解析 `RawArgumentsJson`，并通过 `ToolExecutionContext` 读取 session/items/services。
 
 ---
 
@@ -443,14 +443,14 @@ public record RawToolCall(
 读取建议：
 
 1. `RawArgumentsJson` 是 **provider 发来的完整 arguments 文本**。Completion 抽象层不再替你做 schema-aware 解析。
-2. 需要执行工具时，把 `RawToolCall` 交给 `Atelia.Completion.Tools.ToolExecutor`；它负责按 validated `ToolDefinition.Name` 查找并分发给具体 `ITool`。若该工具需要 schema 绑定，例如 `MethodToolWrapper`，会在自己的 `ExecuteAsync(RawToolCall, ...)` 内部按当前 `ToolDefinition.InputSchema` 解析 `RawArgumentsJson`。
+2. 需要执行工具时，先用共享 `ToolRegistry` + 当前 `ToolSessionState` 创建 `Atelia.Completion.Tools.ToolExecutor`，再把 `RawToolCall` 交给它；它会按同一份 `ToolAccessPolicy` 做执行授权并分发给具体 `ITool`。若该工具需要 schema 绑定，例如 `MethodToolWrapper`，会在自己的 `ExecuteAsync(ToolExecutionContext, ...)` 内部按当前 `ToolDefinition.InputSchema` 解析 `RawArgumentsJson`。
 3. **持久化 / replay**：直接保存 `RawArgumentsJson`。回放给 OpenAI Chat 时原样作为 `function.arguments`；回放给 Anthropic/Gemini 这类结构化参数协议时，再把这段 JSON parse 成对象。
 4. **法证价值**：相比旧设计，当前抽象会保留完整原始 JSON 文本；即使 arguments malformed，也不会因为 provider 预解析失败而丢证据。
 
 补充边界：
 
 - `ParseError` / `ParseWarning` 不再是 `ToolExecutor` 的统一产物；它们是否存在、以什么形式体现，取决于具体 tool 的内部绑定策略。
-- `ArtifactToolWrapper<T>` 已落地为现行能力：它同样直接消费 `RawToolCall`，内部先做 schema 校验，再反序列化为声明式类型，并补做 model validation / handler validation。
+- `ArtifactToolWrapper<T>` 已落地为现行能力：它同样从 `ToolExecutionContext.RawToolCall` 读取原始参数，内部先做 schema 校验，再反序列化为声明式类型，并补做 model validation / handler validation。
 
 执行完一定要回灌一条 `ToolResultsMessage`，且 `ToolResult.ToolCallId` 必须等于 `RawToolCall.ToolCallId`。
 

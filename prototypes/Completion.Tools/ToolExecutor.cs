@@ -8,58 +8,20 @@ namespace Atelia.Completion.Tools;
 
 public sealed class ToolExecutor {
     private const string DebugCategory = "Tools";
-    private readonly IReadOnlyDictionary<string, ITool> _tools;
-    private readonly ImmutableArray<ToolDefinition> _allToolDefinitions;
-    private readonly Dictionary<ITool, ToolDefinition> _definitionByInstance;
-    private long _nextExecutionSequence;
+    private readonly ToolRegistry _registry;
+    private readonly ToolSessionState _session;
 
-    public ToolExecutor(IEnumerable<ITool> tools) {
-        if (tools is null) { throw new ArgumentNullException(nameof(tools)); }
-
-        var dictionary = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
-        var definitionMap = new Dictionary<ITool, ToolDefinition>(ReferenceEqualityComparer.Instance);
-        var definitionBuilder = ImmutableArray.CreateBuilder<ToolDefinition>();
-
-        foreach (var tool in tools) {
-            if (tool is null) { continue; }
-
-            var definition = ToolContracts.GetValidatedDefinition(tool);
-            if (dictionary.ContainsKey(definition.Name)) {
-                throw new InvalidOperationException($"Duplicate tool registration detected for '{definition.Name}'.");
-            }
-
-            dictionary[definition.Name] = tool;
-            definitionMap[tool] = definition;
-            definitionBuilder.Add(definition);
-        }
-
-        _tools = dictionary;
-
-        _definitionByInstance = definitionMap;
-        _allToolDefinitions = definitionBuilder.Count == 0
-            ? ImmutableArray<ToolDefinition>.Empty
-            : definitionBuilder.ToImmutable();
-        DebugUtil.Info(DebugCategory, $"ToolExecutor initialized toolCount={_tools.Count}");
+    public ToolExecutor(ToolRegistry registry, ToolSessionState session) {
+        _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        _session = session ?? throw new ArgumentNullException(nameof(session));
+        DebugUtil.Info(DebugCategory, $"ToolExecutor initialized toolCount={_registry.AllDefinitions.Length}");
     }
 
-    public IEnumerable<ITool> Tools => _tools.Values;
+    public ToolRegistry Registry => _registry;
 
-    public ImmutableArray<ToolDefinition> AllToolDefinitions => _allToolDefinitions;
+    public ToolSessionState Session => _session;
 
-    public ImmutableArray<ToolDefinition> GetVisibleToolDefinitions() {
-        if (_tools.Count == 0) { return ImmutableArray<ToolDefinition>.Empty; }
-
-        var builder = ImmutableArray.CreateBuilder<ToolDefinition>();
-        foreach (var tool in _tools.Values) {
-            if (tool is null || !tool.Visible) { continue; }
-
-            if (_definitionByInstance.TryGetValue(tool, out var definition)) {
-                builder.Add(definition);
-            }
-        }
-
-        return builder.Count == 0 ? ImmutableArray<ToolDefinition>.Empty : builder.ToImmutable();
-    }
+    public ImmutableArray<ToolDefinition> VisibleToolDefinitions => _session.GetVisibleToolDefinitions(_registry);
 
     public bool TryGetTool(string name, out ITool tool) {
         if (string.IsNullOrWhiteSpace(name)) {
@@ -67,19 +29,41 @@ public sealed class ToolExecutor {
             return false;
         }
 
-        return _tools.TryGetValue(name, out tool!);
+        if (!_session.ToolAccess.IsExecutable(name)) {
+            tool = null!;
+            return false;
+        }
+
+        if (_registry.TryGet(name, out var registeredTool)) {
+            tool = registeredTool.Tool;
+            return true;
+        }
+
+        tool = null!;
+        return false;
     }
 
     public async ValueTask<ToolCallExecutionResult> ExecuteAsync(
         RawToolCall request,
         CancellationToken cancellationToken
     ) {
-        var executionSequence = Interlocked.Increment(ref _nextExecutionSequence);
-        var toolExecutionRequest = new ToolExecutionRequest(request, executionSequence);
+        var executionSequence = _session.AllocateExecutionSequence();
+        var toolExecutionRequest = new ToolExecutionContext(_session, request, executionSequence);
 
         DebugUtil.Info(DebugCategory, $"[Executor] Dispatch toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
 
-        if (!_tools.TryGetValue(request.ToolName, out var tool)) {
+        if (!_session.ToolAccess.IsExecutable(request.ToolName)) {
+            DebugUtil.Warning(DebugCategory, $"[Executor] Forbidden toolName={request.ToolName} executionSequence={executionSequence}");
+
+            var message = $"当前 session 不允许执行工具: {request.ToolName}";
+            return new ToolCallExecutionResult(
+                new ToolExecuteResult(ToolExecutionStatus.Failed, message),
+                request.ToolName,
+                request.ToolCallId
+            );
+        }
+
+        if (!_registry.TryGet(request.ToolName, out var registeredTool)) {
             DebugUtil.Warning(DebugCategory, $"[Executor] Missing tool toolName={request.ToolName} executionSequence={executionSequence}");
 
             var message = $"未找到工具: {request.ToolName}";
@@ -93,9 +77,8 @@ public sealed class ToolExecutor {
         var stopwatch = Stopwatch.StartNew();
 
         try {
-            var definitionName = _definitionByInstance[tool].Name;
-            var executeResult = await tool.ExecuteAsync(toolExecutionRequest, cancellationToken).ConfigureAwait(false)
-                ?? throw new InvalidOperationException($"Tool '{definitionName}' returned null result.");
+            var executeResult = await registeredTool.Tool.ExecuteAsync(toolExecutionRequest, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"Tool '{registeredTool.Name}' returned null result.");
             stopwatch.Stop();
 
             DebugUtil.Info(

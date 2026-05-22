@@ -4,7 +4,7 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Completion.Tools;
 
 /// <summary>
-/// 把带有 <see cref="ToolAttribute"/> 与 <see cref="ToolParamAttribute"/> 注解的方法包装为 <see cref="ITool"/> 实例。
+/// 把带有 <see cref="ToolAttribute"/> 注解、并采用“单输入对象 + <see cref="ToolExecutionContext"/> + <see cref="CancellationToken"/>”签名的方法包装为 <see cref="ITool"/> 实例。
 /// </summary>
 public sealed partial class MethodToolWrapper : ITool {
 
@@ -18,53 +18,10 @@ public sealed partial class MethodToolWrapper : ITool {
         return FromMethod(singleDelegate.Target, singleDelegate.Method);
     }
 
-    public static MethodToolWrapper FromDelegate(
-        Func<CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate(
-        Func<ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1>(
-        Func<T1, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1>(
-        Func<T1, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2>(
-        Func<T1, T2, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2>(
-        Func<T1, T2, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2, T3>(
-        Func<T1, T2, T3, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2, T3>(
-        Func<T1, T2, T3, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4>(
-        Func<T1, T2, T3, T4, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4>(
-        Func<T1, T2, T3, T4, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4, T5>(
-        Func<T1, T2, T3, T4, T5, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
-
-    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4, T5>(
-        Func<T1, T2, T3, T4, T5, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
-    ) => FromDelegate((Delegate)methodDelegate);
+    public static MethodToolWrapper FromDelegate<TInput>(
+        Func<TInput, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate
+    ) where TInput : class
+        => FromDelegate((Delegate)methodDelegate);
 
     public static MethodToolWrapper FromMethod(object? targetInstance, MethodInfo method) => FromMethodImpl(targetInstance, method);
 

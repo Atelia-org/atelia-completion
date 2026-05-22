@@ -1,3 +1,6 @@
+using System.ComponentModel;
+using System.Linq;
+using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Utils;
 using Xunit;
@@ -6,7 +9,7 @@ namespace Atelia.Completion.Tools.Tests;
 
 public sealed class MethodToolWrapperTests {
     [Fact]
-    public async Task FromMethod_WithToolExecutionContext_InjectsContextAndHidesInfrastructureParametersFromSchema() {
+    public async Task FromMethod_WithDtoInput_InjectsContextAndHidesInfrastructureParametersFromSchema() {
         var target = new MethodToolTarget();
         var wrapper = MethodToolWrapper.FromMethod(
             target,
@@ -17,6 +20,7 @@ public sealed class MethodToolWrapperTests {
         var inputSchema = Assert.IsType<ToolSchema.Object>(definition.InputSchema);
         var visibleProperty = Assert.Single(inputSchema.Properties);
         Assert.Equal("text", visibleProperty.Name);
+        Assert.Equal("Visible text.", visibleProperty.Schema.Description);
 
         var providerSchema = JsonToolSchemaBuilder.BuildSchema(definition);
         var properties = providerSchema.GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray();
@@ -36,13 +40,26 @@ public sealed class MethodToolWrapperTests {
         Assert.Same(context, target.ObservedContext);
     }
 
+    [Fact]
+    public void FromMethod_RequiresSingleInputObjectFollowedByContextAndCancellationToken() {
+        var target = new InvalidMethodToolTarget();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => MethodToolWrapper.FromMethod(
+                target,
+                typeof(InvalidMethodToolTarget).GetMethod(nameof(InvalidMethodToolTarget.ExecuteAsync))!
+            )
+        );
+
+        Assert.Contains("exactly one business input parameter", exception.Message, StringComparison.Ordinal);
+    }
+
     private sealed class MethodToolTarget {
         public ToolExecutionContext? ObservedContext { get; private set; }
 
         [Tool("method.with_context", "Execute a method tool with context.")]
         public ValueTask<ToolExecuteResult> ExecuteAsync(
-            [ToolParam("Visible text.")]
-            string text,
+            ExecuteInput input,
             ToolExecutionContext context,
             CancellationToken cancellationToken
         ) {
@@ -53,7 +70,28 @@ public sealed class MethodToolWrapperTests {
                 ? value as string
                 : null;
 
-            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, $"{text}|{scope}|{context.ExecutionSequence}"));
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, $"{input.Text}|{scope}|{context.ExecutionSequence}"));
         }
     }
+
+    private sealed class InvalidMethodToolTarget {
+        [Tool("method.invalid_signature", "Invalid signature.")]
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            ExecuteInput input,
+            ExecuteInput anotherInput,
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) {
+            _ = context;
+            _ = cancellationToken;
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, input.Text + anotherInput.Text));
+        }
+    }
+
+    [Description("Input for method tool execution.")]
+    private sealed record class ExecuteInput(
+        [property: Description("Visible text.")]
+        [property: JsonPropertyName("text")]
+        string Text
+    );
 }

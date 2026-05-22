@@ -6,6 +6,13 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Completion.Tools;
 
 partial class MethodToolWrapper {
+    private enum InvocationParameterKind {
+        SchemaArgument,
+        ToolExecutionContext
+    }
+
+    private readonly record struct InvocationParameter(InvocationParameterKind Kind, int ArgumentIndex = -1);
+
     internal sealed record ArgGetter(string Name, ParamDefault? DefaultValue) {
         public object? GetValue(IReadOnlyDictionary<string, object?>? arguments) {
             if (arguments is not null && arguments.TryGetValue(Name, out var value)) { return value; }
@@ -19,13 +26,13 @@ partial class MethodToolWrapper {
     private readonly ToolDefinition _definition;
     private readonly ToolSchema.Object _inputSchema;
     private readonly IReadOnlyList<ArgGetter> _argGetters;
-    private readonly Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> _invoker;
+    private readonly Func<object?[], ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> _invoker;
 
     private MethodToolWrapper(
         ToolDefinition definition,
         ToolSchema.Object inputSchema,
         IReadOnlyList<ArgGetter> argGetters,
-        Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> invoker
+        Func<object?[], ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> invoker
     ) {
         _definition = definition ?? throw new ArgumentNullException(nameof(definition));
         _inputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
@@ -35,17 +42,17 @@ partial class MethodToolWrapper {
 
     public bool Visible { get; set; } = true;
 
-    public async ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken) {
-        if (request is null) { throw new ArgumentNullException(nameof(request)); }
+    public async ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken) {
+        if (context is null) { throw new ArgumentNullException(nameof(context)); }
 
-        var rawToolCall = request.RawToolCall;
+        var rawToolCall = context.RawToolCall;
         var parsed = JsonArgumentParser.ParseArguments(_inputSchema, rawToolCall.RawArgumentsJson);
         if (!string.IsNullOrWhiteSpace(parsed.ParseError)) {
             return CreateParseFailureResult(rawToolCall, parsed);
         }
 
         var args = BuildArgs(_argGetters, parsed.Arguments);
-        var result = await _invoker(args, cancellationToken).ConfigureAwait(false)
+        var result = await _invoker(args, context, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Tool '{_definition.Name}' returned null result.");
 
         return AttachParseWarning(result, parsed.ParseWarning);
@@ -75,9 +82,22 @@ partial class MethodToolWrapper {
         var signatureParameters = parameters[..^1];
         var schemaProperties = new List<ToolSchema.Property>(signatureParameters.Length);
         var argGetters = new List<ArgGetter>(signatureParameters.Length);
+        var invocationParameters = new InvocationParameter[signatureParameters.Length];
+        var hasExecutionContextParameter = false;
 
-        foreach (var parameter in signatureParameters) {
+        for (var parameterIndex = 0; parameterIndex < signatureParameters.Length; parameterIndex++) {
+            var parameter = signatureParameters[parameterIndex];
             if (parameter.ParameterType.IsByRef) { throw new NotSupportedException($"Parameter '{parameter.Name}' on method '{method.Name}' cannot be passed by reference."); }
+
+            if (parameter.ParameterType == typeof(ToolExecutionContext)) {
+                if (hasExecutionContextParameter) {
+                    throw new InvalidOperationException($"Method '{method.Name}' can declare ToolExecutionContext at most once.");
+                }
+
+                hasExecutionContextParameter = true;
+                invocationParameters[parameterIndex] = new InvocationParameter(InvocationParameterKind.ToolExecutionContext);
+                continue;
+            }
 
             var parameterAttribute = parameter.GetCustomAttribute<ToolParamAttribute>()
                 ?? throw new InvalidOperationException($"Parameter '{parameter.Name}' on method '{method.Name}' is missing ToolParamAttribute.");
@@ -102,6 +122,7 @@ partial class MethodToolWrapper {
                 )
             );
             argGetters.Add(new ArgGetter(displayName, defaultInfo.DefaultValue));
+            invocationParameters[parameterIndex] = new InvocationParameter(InvocationParameterKind.SchemaArgument, argGetters.Count - 1);
         }
 
         var methodName = toolAttribute.FormatName(formattingArgs);
@@ -109,7 +130,7 @@ partial class MethodToolWrapper {
         var inputSchema = new ToolSchema.Object(schemaProperties);
         var definition = new ToolDefinition(methodName, methodDescription, inputSchema);
 
-        var invoker = CreateInvoker(method, method.IsStatic ? null : targetInstance);
+        var invoker = CreateInvoker(method, method.IsStatic ? null : targetInstance, invocationParameters);
 
         return new MethodToolWrapper(
             definition,
@@ -127,18 +148,31 @@ partial class MethodToolWrapper {
         return args;
     }
 
-    private static Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>> CreateInvoker(MethodInfo method, object? targetInstance) {
+    private static Func<object?[], ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> CreateInvoker(
+        MethodInfo method,
+        object? targetInstance,
+        IReadOnlyList<InvocationParameter> invocationParameters
+    ) {
         var parameters = method.GetParameters();
 
         var argsParameter = Expression.Parameter(typeof(object?[]), "args");
+        var toolExecutionContextParameter = Expression.Parameter(typeof(ToolExecutionContext), "context");
         var cancellationTokenParameter = Expression.Parameter(typeof(CancellationToken), "cancellationToken");
 
         var callArguments = new Expression[parameters.Length];
 
         for (var i = 0; i < parameters.Length - 1; ++i) {
             var parameter = parameters[i];
-            var valueExpression = Expression.ArrayIndex(argsParameter, Expression.Constant(i));
-            callArguments[i] = Expression.Convert(valueExpression, parameter.ParameterType);
+            var invocationParameter = invocationParameters[i];
+
+            callArguments[i] = invocationParameter.Kind switch {
+                InvocationParameterKind.SchemaArgument => Expression.Convert(
+                    Expression.ArrayIndex(argsParameter, Expression.Constant(invocationParameter.ArgumentIndex)),
+                    parameter.ParameterType
+                ),
+                InvocationParameterKind.ToolExecutionContext => Expression.Convert(toolExecutionContextParameter, parameter.ParameterType),
+                _ => throw new InvalidOperationException($"Unsupported invocation parameter kind '{invocationParameter.Kind}'.")
+            };
         }
 
         callArguments[^1] = cancellationTokenParameter;
@@ -151,9 +185,10 @@ partial class MethodToolWrapper {
         var callExpression = Expression.Call(instanceExpression, method, callArguments);
 
         return Expression
-            .Lambda<Func<object?[], CancellationToken, ValueTask<ToolExecuteResult>>>(
+            .Lambda<Func<object?[], ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>>>(
                 callExpression,
                 argsParameter,
+                toolExecutionContextParameter,
                 cancellationTokenParameter
             )
             .Compile();

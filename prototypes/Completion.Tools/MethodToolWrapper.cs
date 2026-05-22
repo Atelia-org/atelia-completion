@@ -24,8 +24,18 @@ public sealed partial class MethodToolWrapper : ITool {
         params object?[] formatArgs
     ) => FromDelegate((Delegate)methodDelegate, formatArgs);
 
+    public static MethodToolWrapper FromDelegate(
+        Func<ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
     public static MethodToolWrapper FromDelegate<T1>(
         Func<T1, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1>(
+        Func<T1, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
         params object?[] formatArgs
     ) => FromDelegate((Delegate)methodDelegate, formatArgs);
 
@@ -34,8 +44,18 @@ public sealed partial class MethodToolWrapper : ITool {
         params object?[] formatArgs
     ) => FromDelegate((Delegate)methodDelegate, formatArgs);
 
+    public static MethodToolWrapper FromDelegate<T1, T2>(
+        Func<T1, T2, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
     public static MethodToolWrapper FromDelegate<T1, T2, T3>(
         Func<T1, T2, T3, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1, T2, T3>(
+        Func<T1, T2, T3, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
         params object?[] formatArgs
     ) => FromDelegate((Delegate)methodDelegate, formatArgs);
 
@@ -44,8 +64,18 @@ public sealed partial class MethodToolWrapper : ITool {
         params object?[] formatArgs
     ) => FromDelegate((Delegate)methodDelegate, formatArgs);
 
+    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4>(
+        Func<T1, T2, T3, T4, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
     public static MethodToolWrapper FromDelegate<T1, T2, T3, T4, T5>(
         Func<T1, T2, T3, T4, T5, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
+        params object?[] formatArgs
+    ) => FromDelegate((Delegate)methodDelegate, formatArgs);
+
+    public static MethodToolWrapper FromDelegate<T1, T2, T3, T4, T5>(
+        Func<T1, T2, T3, T4, T5, ToolExecutionContext, CancellationToken, ValueTask<ToolExecuteResult>> methodDelegate,
         params object?[] formatArgs
     ) => FromDelegate((Delegate)methodDelegate, formatArgs);
 

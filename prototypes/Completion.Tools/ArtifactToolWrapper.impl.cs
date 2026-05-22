@@ -44,10 +44,10 @@ partial class ArtifactToolWrapper<T> {
         return new ArtifactToolWrapper<T>(definition, inputSchema, handler);
     }
 
-    public partial ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionRequest request, CancellationToken cancellationToken) {
-        if (request is null) { throw new ArgumentNullException(nameof(request)); }
+    public partial ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken) {
+        if (context is null) { throw new ArgumentNullException(nameof(context)); }
 
-        var rawToolCall = request.RawToolCall;
+        var rawToolCall = context.RawToolCall;
         var parsed = JsonArgumentParser.ParseArguments(_inputSchema, rawToolCall.RawArgumentsJson);
         if (!string.IsNullOrWhiteSpace(parsed.ParseError)) { return ValueTask.FromResult(CreateParseFailureResult(rawToolCall, parsed)); }
 
@@ -83,8 +83,8 @@ partial class ArtifactToolWrapper<T> {
             );
         }
 
-        var executionSequence = request.ExecutionSequence;
-        var handlerResult = _handler(artifact, executionSequence);
+        var executionSequence = context.ExecutionSequence;
+        var handlerResult = _handler(artifact, context);
 
         var result = handlerResult.IsValid
             ? new ToolExecuteResult(

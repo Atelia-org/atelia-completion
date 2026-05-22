@@ -30,7 +30,6 @@ partial class ArtifactToolWrapper<T> {
         _definition = definition ?? throw new ArgumentNullException(nameof(definition));
         _inputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
         _handler = handler ?? throw new ArgumentNullException(nameof(handler));
-        Visible = true;
     }
 
     private static partial ArtifactToolWrapper<T> Bind(string toolName, ArtifactHandler<T> handler) {

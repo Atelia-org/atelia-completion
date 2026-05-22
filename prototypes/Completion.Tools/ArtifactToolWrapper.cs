@@ -22,8 +22,6 @@ public partial class ArtifactToolWrapper<T> : ITool where T : class {
 
     public ToolDefinition Definition => _definition;
 
-    public bool Visible { get; set; }
-
     public partial ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken);
 }
 

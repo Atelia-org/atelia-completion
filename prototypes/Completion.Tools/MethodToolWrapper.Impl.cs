@@ -40,8 +40,6 @@ partial class MethodToolWrapper {
         _invoker = invoker;
     }
 
-    public bool Visible { get; set; } = true;
-
     public async ValueTask<ToolExecuteResult> ExecuteAsync(ToolExecutionContext context, CancellationToken cancellationToken) {
         if (context is null) { throw new ArgumentNullException(nameof(context)); }
 

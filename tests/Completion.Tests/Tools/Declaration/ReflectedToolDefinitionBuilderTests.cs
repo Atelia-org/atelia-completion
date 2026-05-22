@@ -11,8 +11,8 @@ namespace Atelia.Completion.Tools.Declaration.Tests;
 
 public sealed class ReflectedToolDefinitionBuilderTests {
     [Fact]
-    public void Build_FromAttributedRecordClass_GeneratesNestedToolDefinitionSchema() {
-        var definition = ReflectedToolDefinitionBuilder.Build<SearchDocsRequest>("search_docs");
+    public void BuildDefinitionUsingTypeDescription_FromAttributedRecordClass_GeneratesNestedToolDefinitionSchema() {
+        var definition = ReflectedToolDefinitionBuilder.BuildDefinitionUsingTypeDescription<SearchDocsRequest>("search_docs");
 
         Assert.Equal("search_docs", definition.Name);
         Assert.Equal("Search documentation with structured filters.", definition.Description);
@@ -87,32 +87,46 @@ public sealed class ReflectedToolDefinitionBuilderTests {
     }
 
     [Fact]
-    public void Build_CaseInsensitiveJsonNameCollision_Throws() {
-        var ex = Assert.Throws<InvalidOperationException>(() => ReflectedToolDefinitionBuilder.Build<DuplicateNameRequest>("dup_name"));
+    public void BuildDefinition_UsesExplicitToolDescriptionWithoutProjectingItToRootSchema() {
+        var definition = ReflectedToolDefinitionBuilder.BuildDefinition(
+            "search_docs",
+            "Explicit tool description.",
+            typeof(SearchDocsRequest)
+        );
+
+        Assert.Equal("Explicit tool description.", definition.Description);
+        Assert.Null(Assert.IsType<ToolSchema.Object>(definition.InputSchema).Description);
+    }
+
+    [Fact]
+    public void BuildInputObjectSchema_CaseInsensitiveJsonNameCollision_Throws() {
+        var ex = Assert.Throws<InvalidOperationException>(() => ReflectedToolDefinitionBuilder.BuildInputObjectSchema<DuplicateNameRequest>());
         Assert.Contains("differ only by case", ex.Message);
     }
 
     [Fact]
-    public void Build_CycleReference_Throws() {
-        var ex = Assert.Throws<NotSupportedException>(() => ReflectedToolDefinitionBuilder.Build<CyclicRequest>("cycle"));
+    public void BuildInputObjectSchema_CycleReference_Throws() {
+        var ex = Assert.Throws<NotSupportedException>(() => ReflectedToolDefinitionBuilder.BuildInputObjectSchema<CyclicRequest>());
         Assert.Contains("Cycle detected", ex.Message);
     }
 
     [Fact]
-    public void Build_FlagsEnum_Throws() {
-        var ex = Assert.Throws<NotSupportedException>(() => ReflectedToolDefinitionBuilder.Build<FlagsEnumRequest>("flags_enum"));
+    public void BuildInputObjectSchema_FlagsEnum_Throws() {
+        var ex = Assert.Throws<NotSupportedException>(() => ReflectedToolDefinitionBuilder.BuildInputObjectSchema<FlagsEnumRequest>());
         Assert.Contains("Flags enum", ex.Message);
     }
 
     [Fact]
-    public void Build_UnsupportedJsonIgnoreCondition_Throws() {
-        var ex = Assert.Throws<NotSupportedException>(() => ReflectedToolDefinitionBuilder.Build<ConditionalIgnoreRequest>("conditional_ignore"));
+    public void BuildInputObjectSchema_UnsupportedJsonIgnoreCondition_Throws() {
+        var ex = Assert.Throws<NotSupportedException>(() => ReflectedToolDefinitionBuilder.BuildInputObjectSchema<ConditionalIgnoreRequest>());
         Assert.Contains("JsonIgnoreCondition", ex.Message);
     }
 
     [Fact]
-    public void Build_MissingRootDescription_Throws() {
-        var ex = Assert.Throws<InvalidOperationException>(() => ReflectedToolDefinitionBuilder.Build<MissingRootDescriptionRequest>("missing_description"));
+    public void BuildDefinitionUsingTypeDescription_MissingRootDescription_Throws() {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ReflectedToolDefinitionBuilder.BuildDefinitionUsingTypeDescription<MissingRootDescriptionRequest>("missing_description")
+        );
         Assert.Contains("missing [Description]", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 

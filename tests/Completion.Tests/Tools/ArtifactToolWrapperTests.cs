@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
@@ -40,9 +41,38 @@ public sealed class ArtifactToolWrapperTests {
         Assert.Equal("draft", observedArtifact!.Title);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenObjectGraphValidationFails_DoesNotInvokeArtifactHandler() {
+        var handlerCalled = false;
+        var wrapper = ArtifactToolWrapper<ArtifactEnvelope>.Create(
+            "artifact.validation_failure",
+            (artifact, context) => {
+                _ = artifact;
+                _ = context;
+                handlerCalled = true;
+                return new ValidateResult(true, "should not happen");
+            }
+        );
+
+        var context = new ToolExecutionContext(
+            new ToolSessionState(),
+            new RawToolCall("artifact.validation_failure", "call-3", """{"Title":"a"}"""),
+            executionSequence: 12
+        );
+
+        var result = await wrapper.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.False(handlerCalled);
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        Assert.Contains("工具参数验证失败", result.Content, StringComparison.Ordinal);
+        Assert.Contains("Title", result.Content, StringComparison.Ordinal);
+        Assert.Contains("raw_arguments_json", result.Content, StringComparison.Ordinal);
+    }
+
     [Description("Artifact envelope.")]
     private sealed class ArtifactEnvelope {
         [Description("Artifact title.")]
+        [MinLength(2)]
         public string Title { get; init; } = string.Empty;
     }
 }

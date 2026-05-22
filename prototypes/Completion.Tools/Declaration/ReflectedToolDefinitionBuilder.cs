@@ -11,16 +11,33 @@ namespace Atelia.Completion.Tools.Declaration;
 public static class ReflectedToolDefinitionBuilder {
     private static readonly NullabilityInfoContext NullabilityContext = new();
 
-    public static ToolDefinition Build<TInput>(string toolName)
+    public static ToolDefinition BuildDefinitionUsingTypeDescription<TInput>(string toolName)
         where TInput : class
-        => Build(toolName, typeof(TInput));
+        => BuildDefinitionUsingTypeDescription(toolName, typeof(TInput));
 
-    public static ToolDefinition Build(string toolName, Type inputType) {
+    public static ToolDefinition BuildDefinitionUsingTypeDescription(string toolName, Type inputType) {
         ArgumentNullException.ThrowIfNull(inputType);
 
-        var description = GetRequiredDescription(inputType, "root tool declaration");
-        var schema = BuildRootSchema(inputType, new HashSet<Type>());
-        return new ToolDefinition(toolName, description, schema);
+        var toolDescription = GetRequiredDescription(inputType, "tool definition");
+        return BuildDefinition(toolName, toolDescription, inputType);
+    }
+
+    public static ToolDefinition BuildDefinition<TInput>(string toolName, string toolDescription)
+        where TInput : class
+        => BuildDefinition(toolName, toolDescription, typeof(TInput));
+
+    public static ToolDefinition BuildDefinition(string toolName, string toolDescription, Type inputType) {
+        var inputSchema = BuildInputObjectSchema(inputType);
+        return new ToolDefinition(toolName, toolDescription, inputSchema);
+    }
+
+    public static ToolSchema.Object BuildInputObjectSchema<TInput>()
+        where TInput : class
+        => BuildInputObjectSchema(typeof(TInput));
+
+    public static ToolSchema.Object BuildInputObjectSchema(Type inputType) {
+        ArgumentNullException.ThrowIfNull(inputType);
+        return BuildRootSchema(inputType, new HashSet<Type>());
     }
 
     private static ToolSchema.Object BuildRootSchema(Type type, HashSet<Type> typePath) {

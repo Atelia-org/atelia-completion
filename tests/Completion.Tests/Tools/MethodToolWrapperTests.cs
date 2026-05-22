@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
@@ -54,6 +55,28 @@ public sealed class MethodToolWrapperTests {
         Assert.Contains("exactly one business input parameter", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenObjectGraphValidationFails_DoesNotInvokeMethod() {
+        var target = new ValidatedMethodToolTarget();
+        var wrapper = MethodToolWrapper.FromMethod(
+            target,
+            typeof(ValidatedMethodToolTarget).GetMethod(nameof(ValidatedMethodToolTarget.ExecuteAsync))!
+        );
+
+        var context = new ToolExecutionContext(
+            new ToolSessionState(),
+            new RawToolCall("method.validation_failure", "call-2", """{"text":"a"}"""),
+            executionSequence: 8
+        );
+
+        var result = await wrapper.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.False(target.Invoked);
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        Assert.Contains("工具参数验证失败", result.Content, StringComparison.Ordinal);
+        Assert.Contains("text", result.Content, StringComparison.Ordinal);
+    }
+
     private sealed class MethodToolTarget {
         public ToolExecutionContext? ObservedContext { get; private set; }
 
@@ -88,10 +111,35 @@ public sealed class MethodToolWrapperTests {
         }
     }
 
+    private sealed class ValidatedMethodToolTarget {
+        public bool Invoked { get; private set; }
+
+        [Tool("method.validation_failure", "Validate before invocation.")]
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            ValidatedExecuteInput input,
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) {
+            _ = input;
+            _ = context;
+            _ = cancellationToken;
+            Invoked = true;
+            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "should not happen"));
+        }
+    }
+
     [Description("Input for method tool execution.")]
     private sealed record class ExecuteInput(
         [property: Description("Visible text.")]
         [property: JsonPropertyName("text")]
+        string Text
+    );
+
+    [Description("Validated input for method tool execution.")]
+    private sealed record class ValidatedExecuteInput(
+        [property: Description("Visible text.")]
+        [property: JsonPropertyName("text")]
+        [property: MinLength(2)]
         string Text
     );
 }

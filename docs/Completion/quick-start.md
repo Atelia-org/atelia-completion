@@ -315,11 +315,11 @@ var history = new List<IHistoryMessage> {
     new ToolResultsMessage(
         Content: null,
         Results: new[] {
-            new ToolResult(
-                ToolName: "fs.read",
-                ToolCallId: "call_abc123",                           // 必须与上一步 ActionBlock.ToolCall 的 Id 对齐
-                Status: ToolExecutionStatus.Success,
-                Result: "# README\n..."
+            ToolResult.FromText(
+                toolName: "fs.read",
+                toolCallId: "call_abc123",                          // 必须与上一步 ActionBlock.ToolCall 的 Id 对齐
+                status: ToolExecutionStatus.Success,
+                content: "# README\n..."
             ),
         },
         ExecuteError: null

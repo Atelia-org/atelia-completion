@@ -90,7 +90,7 @@ public sealed class GeminiProjectionRoundTripTests {
                     new ToolResultsMessage(
                         Content: null,
                         Results: [
-                            new ToolResult("get_weather", "call-weather-1", ToolExecutionStatus.Success, """{"tempC":18}""")
+                            ToolResult.FromText("get_weather", "call-weather-1", ToolExecutionStatus.Success, """{"tempC":18}""")
                         ],
                         ExecuteError: null
                     )

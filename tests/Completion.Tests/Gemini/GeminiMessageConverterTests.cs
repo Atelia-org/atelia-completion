@@ -53,7 +53,7 @@ public sealed class GeminiMessageConverterTests {
         var toolResults = new ToolResultsMessage(
             Content: "Observed external state.",
             Results: new[] {
-                new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
             },
             ExecuteError: "runner_failed"
         );
@@ -112,7 +112,7 @@ public sealed class GeminiMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )

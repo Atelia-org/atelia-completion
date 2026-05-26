@@ -55,7 +55,7 @@ public sealed class OpenAIChatProjectionRoundTripTests {
                     new ToolResultsMessage(
                         Content: null,
                         Results: [
-                            new ToolResult("get_date", "call_date_1", ToolExecutionStatus.Success, "2026-04-19")
+                            ToolResult.FromText("get_date", "call_date_1", ToolExecutionStatus.Success, "2026-04-19")
                         ],
                         ExecuteError: null
                     )
@@ -155,7 +155,7 @@ public sealed class OpenAIChatProjectionRoundTripTests {
                     new ToolResultsMessage(
                         Content: null,
                         Results: [
-                            new ToolResult("get_date", "call_date_1", ToolExecutionStatus.Success, "2026-04-19")
+                            ToolResult.FromText("get_date", "call_date_1", ToolExecutionStatus.Success, "2026-04-19")
                         ],
                         ExecuteError: null
                     ),
@@ -270,27 +270,19 @@ public sealed class OpenAIChatProjectionRoundTripTests {
     }
 
     private static bool JsonElementDeepEquals(JsonElement left, JsonElement right) {
-        if (left.ValueKind != right.ValueKind) {
-            return false;
-        }
+        if (left.ValueKind != right.ValueKind) { return false; }
 
         switch (left.ValueKind) {
             case JsonValueKind.Object:
                 var leftProperties = left.EnumerateObject().OrderBy(property => property.Name, StringComparer.Ordinal).ToArray();
                 var rightProperties = right.EnumerateObject().OrderBy(property => property.Name, StringComparer.Ordinal).ToArray();
 
-                if (leftProperties.Length != rightProperties.Length) {
-                    return false;
-                }
+                if (leftProperties.Length != rightProperties.Length) { return false; }
 
                 for (var i = 0; i < leftProperties.Length; i++) {
-                    if (!string.Equals(leftProperties[i].Name, rightProperties[i].Name, StringComparison.Ordinal)) {
-                        return false;
-                    }
+                    if (!string.Equals(leftProperties[i].Name, rightProperties[i].Name, StringComparison.Ordinal)) { return false; }
 
-                    if (!JsonElementDeepEquals(leftProperties[i].Value, rightProperties[i].Value)) {
-                        return false;
-                    }
+                    if (!JsonElementDeepEquals(leftProperties[i].Value, rightProperties[i].Value)) { return false; }
                 }
 
                 return true;
@@ -299,14 +291,10 @@ public sealed class OpenAIChatProjectionRoundTripTests {
                 var leftItems = left.EnumerateArray().ToArray();
                 var rightItems = right.EnumerateArray().ToArray();
 
-                if (leftItems.Length != rightItems.Length) {
-                    return false;
-                }
+                if (leftItems.Length != rightItems.Length) { return false; }
 
                 for (var i = 0; i < leftItems.Length; i++) {
-                    if (!JsonElementDeepEquals(leftItems[i], rightItems[i])) {
-                        return false;
-                    }
+                    if (!JsonElementDeepEquals(leftItems[i], rightItems[i])) { return false; }
                 }
 
                 return true;

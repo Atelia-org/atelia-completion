@@ -27,7 +27,7 @@ public sealed class AnthropicMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )
@@ -72,7 +72,7 @@ public sealed class AnthropicMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("echo", "call-2", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("echo", "call-2", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )
@@ -109,7 +109,7 @@ public sealed class AnthropicMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("echo", "call-3", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("echo", "call-3", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )
@@ -146,7 +146,7 @@ public sealed class AnthropicMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("echo", "call-invalid", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("echo", "call-invalid", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )
@@ -184,7 +184,7 @@ public sealed class AnthropicMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("echo", "call-array", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("echo", "call-array", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )
@@ -213,8 +213,8 @@ public sealed class AnthropicMessageConverterTests {
         var toolResults = new ToolResultsMessage(
             Content: "Observed external state.",
             Results: new[] {
-                new ToolResult("lookup", "call-2", ToolExecutionStatus.Failed, "bad"),
-                new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                ToolResult.FromText("lookup", "call-2", ToolExecutionStatus.Failed, "bad"),
+                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
             },
             ExecuteError: "runner_failed"
         );
@@ -309,7 +309,7 @@ public sealed class AnthropicMessageConverterTests {
         var toolResults = new ToolResultsMessage(
             Content: null,
             Results: new[] {
-                new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
             },
             ExecuteError: null
         );
@@ -397,7 +397,7 @@ public sealed class AnthropicMessageConverterTests {
                 new ToolResultsMessage(
                     Content: "done",
                     Results: new[] {
-                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )

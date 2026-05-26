@@ -99,7 +99,7 @@ internal static class AnthropicMessageConverter {
 
             foreach (var pendingToolCallId in pendingToolCallIds) {
                 if (resultsByCallId.Remove(pendingToolCallId, out var result)) {
-                    blocks.Add(CreateToolResultBlock(pendingToolCallId, result.Result, result.Status != ToolExecutionStatus.Success));
+                    blocks.Add(CreateToolResultBlock(pendingToolCallId, result.GetFlattenedText(), result.Status != ToolExecutionStatus.Success));
                     continue;
                 }
 
@@ -239,9 +239,7 @@ internal static class AnthropicMessageConverter {
 
         try {
             using var document = JsonDocument.Parse(json);
-            if (document.RootElement.ValueKind == JsonValueKind.Object) {
-                return JsonSerializer.SerializeToElement(document.RootElement);
-            }
+            if (document.RootElement.ValueKind == JsonValueKind.Object) { return JsonSerializer.SerializeToElement(document.RootElement); }
 
             DebugUtil.Warning(
                 DebugCategory,

@@ -142,11 +142,11 @@ internal static class OpenAIChatMessageConverter {
     }
 
     private static ToolResult CreateSyntheticFailureResult(PendingToolCall pendingToolCall, string executeError) {
-        return new ToolResult(
-            ToolName: pendingToolCall.ToolName,
-            ToolCallId: pendingToolCall.ToolCallId,
-            Status: ToolExecutionStatus.Failed,
-            Result: executeError
+        return ToolResult.FromText(
+            toolName: pendingToolCall.ToolName,
+            toolCallId: pendingToolCall.ToolCallId,
+            status: ToolExecutionStatus.Failed,
+            content: executeError
         );
     }
 
@@ -180,7 +180,7 @@ internal static class OpenAIChatMessageConverter {
         var payload = new Dictionary<string, object?> {
             ["tool_name"] = result.ToolName,
             ["status"] = result.Status.ToString().ToLowerInvariant(),
-            ["result"] = result.Result
+            ["result"] = result.GetFlattenedText()
         };
 
         return JsonSerializer.Serialize(payload);

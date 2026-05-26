@@ -28,7 +28,7 @@ public sealed class OpenAIChatMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )
@@ -65,8 +65,8 @@ public sealed class OpenAIChatMessageConverterTests {
         var toolResults = new ToolResultsMessage(
             Content: "Observed external state.",
             Results: new[] {
-                new ToolResult("lookup", "call-2", ToolExecutionStatus.Failed, "bad"),
-                new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                ToolResult.FromText("lookup", "call-2", ToolExecutionStatus.Failed, "bad"),
+                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
             },
             ExecuteError: "runner_failed"
         );
@@ -161,7 +161,7 @@ public sealed class OpenAIChatMessageConverterTests {
         var toolResults = new ToolResultsMessage(
             Content: null,
             Results: new[] {
-                new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
             },
             ExecuteError: null
         );
@@ -203,7 +203,7 @@ public sealed class OpenAIChatMessageConverterTests {
                 new ToolResultsMessage(
                     Content: null,
                     Results: new[] {
-                        new ToolResult("search", "call-1", ToolExecutionStatus.Success, "ok")
+                        ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     },
                     ExecuteError: null
                 )

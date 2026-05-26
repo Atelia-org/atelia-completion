@@ -57,9 +57,8 @@ public sealed class ToolExecutor {
 
             var message = $"当前 session 不允许执行工具: {request.ToolName}";
             return new ToolCallExecutionResult(
-                new ToolExecuteResult(ToolExecutionStatus.Failed, message),
-                request.ToolName,
-                request.ToolCallId
+                request,
+                ToolExecuteResult.FromText(ToolExecutionStatus.Failed, message)
             );
         }
 
@@ -68,9 +67,8 @@ public sealed class ToolExecutor {
 
             var message = $"未找到工具: {request.ToolName}";
             return new ToolCallExecutionResult(
-                new ToolExecuteResult(ToolExecutionStatus.Failed, message),
-                request.ToolName,
-                request.ToolCallId
+                request,
+                ToolExecuteResult.FromText(ToolExecutionStatus.Failed, message)
             );
         }
 
@@ -86,16 +84,15 @@ public sealed class ToolExecutor {
                 $"[Executor] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
-            return new ToolCallExecutionResult(executeResult, request.ToolName, request.ToolCallId, stopwatch.Elapsed);
+            return new ToolCallExecutionResult(request, executeResult, stopwatch.Elapsed);
         }
         catch (OperationCanceledException) {
             stopwatch.Stop();
             DebugUtil.Warning(DebugCategory, $"[Executor] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
 
             return new ToolCallExecutionResult(
-                new ToolExecuteResult(ToolExecutionStatus.Skipped, "工具执行被取消"),
-                request.ToolName,
-                request.ToolCallId,
+                request,
+                ToolExecuteResult.FromText(ToolExecutionStatus.Skipped, "工具执行被取消"),
                 stopwatch.Elapsed
             );
         }
@@ -105,9 +102,8 @@ public sealed class ToolExecutor {
 
             var message = $"工具执行异常: {ex.Message}";
             return new ToolCallExecutionResult(
-                new ToolExecuteResult(ToolExecutionStatus.Failed, message),
-                request.ToolName,
-                request.ToolCallId,
+                request,
+                ToolExecuteResult.FromText(ToolExecutionStatus.Failed, message),
                 stopwatch.Elapsed
             );
         }

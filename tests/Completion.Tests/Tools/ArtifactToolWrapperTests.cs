@@ -35,7 +35,8 @@ public sealed class ArtifactToolWrapperTests {
         var result = await wrapper.ExecuteAsync(context, CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, result.Status);
-        Assert.Equal("draft|artifact-scope|11", result.Content);
+        AssertSingleTextBlock(result.Blocks, "draft|artifact-scope|11");
+        Assert.Equal("draft|artifact-scope|11", result.GetFlattenedText());
         Assert.Same(context, observedContext);
         Assert.NotNull(observedArtifact);
         Assert.Equal("draft", observedArtifact!.Title);
@@ -64,9 +65,11 @@ public sealed class ArtifactToolWrapperTests {
 
         Assert.False(handlerCalled);
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
-        Assert.Contains("工具参数验证失败", result.Content, StringComparison.Ordinal);
-        Assert.Contains("Title", result.Content, StringComparison.Ordinal);
-        Assert.Contains("raw_arguments_json", result.Content, StringComparison.Ordinal);
+        var content = result.GetFlattenedText();
+        AssertSingleTextBlock(result.Blocks, content);
+        Assert.Contains("工具参数验证失败", content, StringComparison.Ordinal);
+        Assert.Contains("Title", content, StringComparison.Ordinal);
+        Assert.Contains("raw_arguments_json", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -92,8 +95,10 @@ public sealed class ArtifactToolWrapperTests {
 
         Assert.False(handlerCalled);
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
-        Assert.Contains("工具参数反序列化失败", result.Content, StringComparison.Ordinal);
-        Assert.Contains("raw_arguments_json", result.Content, StringComparison.Ordinal);
+        var content = result.GetFlattenedText();
+        AssertSingleTextBlock(result.Blocks, content);
+        Assert.Contains("工具参数反序列化失败", content, StringComparison.Ordinal);
+        Assert.Contains("raw_arguments_json", content, StringComparison.Ordinal);
     }
 
     [Description("Artifact envelope.")]
@@ -111,5 +116,10 @@ public sealed class ArtifactToolWrapperTests {
 
         [Description("Artifact title.")]
         public string Title { get; } = string.Empty;
+    }
+
+    private static void AssertSingleTextBlock(IReadOnlyList<ToolResultBlock> blocks, string expectedText) {
+        var block = Assert.Single(blocks);
+        Assert.Equal(expectedText, Assert.IsType<ToolResultBlock.Text>(block).Content);
     }
 }

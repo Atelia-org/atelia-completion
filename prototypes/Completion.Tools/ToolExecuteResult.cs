@@ -29,35 +29,56 @@ public sealed record ToolExecutionContext {
 public sealed record ToolExecuteResult {
     public ToolExecuteResult(
         ToolExecutionStatus status,
-        string content
+        IReadOnlyList<ToolResultBlock> blocks
     ) {
+        ArgumentNullException.ThrowIfNull(blocks);
+
         Status = status;
-        Content = content ?? throw new ArgumentNullException(nameof(content));
+        Blocks = Array.AsReadOnly(blocks.ToArray());
     }
 
     public ToolExecutionStatus Status { get; }
 
-    public string Content { get; }
+    public IReadOnlyList<ToolResultBlock> Blocks { get; }
+
+    public string GetFlattenedText() => string.Concat(
+        Blocks.OfType<ToolResultBlock.Text>().Select(static block => block.Content)
+    );
+
+    public static ToolExecuteResult FromText(
+        ToolExecutionStatus status,
+        string content
+    ) => new(
+        status,
+        new ToolResultBlock[] { new ToolResultBlock.Text(content ?? throw new ArgumentNullException(nameof(content))) }
+    );
 }
 
 public sealed record ToolCallExecutionResult {
     public ToolCallExecutionResult(
+        RawToolCall rawToolCall,
         ToolExecuteResult executeResult,
-        string toolName,
-        string toolCallId,
         TimeSpan elapsed = default
     ) {
+        RawToolCall = rawToolCall ?? throw new ArgumentNullException(nameof(rawToolCall));
         ExecuteResult = executeResult ?? throw new ArgumentNullException(nameof(executeResult));
-        ToolName = toolName ?? throw new ArgumentNullException(nameof(toolName));
-        ToolCallId = toolCallId ?? throw new ArgumentNullException(nameof(toolCallId));
         Elapsed = elapsed;
     }
 
+    public RawToolCall RawToolCall { get; init; }
+
     public ToolExecuteResult ExecuteResult { get; init; }
 
-    public string ToolName { get; init; }
+    public string ToolName => RawToolCall.ToolName;
 
-    public string ToolCallId { get; init; }
+    public string ToolCallId => RawToolCall.ToolCallId;
 
     public TimeSpan? Elapsed { get; init; }
+
+    public ToolResult ToToolResult() => new(
+        ToolName,
+        ToolCallId,
+        ExecuteResult.Status,
+        ExecuteResult.Blocks
+    );
 }

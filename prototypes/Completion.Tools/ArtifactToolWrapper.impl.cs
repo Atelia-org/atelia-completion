@@ -31,13 +31,13 @@ partial class ArtifactToolWrapper<T> {
                 var executionSequence = context.ExecutionSequence;
                 var handlerResult = handler(artifact, context);
                 var result = handlerResult.IsValid
-                    ? new ToolExecuteResult(
+                    ? ToolExecuteResult.FromText(
                         ToolExecutionStatus.Success,
                         string.IsNullOrWhiteSpace(handlerResult.message)
                             ? $"产物已接收。sequence={executionSequence}"
                             : handlerResult.message
                     )
-                    : new ToolExecuteResult(
+                    : ToolExecuteResult.FromText(
                         ToolExecutionStatus.Failed,
                         string.IsNullOrWhiteSpace(handlerResult.message)
                             ? "产物校验失败。"

@@ -37,7 +37,8 @@ public sealed class MethodToolWrapperTests {
         var result = await wrapper.ExecuteAsync(context, CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, result.Status);
-        Assert.Equal("hello|session-scope|7", result.Content);
+        AssertSingleTextBlock(result.Blocks, "hello|session-scope|7");
+        Assert.Equal("hello|session-scope|7", result.GetFlattenedText());
         Assert.Same(context, target.ObservedContext);
     }
 
@@ -90,9 +91,11 @@ public sealed class MethodToolWrapperTests {
 
         Assert.False(target.Invoked);
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
-        Assert.Contains("工具参数解析失败", result.Content, StringComparison.Ordinal);
-        Assert.Contains("unknown_property", result.Content, StringComparison.Ordinal);
-        Assert.Contains("raw_arguments_json", result.Content, StringComparison.Ordinal);
+        var content = result.GetFlattenedText();
+        AssertSingleTextBlock(result.Blocks, content);
+        Assert.Contains("工具参数解析失败", content, StringComparison.Ordinal);
+        Assert.Contains("unknown_property", content, StringComparison.Ordinal);
+        Assert.Contains("raw_arguments_json", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -113,8 +116,10 @@ public sealed class MethodToolWrapperTests {
 
         Assert.False(target.Invoked);
         Assert.Equal(ToolExecutionStatus.Failed, result.Status);
-        Assert.Contains("工具参数验证失败", result.Content, StringComparison.Ordinal);
-        Assert.Contains("text", result.Content, StringComparison.Ordinal);
+        var content = result.GetFlattenedText();
+        AssertSingleTextBlock(result.Blocks, content);
+        Assert.Contains("工具参数验证失败", content, StringComparison.Ordinal);
+        Assert.Contains("text", content, StringComparison.Ordinal);
     }
 
     private sealed class MethodToolTarget {
@@ -133,7 +138,7 @@ public sealed class MethodToolWrapperTests {
                 ? value as string
                 : null;
 
-            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, $"{input.Text}|{scope}|{context.ExecutionSequence}"));
+            return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, $"{input.Text}|{scope}|{context.ExecutionSequence}"));
         }
     }
 
@@ -147,7 +152,7 @@ public sealed class MethodToolWrapperTests {
             _ = input;
             _ = context;
             _ = cancellationToken;
-            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "unused"));
+            return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused"));
         }
     }
 
@@ -161,7 +166,7 @@ public sealed class MethodToolWrapperTests {
         ) {
             _ = context;
             _ = cancellationToken;
-            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, input.Text + anotherInput.Text));
+            return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, input.Text + anotherInput.Text));
         }
     }
 
@@ -178,7 +183,7 @@ public sealed class MethodToolWrapperTests {
             _ = context;
             _ = cancellationToken;
             Invoked = true;
-            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "should not happen"));
+            return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, "should not happen"));
         }
     }
 
@@ -195,7 +200,7 @@ public sealed class MethodToolWrapperTests {
             _ = context;
             _ = cancellationToken;
             Invoked = true;
-            return ValueTask.FromResult(new ToolExecuteResult(ToolExecutionStatus.Success, "should not happen"));
+            return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, "should not happen"));
         }
     }
 
@@ -220,4 +225,9 @@ public sealed class MethodToolWrapperTests {
         [property: MinLength(2)]
         string Text
     );
+
+    private static void AssertSingleTextBlock(IReadOnlyList<ToolResultBlock> blocks, string expectedText) {
+        var block = Assert.Single(blocks);
+        Assert.Equal(expectedText, Assert.IsType<ToolResultBlock.Text>(block).Content);
+    }
 }

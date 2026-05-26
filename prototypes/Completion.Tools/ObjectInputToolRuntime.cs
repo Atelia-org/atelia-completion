@@ -85,7 +85,7 @@ internal static class ObjectInputToolRuntime {
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException) {
             return AttachParseWarning(
-                new ToolExecuteResult(
+                ToolExecuteResult.FromText(
                     ToolExecutionStatus.Failed,
                     BuildDeserializeFailureContent(normalizedRawArguments, ex.Message)
                 ),
@@ -96,7 +96,7 @@ internal static class ObjectInputToolRuntime {
         var validationErrors = ValidateObjectGraph(input);
         if (validationErrors.Count > 0) {
             return AttachParseWarning(
-                new ToolExecuteResult(
+                ToolExecuteResult.FromText(
                     ToolExecutionStatus.Failed,
                     BuildAnnotationFailureContent(rawToolCall, validationErrors)
                 ),
@@ -196,7 +196,7 @@ internal static class ObjectInputToolRuntime {
             content = string.Concat(content, "\nraw_arguments_json: ", request.RawArgumentsJson);
         }
 
-        return new ToolExecuteResult(ToolExecutionStatus.Failed, content);
+        return ToolExecuteResult.FromText(ToolExecutionStatus.Failed, content);
     }
 
     private static string BuildDeserializeFailureContent(string rawArgumentsJson, string errorMessage)
@@ -215,7 +215,9 @@ internal static class ObjectInputToolRuntime {
     private static ToolExecuteResult AttachParseWarning(ToolExecuteResult result, string? parseWarning) {
         if (string.IsNullOrWhiteSpace(parseWarning)) { return result; }
 
-        var mergedContent = string.Concat(result.Content, "\n[ParseWarning] ", parseWarning);
-        return new ToolExecuteResult(result.Status, mergedContent);
+        var blocks = result.Blocks
+            .Concat(new ToolResultBlock[] { new ToolResultBlock.Text(string.Concat("\n[ParseWarning] ", parseWarning)) })
+            .ToArray();
+        return new ToolExecuteResult(result.Status, blocks);
     }
 }

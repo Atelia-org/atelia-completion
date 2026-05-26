@@ -32,9 +32,10 @@ public sealed class ToolExecutorTests {
         var second = await executor.ExecuteAsync(new RawToolCall("alpha", "call-2", "{}"), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, first.ExecuteResult.Status);
-        Assert.Equal("sequence=1 scope=session-scope", first.ExecuteResult.Content);
+        AssertSingleTextBlock(first.ExecuteResult.Blocks, "sequence=1 scope=session-scope");
+        Assert.Equal("sequence=1 scope=session-scope", first.ExecuteResult.GetFlattenedText());
         Assert.Equal(ToolExecutionStatus.Success, second.ExecuteResult.Status);
-        Assert.Equal("sequence=2 scope=session-scope", second.ExecuteResult.Content);
+        AssertSingleTextBlock(second.ExecuteResult.Blocks, "sequence=2 scope=session-scope");
         Assert.NotNull(tool.LastContext);
         Assert.Equal(2, tool.LastContext!.ExecutionSequence);
         Assert.Equal("session-scope", tool.LastContext.Items!["scope"]);
@@ -49,7 +50,25 @@ public sealed class ToolExecutorTests {
         var result = await executor.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.ExecuteResult.Status);
-        Assert.Contains("不允许执行工具", result.ExecuteResult.Content);
+        var block = Assert.Single(result.ExecuteResult.Blocks);
+        Assert.Contains("不允许执行工具", Assert.IsType<ToolResultBlock.Text>(block).Content);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CanBridgeLosslesslyToToolResult() {
+        var tool = new RecordingTool("alpha");
+        var registry = new ToolRegistry(new ITool[] { tool });
+        var executor = new ToolExecutor(registry, new ToolSessionState());
+        var rawToolCall = new RawToolCall("alpha", "call-1", "{}");
+
+        var result = await executor.ExecuteAsync(rawToolCall, CancellationToken.None);
+        var bridged = result.ToToolResult();
+
+        Assert.Same(rawToolCall, result.RawToolCall);
+        Assert.Equal("alpha", bridged.ToolName);
+        Assert.Equal("call-1", bridged.ToolCallId);
+        Assert.Equal(ToolExecutionStatus.Success, bridged.Status);
+        AssertSingleTextBlock(bridged.Blocks, "sequence=1 scope=");
     }
 
     [Fact]
@@ -62,6 +81,19 @@ public sealed class ToolExecutorTests {
         Assert.Same(session, context.Session);
         Assert.Same(services, context.Services);
         Assert.Same(items, context.Items);
+    }
+
+    [Fact]
+    public void ToolExecuteResult_Constructor_CopiesIncomingBlocks() {
+        var sourceBlocks = new List<ToolResultBlock> {
+            new ToolResultBlock.Text("alpha")
+        };
+
+        var result = new ToolExecuteResult(ToolExecutionStatus.Success, sourceBlocks);
+
+        sourceBlocks.Add(new ToolResultBlock.Text("omega"));
+
+        AssertSingleTextBlock(result.Blocks, "alpha");
     }
 
     private sealed class RecordingTool : ITool {
@@ -86,12 +118,17 @@ public sealed class ToolExecutorTests {
                 : null;
 
             return ValueTask.FromResult(
-                new ToolExecuteResult(
+                ToolExecuteResult.FromText(
                     ToolExecutionStatus.Success,
                     $"sequence={context.ExecutionSequence} scope={scope}"
                 )
             );
         }
+    }
+
+    private static void AssertSingleTextBlock(IReadOnlyList<ToolResultBlock> blocks, string expectedText) {
+        var block = Assert.Single(blocks);
+        Assert.Equal(expectedText, Assert.IsType<ToolResultBlock.Text>(block).Content);
     }
 
     private sealed class ServiceCollectionStub : IServiceProvider {

@@ -26,4 +26,16 @@ public sealed class ToolResultTests {
             () => new ToolResult("search", "call-1", ToolExecutionStatus.Success, null!)
         );
     }
+
+    [Fact]
+    public void FromText_CreatesSingleTextBlock_AndFlattenedTextMatches() {
+        var result = ToolResult.FromText("search", "call-1", ToolExecutionStatus.Failed, "bad");
+
+        Assert.Equal("search", result.ToolName);
+        Assert.Equal("call-1", result.ToolCallId);
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        var block = Assert.Single(result.Blocks);
+        Assert.Equal("bad", Assert.IsType<ToolResultBlock.Text>(block).Content);
+        Assert.Equal("bad", result.GetFlattenedText());
+    }
 }

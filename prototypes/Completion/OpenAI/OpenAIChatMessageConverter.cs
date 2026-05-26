@@ -86,8 +86,6 @@ internal static class OpenAIChatMessageConverter {
         List<OpenAIChatMessage> messages,
         ProjectionState state
     ) {
-        var consumedExecuteErrorBySyntheticToolMessages = false;
-
         if (state.PendingToolCalls.Count > 0) {
             var resultsByCallId = CreateResultLookup(toolResults.Results);
 
@@ -97,14 +95,9 @@ internal static class OpenAIChatMessageConverter {
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
-                    throw new InvalidOperationException(
-                        $"Tool results are missing for pending tool_call_id='{pendingToolCall.ToolCallId}' and no execute_error was provided."
-                    );
-                }
-
-                consumedExecuteErrorBySyntheticToolMessages = true;
-                messages.Add(CreateToolResultMessage(CreateSyntheticFailureResult(pendingToolCall, toolResults.ExecuteError)));
+                throw new InvalidOperationException(
+                    $"Tool results are missing for pending tool_call_id='{pendingToolCall.ToolCallId}'. ToolResultsMessage.Results must align 1:1 with the pending assistant tool_calls."
+                );
             }
 
             if (resultsByCallId.Count > 0) {
@@ -118,7 +111,7 @@ internal static class OpenAIChatMessageConverter {
         }
         else if (toolResults.Results.Count > 0) { throw new InvalidOperationException("Tool results appeared without a preceding assistant tool_calls message."); }
 
-        AppendTrailingObservation(toolResults, messages, includeExecuteError: !consumedExecuteErrorBySyntheticToolMessages);
+        AppendTrailingObservation(toolResults, messages);
     }
 
     private static Dictionary<string, ToolResult> CreateResultLookup(IReadOnlyList<ToolResult> results) {
@@ -141,29 +134,11 @@ internal static class OpenAIChatMessageConverter {
         };
     }
 
-    private static ToolResult CreateSyntheticFailureResult(PendingToolCall pendingToolCall, string executeError) {
-        return ToolResult.FromText(
-            toolName: pendingToolCall.ToolName,
-            toolCallId: pendingToolCall.ToolCallId,
-            status: ToolExecutionStatus.Failed,
-            content: executeError
-        );
-    }
-
-    private static void AppendTrailingObservation(
-        ToolResultsMessage toolResults,
-        List<OpenAIChatMessage> messages,
-        bool includeExecuteError
-    ) {
+    private static void AppendTrailingObservation(ToolResultsMessage toolResults, List<OpenAIChatMessage> messages) {
         List<string>? trailingObservationParts = null;
 
         if (!string.IsNullOrWhiteSpace(toolResults.Content)) {
-            trailingObservationParts = new List<string>(capacity: 2) { toolResults.Content };
-        }
-
-        if (includeExecuteError && !string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
-            trailingObservationParts ??= new List<string>(capacity: 1);
-            trailingObservationParts.Add($"[Execution Error]: {toolResults.ExecuteError}");
+            trailingObservationParts = new List<string>(capacity: 1) { toolResults.Content };
         }
 
         if (trailingObservationParts is { Count: > 0 }) {

@@ -32,6 +32,9 @@ public sealed record ToolExecuteResult {
         IReadOnlyList<ToolResultBlock> blocks
     ) {
         ArgumentNullException.ThrowIfNull(blocks);
+        if (blocks.Any(static block => block is null)) {
+            throw new ArgumentException("Tool execution result blocks cannot contain null elements.", nameof(blocks));
+        }
 
         Status = status;
         Blocks = Array.AsReadOnly(blocks.ToArray());

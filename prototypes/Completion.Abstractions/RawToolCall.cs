@@ -53,6 +53,9 @@ public sealed record ToolResult {
         ArgumentNullException.ThrowIfNull(toolName);
         ArgumentNullException.ThrowIfNull(toolCallId);
         ArgumentNullException.ThrowIfNull(blocks);
+        if (blocks.Any(static block => block is null)) {
+            throw new ArgumentException("Tool result blocks cannot contain null elements.", nameof(blocks));
+        }
 
         ToolName = toolName;
         ToolCallId = toolCallId;

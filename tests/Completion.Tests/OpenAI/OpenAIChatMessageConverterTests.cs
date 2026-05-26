@@ -26,11 +26,10 @@ public sealed class OpenAIChatMessageConverterTests {
             Context: new IHistoryMessage[] {
                 actionMessage,
                 new ToolResultsMessage(
-                    Content: null,
-                    Results: new[] {
+                    content: null,
+                    results: new[] {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty
@@ -63,12 +62,19 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var toolResults = new ToolResultsMessage(
-            Content: "Observed external state.",
-            Results: new[] {
+            content: "Observed external state.",
+            results: new[] {
                 ToolResult.FromText("lookup", "call-2", ToolExecutionStatus.Failed, "bad"),
-                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-            },
-            ExecuteError: "runner_failed"
+                new ToolResult(
+                    "search",
+                    "call-1",
+                    ToolExecutionStatus.Success,
+                    new ToolResultBlock[] {
+                        new ToolResultBlock.Text("alpha"),
+                        new ToolResultBlock.Text("omega")
+                    }
+                )
+            }
         );
 
         var request = new CompletionRequest(
@@ -92,7 +98,7 @@ public sealed class OpenAIChatMessageConverterTests {
                 Assert.Equal("call-1", message.ToolCallId);
                 using var document = JsonDocument.Parse(message.Content!);
                 Assert.Equal("success", document.RootElement.GetProperty("status").GetString());
-                Assert.Equal("ok", document.RootElement.GetProperty("result").GetString());
+                Assert.Equal("alphaomega", document.RootElement.GetProperty("result").GetString());
             },
             message => {
                 Assert.Equal("tool", message.Role);
@@ -103,13 +109,13 @@ public sealed class OpenAIChatMessageConverterTests {
             },
             message => {
                 Assert.Equal("user", message.Role);
-                Assert.Equal("Observed external state.\n[Execution Error]: runner_failed", message.Content);
+                Assert.Equal("Observed external state.", message.Content);
             }
         );
     }
 
     [Fact]
-    public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
+    public void ConvertToApiRequest_MissingPendingToolResultsThrow() {
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
                 new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")),
@@ -118,9 +124,10 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var toolResults = new ToolResultsMessage(
-            Content: "Observed external state.",
-            Results: Array.Empty<ToolResult>(),
-            ExecuteError: "runner_failed"
+            content: "Observed external state.",
+            results: new[] {
+                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
+            }
         );
 
         var request = new CompletionRequest(
@@ -130,40 +137,21 @@ public sealed class OpenAIChatMessageConverterTests {
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
-        var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.Strict);
-
-        Assert.Collection(
-            apiRequest.Messages,
-            message => Assert.Equal("assistant", message.Role),
-            message => {
-                Assert.Equal("tool", message.Role);
-                Assert.Equal("call-1", message.ToolCallId);
-                using var document = JsonDocument.Parse(message.Content!);
-                Assert.Equal("failed", document.RootElement.GetProperty("status").GetString());
-                Assert.Equal("runner_failed", document.RootElement.GetProperty("result").GetString());
-            },
-            message => {
-                Assert.Equal("tool", message.Role);
-                Assert.Equal("call-2", message.ToolCallId);
-                using var document = JsonDocument.Parse(message.Content!);
-                Assert.Equal("failed", document.RootElement.GetProperty("status").GetString());
-                Assert.Equal("runner_failed", document.RootElement.GetProperty("result").GetString());
-            },
-            message => {
-                Assert.Equal("user", message.Role);
-                Assert.Equal("Observed external state.", message.Content);
-            }
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.Strict)
         );
+
+        Assert.Contains("call-2", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("align 1:1", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void ConvertToApiRequest_OrphanToolResultsThrow() {
         var toolResults = new ToolResultsMessage(
-            Content: null,
-            Results: new[] {
+            content: null,
+            results: new[] {
                 ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-            },
-            ExecuteError: null
+            }
         );
 
         var request = new CompletionRequest(
@@ -201,11 +189,10 @@ public sealed class OpenAIChatMessageConverterTests {
             Context: new IHistoryMessage[] {
                 actionMessage,
                 new ToolResultsMessage(
-                    Content: null,
-                    Results: new[] {
+                    content: null,
+                    results: new[] {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty

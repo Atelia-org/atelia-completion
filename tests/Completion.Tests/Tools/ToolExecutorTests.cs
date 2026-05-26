@@ -96,6 +96,17 @@ public sealed class ToolExecutorTests {
         AssertSingleTextBlock(result.Blocks, "alpha");
     }
 
+    [Fact]
+    public void ToolExecuteResult_Constructor_RejectsNullBlockElement() {
+        var blocks = new ToolResultBlock[] { null! };
+
+        var exception = Assert.Throws<ArgumentException>(
+            () => new ToolExecuteResult(ToolExecutionStatus.Success, blocks)
+        );
+
+        Assert.Contains("cannot contain null elements", exception.Message, StringComparison.Ordinal);
+    }
+
     private sealed class RecordingTool : ITool {
         public RecordingTool(string name) {
             Definition = new ToolDefinition(

@@ -292,7 +292,7 @@ public sealed record CompletionRequest(
 |---|---|---|
 | 用户输入 / 系统通知 / 环境观测 | `new ObservationMessage(string? content)` | 统一文本字段 |
 | LLM 上一次输出（要回灌） | `CompletionResult.Message`（取聚合结果的 `ActionMessage` 字段，详见 §4.2） | 纯 `ActionMessage` 实现 `IHistoryMessage`，可塞回 `Context` |
-| 工具执行结果（要回灌） | `new ToolResultsMessage(content, results, executeError)` | `results: IReadOnlyList<ToolResult>`，每条带 `ToolCallId` |
+| 工具执行结果（要回灌） | `new ToolResultsMessage(content, results)` | `results: IReadOnlyList<ToolResult>`，且必须与 pending tool call 按 `ToolCallId` 一一对齐 |
 
 **`ActionMessage` 的归属**：`ActionBlock` sum type、`CompletionDescriptor`、`ActionMessage` 都在 **Abstractions** 层。多轮回灌的标准写法：取 `CompletionResult.Message` 即可——它是 `ActionMessage`（实现 `IHistoryMessage`），可直接 `history.Add(result.Message)`（见 §4.2）。
 
@@ -313,22 +313,21 @@ var history = new List<IHistoryMessage> {
     new ObservationMessage("帮我读一下 README。"),                  // Turn 1 input
     previousAction,                                                  // Turn 1 LLM 输出（ActionMessage）
     new ToolResultsMessage(
-        Content: null,
-        Results: new[] {
+        content: null,
+        results: new[] {
             ToolResult.FromText(
                 toolName: "fs.read",
                 toolCallId: "call_abc123",                          // 必须与上一步 ActionBlock.ToolCall 的 Id 对齐
                 status: ToolExecutionStatus.Success,
                 content: "# README\n..."
             ),
-        },
-        ExecuteError: null
+        }
     ),
     // Turn 2 input（如有）
 };
 ```
 
-⚠️ **`ToolCallId` 对齐是硬约束**。OpenAI converter 在 **构造请求阶段** 就严格校验 `assistant.tool_calls -> tool` 相邻关系：缺失 id 且无 `ExecuteError` 会抛 `InvalidOperationException`（**不会** 走到 HTTP，所以不是 400）。如果工具失败但你希望继续，把 `ToolResultsMessage.ExecuteError` 填上，OpenAI converter 会用 pending id 合成失败 `tool` 消息保协议合法。
+⚠️ **`ToolCallId` 对齐是硬约束**。三个 provider converter 在 **构造请求阶段** 都会严格校验 pending tool call 与 `ToolResultsMessage.Results` 的 1:1 对齐关系：缺失、重复、错位都会直接抛 `InvalidOperationException`（**不会** 走到 HTTP，所以不是 400）。如果工具失败但你希望继续，请照常回灌该工具自己的 `ToolResult`，并把失败语义放进 `ToolResult.Status` 与 `ToolResult.Blocks`，而不是依赖旁路字段。
 
 ### 3.2 `Tools`：声明工具签名
 
@@ -622,7 +621,7 @@ Gemini 的特殊点不是构造方式，而是历史回灌：
 | `HttpRequestException: Connection refused` | sglang 没启动 / 端口不对 | 检查服务进程与端口 |
 | 404 | `HttpClient.BaseAddress` 路径错 / 手写时漏 `/` / 服务未暴露该 API | 核对 §5.3 |
 | 400 且模型名不存在 | `ModelId` 与本地加载模型不一致 | 用 sglang 的 `/v1/models` 端点确认 |
-| `InvalidOperationException` 提到 tool_call_id | 历史里 `ToolResult.ToolCallId` 与上一个 `ActionBlock.ToolCall` 错位 / 缺失 | 对齐 id；失败工具用 `ExecuteError` 让 converter 合成 |
+| `InvalidOperationException` 提到 tool_call_id | 历史里 `ToolResult.ToolCallId` 与上一个 `ActionBlock.ToolCall` 错位 / 缺失 / 数量不一致 | 对齐 id，并为每个 pending tool call 都回灌一条 `ToolResult` |
 | `InvalidOperationException` 提到 first message must be user (Anthropic) | Context 第一条不是 `ObservationMessage`（或空白被跳过后变成第一条不是 user） | 调整历史；Anthropic 协议强制首条 user |
 | `ArgumentException: Default value ... isNullable` | `ToolSchema.Value` 构造时 default+nullable 组合非法 | 见 §3.2 |
 

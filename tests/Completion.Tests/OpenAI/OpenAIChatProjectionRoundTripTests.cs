@@ -53,11 +53,18 @@ public sealed class OpenAIChatProjectionRoundTripTests {
                 Context: [
                     parsed,
                     new ToolResultsMessage(
-                        Content: null,
-                        Results: [
-                            ToolResult.FromText("get_date", "call_date_1", ToolExecutionStatus.Success, "2026-04-19")
-                        ],
-                        ExecuteError: null
+                        content: null,
+                        results: [
+                            new ToolResult(
+                                "get_date",
+                                "call_date_1",
+                                ToolExecutionStatus.Success,
+                                [
+                                    new ToolResultBlock.Text("2026-"),
+                                    new ToolResultBlock.Text("04-19")
+                                ]
+                            )
+                        ]
                     )
                 ],
                 Tools: WeatherTools
@@ -74,6 +81,10 @@ public sealed class OpenAIChatProjectionRoundTripTests {
         Assert.Equal("call_date_1", toolCall.Id);
         Assert.Equal("get_date", toolCall.Function.Name);
         AssertJsonSemanticallyEqual("{}", toolCall.Function.Arguments);
+
+        var toolMessage = apiRequest.Messages[1];
+        using var toolResultDocument = JsonDocument.Parse(toolMessage.Content!);
+        Assert.Equal("2026-04-19", toolResultDocument.RootElement.GetProperty("result").GetString());
     }
 
     [Fact]
@@ -153,11 +164,10 @@ public sealed class OpenAIChatProjectionRoundTripTests {
                     new ObservationMessage("How's the weather in Hangzhou tomorrow?"),
                     toolTurn,
                     new ToolResultsMessage(
-                        Content: null,
-                        Results: [
+                        content: null,
+                        results: [
                             ToolResult.FromText("get_date", "call_date_1", ToolExecutionStatus.Success, "2026-04-19")
-                        ],
-                        ExecuteError: null
+                        ]
                     ),
                     finalAnswerTurn,
                     new ObservationMessage("What about Guangzhou tomorrow?")

@@ -55,6 +55,14 @@ internal abstract class AnthropicContentBlock {
 }
 
 /// <summary>
+/// Anthropic tool_result.content 内的内容块基类（当前仅支持 text）。
+/// </summary>
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(AnthropicToolResultTextContentBlock), "text")]
+internal abstract class AnthropicToolResultContentBlock {
+}
+
+/// <summary>
 /// 文本内容块。
 /// </summary>
 internal sealed class AnthropicTextBlock : AnthropicContentBlock {
@@ -95,10 +103,18 @@ internal sealed class AnthropicToolResultBlock : AnthropicContentBlock {
     public required string ToolUseId { get; set; }
 
     [JsonPropertyName("content")]
-    public required string Content { get; set; }
+    public required List<AnthropicToolResultContentBlock> Content { get; set; }
 
     [JsonPropertyName("is_error")]
     public bool? IsError { get; set; }
+}
+
+/// <summary>
+/// Anthropic tool_result.content 中的文本内容块。
+/// </summary>
+internal sealed class AnthropicToolResultTextContentBlock : AnthropicToolResultContentBlock {
+    [JsonPropertyName("text")]
+    public required string Text { get; set; }
 }
 
 /// <summary>

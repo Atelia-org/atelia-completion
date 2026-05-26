@@ -236,7 +236,7 @@ prototypes/Completion.Tools/
 - 目前已有 Anthropic Messages、OpenAI Chat Completions 与 Google Gemini generateContent 三套原生实现
 - OpenAI 侧只覆盖 chat/completions，不含 Responses API
 - 对于更广义的 OpenAI-compatible 服务，`finish_reason` 与 tool call 片段顺序仍可能存在方言差异
-- 请求侧会严格校验 `assistant.tool_calls -> tool` 的相邻关系；若 `ToolResultsMessage` 缺少部分结果但提供了 `ExecuteError`，OpenAI converter 会按 pending `tool_call_id` 合成失败 `tool` 消息以维持协议合法性
+- 请求侧会严格校验 `assistant.tool_calls -> tool` 的相邻关系；`ToolResultsMessage.Results` 必须与 pending `tool_call_id` / `tool_use_id` / Gemini functionCall id 1:1 对齐，缺失或错位都会在投影阶段直接失败
 - 当前只把已确认的高价值差异收敛进 `OpenAIChatDialect`，不做全量 profile 系统
 
 ### 工具参数表达力有限

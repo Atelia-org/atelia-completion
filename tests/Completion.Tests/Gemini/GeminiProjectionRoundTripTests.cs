@@ -88,11 +88,18 @@ public sealed class GeminiProjectionRoundTripTests {
                     new ObservationMessage("What's the weather in Paris tomorrow?"),
                     parsed,
                     new ToolResultsMessage(
-                        Content: null,
-                        Results: [
-                            ToolResult.FromText("get_weather", "call-weather-1", ToolExecutionStatus.Success, """{"tempC":18}""")
-                        ],
-                        ExecuteError: null
+                        content: null,
+                        results: [
+                            new ToolResult(
+                                "get_weather",
+                                "call-weather-1",
+                                ToolExecutionStatus.Success,
+                                [
+                                    new ToolResultBlock.Text("""{"tempC":"""),
+                                    new ToolResultBlock.Text("""18}""")
+                                ]
+                            )
+                        ]
                     )
                 ],
                 Tools: WeatherTools
@@ -123,6 +130,11 @@ public sealed class GeminiProjectionRoundTripTests {
                 Assert.True(
                     functionResponsePart.TryGetProperty("functionResponse", out _),
                     "Gemini tool continuation should project ToolResultsMessage as a user functionResponse part."
+                );
+                var functionResponse = functionResponsePart.GetProperty("functionResponse");
+                Assert.Equal(
+                    """{"tempC":18}""",
+                    functionResponse.GetProperty("response").GetProperty("result").GetString()
                 );
             }
         );

@@ -83,14 +83,23 @@ public record class ObservationMessage(
 /// <summary>
 /// 在基础观测之上增加了工具执行结果。此消息兼容聊天（Chat）范式中的 "tool" 角色，同时在强化学习（RL）语境下仍被视为环境反馈的一部分。
 /// </summary>
-/// <param name="Content">与工具执行相关的观测文本内容。</param>
-/// <param name="Results">工具执行产生的结构化结果列表。</param>
-/// <param name="ExecuteError">若工具执行失败，此字段用于承载相关的错误信息。</param>
-public record ToolResultsMessage(
-    string? Content,
-    IReadOnlyList<ToolResult> Results,
-    string? ExecuteError
-) : ObservationMessage(Content) {
+/// <param name="content">与工具执行相关的观测文本内容。</param>
+/// <param name="results">工具执行产生的结构化结果列表；构造时冻结为只读快照。</param>
+public sealed record ToolResultsMessage : ObservationMessage {
+    /// <summary>
+    /// 按 provider 对齐规则回灌的工具结果列表，构造后冻结为只读快照。
+    /// </summary>
+    public IReadOnlyList<ToolResult> Results { get; }
+
+    /// <summary>
+    /// 创建 <see cref="ToolResultsMessage"/> 并冻结 <paramref name="results"/>。
+    /// </summary>
+    public ToolResultsMessage(string? content, IReadOnlyList<ToolResult> results)
+        : base(content) {
+        ArgumentNullException.ThrowIfNull(results);
+        Results = Array.AsReadOnly(results.ToArray());
+    }
+
     /// <inheritdoc />
     public override HistoryMessageKind Kind => HistoryMessageKind.ToolResults;
 }

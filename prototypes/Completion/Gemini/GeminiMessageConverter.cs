@@ -82,7 +82,6 @@ internal static class GeminiMessageConverter {
         List<PendingToolCall> pendingToolCalls
     ) {
         var parts = new List<GeminiPart>();
-        var consumedExecuteErrorBySyntheticResponses = false;
 
         if (pendingToolCalls.Count > 0) {
             var resultsByCallId = CreateResultLookup(toolResults.Results);
@@ -93,14 +92,9 @@ internal static class GeminiMessageConverter {
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
-                    throw new InvalidOperationException(
-                        $"Tool results are missing for pending Gemini functionCall id='{pendingToolCall.ToolCallId}' and no execute_error was provided."
-                    );
-                }
-
-                consumedExecuteErrorBySyntheticResponses = true;
-                parts.Add(CreateFunctionResponsePart(CreateSyntheticFailureResult(pendingToolCall, toolResults.ExecuteError)));
+                throw new InvalidOperationException(
+                    $"Tool results are missing for pending Gemini functionCall id='{pendingToolCall.ToolCallId}'. ToolResultsMessage.Results must align 1:1 with the pending functionCall parts."
+                );
             }
 
             if (resultsByCallId.Count > 0) {
@@ -114,7 +108,7 @@ internal static class GeminiMessageConverter {
         }
         else if (toolResults.Results.Count > 0) { throw new InvalidOperationException("Tool results appeared without a preceding Gemini functionCall content."); }
 
-        AppendTrailingObservation(toolResults, parts, includeExecuteError: !consumedExecuteErrorBySyntheticResponses);
+        AppendTrailingObservation(toolResults, parts);
 
         if (parts.Count == 0) { return; }
 
@@ -301,26 +295,9 @@ internal static class GeminiMessageConverter {
         };
     }
 
-    private static ToolResult CreateSyntheticFailureResult(PendingToolCall pendingToolCall, string executeError) {
-        return ToolResult.FromText(
-            toolName: pendingToolCall.ToolName,
-            toolCallId: pendingToolCall.ToolCallId,
-            status: ToolExecutionStatus.Failed,
-            content: executeError
-        );
-    }
-
-    private static void AppendTrailingObservation(
-        ToolResultsMessage toolResults,
-        List<GeminiPart> parts,
-        bool includeExecuteError
-    ) {
+    private static void AppendTrailingObservation(ToolResultsMessage toolResults, List<GeminiPart> parts) {
         if (!string.IsNullOrWhiteSpace(toolResults.Content)) {
             parts.Add(new GeminiPart { Text = toolResults.Content });
-        }
-
-        if (includeExecuteError && !string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
-            parts.Add(new GeminiPart { Text = $"[Execution Error]: {toolResults.ExecuteError}" });
         }
     }
 

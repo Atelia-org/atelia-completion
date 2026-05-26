@@ -92,25 +92,19 @@ internal static class AnthropicMessageConverter {
         List<string> pendingToolCallIds
     ) {
         var blocks = new List<AnthropicContentBlock>();
-        var consumedExecuteErrorBySyntheticResults = false;
 
         if (pendingToolCallIds.Count > 0) {
             var resultsByCallId = CreateResultLookup(toolResults.Results);
 
             foreach (var pendingToolCallId in pendingToolCallIds) {
                 if (resultsByCallId.Remove(pendingToolCallId, out var result)) {
-                    blocks.Add(CreateToolResultBlock(pendingToolCallId, result.GetFlattenedText(), result.Status != ToolExecutionStatus.Success));
+                    blocks.Add(CreateToolResultBlock(result));
                     continue;
                 }
 
-                if (string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
-                    throw new InvalidOperationException(
-                        $"Tool results are missing for pending tool_use_id='{pendingToolCallId}' and no execute_error was provided."
-                    );
-                }
-
-                consumedExecuteErrorBySyntheticResults = true;
-                blocks.Add(CreateToolResultBlock(pendingToolCallId, toolResults.ExecuteError, isError: true));
+                throw new InvalidOperationException(
+                    $"Tool results are missing for pending tool_use_id='{pendingToolCallId}'. ToolResultsMessage.Results must align 1:1 with the pending assistant tool_use blocks."
+                );
             }
 
             if (resultsByCallId.Count > 0) {
@@ -124,13 +118,9 @@ internal static class AnthropicMessageConverter {
         }
         else if (toolResults.Results.Count > 0) { throw new InvalidOperationException("Tool results appeared without a preceding assistant tool_use message."); }
 
-        AppendTrailingObservation(
-            toolResults,
-            blocks,
-            includeExecuteError: !consumedExecuteErrorBySyntheticResults
-        );
+        AppendTrailingObservation(toolResults, blocks);
 
-        // 完全空（无 pending、无 results、无 content、无 error）的 ToolResultsMessage 不携带任何信息：
+        // 完全空（无 pending、无 results、无 content）的 ToolResultsMessage 不携带任何信息：
         // 跳过而非追加空文本块，避免触发 Anthropic 的 `text content blocks must contain non-whitespace text` 校验。
         if (blocks.Count == 0) { return; }
 
@@ -154,29 +144,32 @@ internal static class AnthropicMessageConverter {
         return lookup;
     }
 
-    private static AnthropicToolResultBlock CreateToolResultBlock(string toolCallId, string content, bool isError) {
+    private static AnthropicToolResultBlock CreateToolResultBlock(ToolResult result) {
+        var contentBlocks = new List<AnthropicToolResultContentBlock>(result.Blocks.Count);
+
+        foreach (var block in result.Blocks) {
+            switch (block) {
+                case ToolResultBlock.Text textBlock:
+                    contentBlocks.Add(new AnthropicToolResultTextContentBlock { Text = textBlock.Content });
+                    break;
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported tool result block kind '{block.Kind}' for Anthropic tool_result projection."
+                    );
+            }
+        }
+
         return new AnthropicToolResultBlock {
-            ToolUseId = toolCallId,
-            Content = content,
-            IsError = isError ? true : null // 仅在出错时写入
+            ToolUseId = result.ToolCallId,
+            Content = contentBlocks,
+            IsError = result.Status != ToolExecutionStatus.Success ? true : null // 仅在出错时写入
         };
     }
 
-    private static void AppendTrailingObservation(
-        ToolResultsMessage toolResults,
-        List<AnthropicContentBlock> blocks,
-        bool includeExecuteError
-    ) {
+    private static void AppendTrailingObservation(ToolResultsMessage toolResults, List<AnthropicContentBlock> blocks) {
         if (!string.IsNullOrWhiteSpace(toolResults.Content)) {
             blocks.Add(new AnthropicTextBlock { Text = toolResults.Content });
-        }
-
-        if (includeExecuteError && !string.IsNullOrWhiteSpace(toolResults.ExecuteError)) {
-            blocks.Add(
-                new AnthropicTextBlock {
-                    Text = $"[Execution Error]: {toolResults.ExecuteError}"
-                }
-            );
         }
     }
 

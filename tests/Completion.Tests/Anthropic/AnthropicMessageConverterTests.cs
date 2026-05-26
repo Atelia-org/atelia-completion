@@ -25,11 +25,10 @@ public sealed class AnthropicMessageConverterTests {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
-                    Content: null,
-                    Results: new[] {
+                    content: null,
+                    results: new[] {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty
@@ -70,11 +69,10 @@ public sealed class AnthropicMessageConverterTests {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
-                    Content: null,
-                    Results: new[] {
+                    content: null,
+                    results: new[] {
                         ToolResult.FromText("echo", "call-2", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty
@@ -107,11 +105,10 @@ public sealed class AnthropicMessageConverterTests {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
-                    Content: null,
-                    Results: new[] {
+                    content: null,
+                    results: new[] {
                         ToolResult.FromText("echo", "call-3", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty
@@ -144,11 +141,10 @@ public sealed class AnthropicMessageConverterTests {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
-                    Content: null,
-                    Results: new[] {
+                    content: null,
+                    results: new[] {
                         ToolResult.FromText("echo", "call-invalid", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty
@@ -182,11 +178,10 @@ public sealed class AnthropicMessageConverterTests {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
-                    Content: null,
-                    Results: new[] {
+                    content: null,
+                    results: new[] {
                         ToolResult.FromText("echo", "call-array", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty
@@ -211,12 +206,19 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var toolResults = new ToolResultsMessage(
-            Content: "Observed external state.",
-            Results: new[] {
+            content: "Observed external state.",
+            results: new[] {
                 ToolResult.FromText("lookup", "call-2", ToolExecutionStatus.Failed, "bad"),
-                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-            },
-            ExecuteError: "runner_failed"
+                new ToolResult(
+                    "search",
+                    "call-1",
+                    ToolExecutionStatus.Success,
+                    new ToolResultBlock[] {
+                        new ToolResultBlock.Text("alpha"),
+                        new ToolResultBlock.Text("omega")
+                    }
+                )
+            }
         );
 
         var request = new CompletionRequest(
@@ -245,24 +247,43 @@ public sealed class AnthropicMessageConverterTests {
                     block => {
                         var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
                         Assert.Equal("call-1", toolResult.ToolUseId);
-                        Assert.Equal("ok", toolResult.Content);
+                        Assert.Collection(
+                            toolResult.Content,
+                            contentBlock => Assert.Equal("alpha", Assert.IsType<AnthropicToolResultTextContentBlock>(contentBlock).Text),
+                            contentBlock => Assert.Equal("omega", Assert.IsType<AnthropicToolResultTextContentBlock>(contentBlock).Text)
+                        );
                         Assert.Null(toolResult.IsError);
                     },
                     block => {
                         var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
                         Assert.Equal("call-2", toolResult.ToolUseId);
-                        Assert.Equal("bad", toolResult.Content);
+                        var contentBlock = Assert.Single(toolResult.Content);
+                        Assert.Equal("bad", Assert.IsType<AnthropicToolResultTextContentBlock>(contentBlock).Text);
                         Assert.True(toolResult.IsError);
                     },
-                    block => Assert.Equal("Observed external state.", Assert.IsType<AnthropicTextBlock>(block).Text),
-                    block => Assert.Equal("[Execution Error]: runner_failed", Assert.IsType<AnthropicTextBlock>(block).Text)
+                    block => Assert.Equal("Observed external state.", Assert.IsType<AnthropicTextBlock>(block).Text)
                 );
             }
         );
+
+        var json = JsonSerializer.Serialize(apiRequest);
+        using var document = JsonDocument.Parse(json);
+        var toolResultContent = document.RootElement
+            .GetProperty("messages")[2]
+            .GetProperty("content")[0]
+            .GetProperty("content")
+            .EnumerateArray()
+            .ToArray();
+
+        Assert.Equal(2, toolResultContent.Length);
+        Assert.Equal("text", toolResultContent[0].GetProperty("type").GetString());
+        Assert.Equal("alpha", toolResultContent[0].GetProperty("text").GetString());
+        Assert.Equal("text", toolResultContent[1].GetProperty("type").GetString());
+        Assert.Equal("omega", toolResultContent[1].GetProperty("text").GetString());
     }
 
     [Fact]
-    public void ConvertToApiRequest_ExecuteErrorOnlyBackfillsPendingToolCalls() {
+    public void ConvertToApiRequest_MissingPendingToolResultsThrows() {
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
                 new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")),
@@ -271,9 +292,10 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var toolResults = new ToolResultsMessage(
-            Content: "Observed external state.",
-            Results: Array.Empty<ToolResult>(),
-            ExecuteError: "runner_failed"
+            content: "Observed external state.",
+            results: new[] {
+                ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
+            }
         );
 
         var request = new CompletionRequest(
@@ -283,35 +305,21 @@ public sealed class AnthropicMessageConverterTests {
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
-
-        var toolResultMessage = apiRequest.Messages.Last();
-        Assert.Collection(
-            toolResultMessage.Content,
-            block => {
-                var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
-                Assert.Equal("call-1", toolResult.ToolUseId);
-                Assert.Equal("runner_failed", toolResult.Content);
-                Assert.True(toolResult.IsError);
-            },
-            block => {
-                var toolResult = Assert.IsType<AnthropicToolResultBlock>(block);
-                Assert.Equal("call-2", toolResult.ToolUseId);
-                Assert.Equal("runner_failed", toolResult.Content);
-                Assert.True(toolResult.IsError);
-            },
-            block => Assert.Equal("Observed external state.", Assert.IsType<AnthropicTextBlock>(block).Text)
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(request)
         );
+
+        Assert.Contains("call-2", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("align 1:1", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void ConvertToApiRequest_OrphanToolResultsThrow() {
         var toolResults = new ToolResultsMessage(
-            Content: null,
-            Results: new[] {
+            content: null,
+            results: new[] {
                 ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-            },
-            ExecuteError: null
+            }
         );
 
         var request = new CompletionRequest(
@@ -395,11 +403,10 @@ public sealed class AnthropicMessageConverterTests {
                 new ObservationMessage("hi"),
                 action,
                 new ToolResultsMessage(
-                    Content: "done",
-                    Results: new[] {
+                    content: "done",
+                    results: new[] {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
-                    },
-                    ExecuteError: null
+                    }
                 )
             },
             Tools: ImmutableArray<ToolDefinition>.Empty

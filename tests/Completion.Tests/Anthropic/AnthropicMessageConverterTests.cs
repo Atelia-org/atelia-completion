@@ -314,6 +314,37 @@ public sealed class AnthropicMessageConverterTests {
     }
 
     [Fact]
+    public void ConvertToApiRequest_ToolNameMismatchThrows() {
+        var actionMessage = new ActionMessage(
+            new ActionBlock[] {
+                new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}"))
+            }
+        );
+
+        var toolResults = new ToolResultsMessage(
+            content: null,
+            results: new[] {
+                ToolResult.FromText("lookup", "call-1", ToolExecutionStatus.Success, "ok")
+            }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("expected 'search'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("got 'lookup'", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("ToolCallId + ToolName", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ConvertToApiRequest_OrphanToolResultsThrow() {
         var toolResults = new ToolResultsMessage(
             content: null,

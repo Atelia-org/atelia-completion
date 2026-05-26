@@ -292,7 +292,7 @@ public sealed record CompletionRequest(
 |---|---|---|
 | 用户输入 / 系统通知 / 环境观测 | `new ObservationMessage(string? content)` | 统一文本字段 |
 | LLM 上一次输出（要回灌） | `CompletionResult.Message`（取聚合结果的 `ActionMessage` 字段，详见 §4.2） | 纯 `ActionMessage` 实现 `IHistoryMessage`，可塞回 `Context` |
-| 工具执行结果（要回灌） | `new ToolResultsMessage(content, results)` | `results: IReadOnlyList<ToolResult>`，且必须与 pending tool call 按 `ToolCallId` 一一对齐 |
+| 工具执行结果（要回灌） | `new ToolResultsMessage(content, results)` | `results: IReadOnlyList<ToolResult>`，且必须与 pending tool call 按 `ToolCallId + ToolName` 一一对齐 |
 
 **`ActionMessage` 的归属**：`ActionBlock` sum type、`CompletionDescriptor`、`ActionMessage` 都在 **Abstractions** 层。多轮回灌的标准写法：取 `CompletionResult.Message` 即可——它是 `ActionMessage`（实现 `IHistoryMessage`），可直接 `history.Add(result.Message)`（见 §4.2）。
 
@@ -327,7 +327,7 @@ var history = new List<IHistoryMessage> {
 };
 ```
 
-⚠️ **`ToolCallId` 对齐是硬约束**。三个 provider converter 在 **构造请求阶段** 都会严格校验 pending tool call 与 `ToolResultsMessage.Results` 的 1:1 对齐关系：缺失、重复、错位都会直接抛 `InvalidOperationException`（**不会** 走到 HTTP，所以不是 400）。如果工具失败但你希望继续，请照常回灌该工具自己的 `ToolResult`，并把失败语义放进 `ToolResult.Status` 与 `ToolResult.Blocks`，而不是依赖旁路字段。
+⚠️ **`ToolCallId + ToolName` 对齐是硬约束**。三个 provider converter 在 **构造请求阶段** 都会严格校验 pending tool call 与 `ToolResultsMessage.Results` 的 1:1 对齐关系：缺失、重复、错位，或 `ToolCallId` 对上但 `ToolName` 不一致，都会直接抛 `InvalidOperationException`（**不会** 走到 HTTP，所以不是 400）。如果工具失败但你希望继续，请照常回灌该工具自己的 `ToolResult`，并把失败语义放进 `ToolResult.Status` 与 `ToolResult.Blocks`，而不是依赖旁路字段。
 
 ### 3.2 `Tools`：声明工具签名
 

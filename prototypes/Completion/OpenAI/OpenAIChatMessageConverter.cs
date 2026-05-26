@@ -91,6 +91,7 @@ internal static class OpenAIChatMessageConverter {
 
             foreach (var pendingToolCall in state.PendingToolCalls) {
                 if (resultsByCallId.Remove(pendingToolCall.ToolCallId, out var result)) {
+                    EnsureMatchingToolName(result, pendingToolCall);
                     messages.Add(CreateToolResultMessage(result));
                     continue;
                 }
@@ -132,6 +133,14 @@ internal static class OpenAIChatMessageConverter {
             ToolCallId = result.ToolCallId,
             Content = BuildToolResultContent(result)
         };
+    }
+
+    private static void EnsureMatchingToolName(ToolResult result, PendingToolCall pendingToolCall) {
+        if (string.Equals(result.ToolName, pendingToolCall.ToolName, StringComparison.Ordinal)) { return; }
+
+        throw new InvalidOperationException(
+            $"OpenAI tool result name mismatch for tool_call_id='{pendingToolCall.ToolCallId}': expected '{pendingToolCall.ToolName}', got '{result.ToolName}'. ToolResultsMessage.Results must align by ToolCallId + ToolName."
+        );
     }
 
     private static void AppendTrailingObservation(ToolResultsMessage toolResults, List<OpenAIChatMessage> messages) {

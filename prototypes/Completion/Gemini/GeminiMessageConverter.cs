@@ -88,6 +88,7 @@ internal static class GeminiMessageConverter {
 
             foreach (var pendingToolCall in pendingToolCalls) {
                 if (resultsByCallId.Remove(pendingToolCall.ToolCallId, out var result)) {
+                    EnsureMatchingToolName(result, pendingToolCall);
                     parts.Add(CreateFunctionResponsePart(result));
                     continue;
                 }
@@ -299,6 +300,14 @@ internal static class GeminiMessageConverter {
         if (!string.IsNullOrWhiteSpace(toolResults.Content)) {
             parts.Add(new GeminiPart { Text = toolResults.Content });
         }
+    }
+
+    private static void EnsureMatchingToolName(ToolResult result, PendingToolCall pendingToolCall) {
+        if (string.Equals(result.ToolName, pendingToolCall.ToolName, StringComparison.Ordinal)) { return; }
+
+        throw new InvalidOperationException(
+            $"Gemini tool result name mismatch for functionCall id='{pendingToolCall.ToolCallId}': expected '{pendingToolCall.ToolName}', got '{result.ToolName}'. ToolResultsMessage.Results must align by ToolCallId + ToolName."
+        );
     }
 
     private static Dictionary<string, ToolResult> CreateResultLookup(IReadOnlyList<ToolResult> results) {

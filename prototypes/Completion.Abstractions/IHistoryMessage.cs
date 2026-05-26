@@ -97,6 +97,9 @@ public sealed record ToolResultsMessage : ObservationMessage {
     public ToolResultsMessage(string? content, IReadOnlyList<ToolResult> results)
         : base(content) {
         ArgumentNullException.ThrowIfNull(results);
+        if (results.Any(static result => result is null)) {
+            throw new ArgumentException("Tool results cannot contain null elements.", nameof(results));
+        }
         Results = Array.AsReadOnly(results.ToArray());
     }
 

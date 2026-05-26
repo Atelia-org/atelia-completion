@@ -16,20 +16,20 @@ internal static class AnthropicMessageConverter {
 
     public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request) {
         var messages = new List<AnthropicMessage>();
-        var pendingToolCallIds = new List<string>();
+        var pendingToolCalls = new List<PendingToolCall>();
 
         foreach (var contextMessage in request.Context) {
             switch (contextMessage) {
                 case ToolResultsMessage toolResults:
-                    BuildToolResultsMessage(toolResults, messages, pendingToolCallIds);
+                    BuildToolResultsMessage(toolResults, messages, pendingToolCalls);
                     break;
 
                 case ObservationMessage input:
-                    BuildObservationMessage(input, messages, pendingToolCallIds);
+                    BuildObservationMessage(input, messages, pendingToolCalls);
                     break;
 
                 case ActionMessage output:
-                    BuildActionMessage(output, messages, pendingToolCallIds);
+                    BuildActionMessage(output, messages, pendingToolCalls);
                     break;
 
                 default:
@@ -39,7 +39,7 @@ internal static class AnthropicMessageConverter {
             }
         }
 
-        EnsureNoPendingToolCalls(pendingToolCallIds, "context ended");
+        EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
 
         // Anthropic 要求第一条消息必须是 user。这一点不受后续"合并同 role 连续消息"的 normalize
         // 影响（合并不会改变首条 role），提前检查可以让职责更清晰。
@@ -69,8 +69,8 @@ internal static class AnthropicMessageConverter {
         return apiRequest;
     }
 
-    private static void BuildObservationMessage(ObservationMessage input, List<AnthropicMessage> messages, List<string> pendingToolCallIds) {
-        EnsureNoPendingToolCalls(pendingToolCallIds, $"observation before tool results content={input.Content}");
+    private static void BuildObservationMessage(ObservationMessage input, List<AnthropicMessage> messages, List<PendingToolCall> pendingToolCalls) {
+        EnsureNoPendingToolCalls(pendingToolCalls, $"observation before tool results content={input.Content}");
 
         // Anthropic 拒绝空/纯空白文本块（`messages: text content blocks must contain non-whitespace text`），
         // 而"无观测"对模型也不携带任何信息，直接跳过即可，避免污染 transcript。
@@ -89,21 +89,22 @@ internal static class AnthropicMessageConverter {
     private static void BuildToolResultsMessage(
         ToolResultsMessage toolResults,
         List<AnthropicMessage> messages,
-        List<string> pendingToolCallIds
+        List<PendingToolCall> pendingToolCalls
     ) {
         var blocks = new List<AnthropicContentBlock>();
 
-        if (pendingToolCallIds.Count > 0) {
+        if (pendingToolCalls.Count > 0) {
             var resultsByCallId = CreateResultLookup(toolResults.Results);
 
-            foreach (var pendingToolCallId in pendingToolCallIds) {
-                if (resultsByCallId.Remove(pendingToolCallId, out var result)) {
+            foreach (var pendingToolCall in pendingToolCalls) {
+                if (resultsByCallId.Remove(pendingToolCall.ToolCallId, out var result)) {
+                    EnsureMatchingToolName(result, pendingToolCall);
                     blocks.Add(CreateToolResultBlock(result));
                     continue;
                 }
 
                 throw new InvalidOperationException(
-                    $"Tool results are missing for pending tool_use_id='{pendingToolCallId}'. ToolResultsMessage.Results must align 1:1 with the pending assistant tool_use blocks."
+                    $"Tool results are missing for pending tool_use_id='{pendingToolCall.ToolCallId}'. ToolResultsMessage.Results must align 1:1 with the pending assistant tool_use blocks."
                 );
             }
 
@@ -114,7 +115,7 @@ internal static class AnthropicMessageConverter {
                 );
             }
 
-            pendingToolCallIds.Clear();
+            pendingToolCalls.Clear();
         }
         else if (toolResults.Results.Count > 0) { throw new InvalidOperationException("Tool results appeared without a preceding assistant tool_use message."); }
 
@@ -173,8 +174,8 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildActionMessage(ActionMessage output, List<AnthropicMessage> messages, List<string> pendingToolCallIds) {
-        EnsureNoPendingToolCalls(pendingToolCallIds, $"assistant action before tool results blockCount={output.Blocks.Count}");
+    private static void BuildActionMessage(ActionMessage output, List<AnthropicMessage> messages, List<PendingToolCall> pendingToolCalls) {
+        EnsureNoPendingToolCalls(pendingToolCalls, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
         var blocks = new List<AnthropicContentBlock>(output.Blocks.Count);
 
@@ -192,7 +193,7 @@ internal static class AnthropicMessageConverter {
                             Input = BuildToolCallHistory(toolCallBlock.Call)
                         }
                     );
-                    pendingToolCallIds.Add(toolCallBlock.Call.ToolCallId);
+                    pendingToolCalls.Add(new PendingToolCall(toolCallBlock.Call.ToolName, toolCallBlock.Call.ToolCallId));
                     break;
 
                 case ActionBlock.ReasoningBlock reasoningBlock:
@@ -314,12 +315,22 @@ internal static class AnthropicMessageConverter {
         return list;
     }
 
-    private static void EnsureNoPendingToolCalls(List<string> pendingToolCallIds, string nextContextDescription) {
-        if (pendingToolCallIds.Count == 0) { return; }
+    private static void EnsureMatchingToolName(ToolResult result, PendingToolCall pendingToolCall) {
+        if (string.Equals(result.ToolName, pendingToolCall.ToolName, StringComparison.Ordinal)) { return; }
 
-        var pendingIds = string.Join(", ", pendingToolCallIds);
+        throw new InvalidOperationException(
+            $"Anthropic tool result name mismatch for tool_use_id='{pendingToolCall.ToolCallId}': expected '{pendingToolCall.ToolName}', got '{result.ToolName}'. ToolResultsMessage.Results must align by ToolCallId + ToolName."
+        );
+    }
+
+    private static void EnsureNoPendingToolCalls(List<PendingToolCall> pendingToolCalls, string nextContextDescription) {
+        if (pendingToolCalls.Count == 0) { return; }
+
+        var pendingIds = string.Join(", ", pendingToolCalls.Select(static call => call.ToolCallId));
         throw new InvalidOperationException(
             $"Pending assistant tool_use blocks must be followed immediately by tool results before {nextContextDescription}. pending=[{pendingIds}]"
         );
     }
+
+    private sealed record PendingToolCall(string ToolName, string ToolCallId);
 }

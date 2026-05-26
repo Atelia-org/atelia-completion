@@ -64,4 +64,15 @@ public sealed class ToolResultTests {
         Assert.Equal("call-1", only.ToolCallId);
         Assert.Equal("observed", message.Content);
     }
+
+    [Fact]
+    public void ToolResultsMessage_Constructor_RejectsNullResultElement() {
+        var results = new ToolResult[] { null! };
+
+        var exception = Assert.Throws<ArgumentException>(
+            () => new ToolResultsMessage(content: null, results: results)
+        );
+
+        Assert.Contains("cannot contain null elements", exception.Message, StringComparison.Ordinal);
+    }
 }

@@ -10,6 +10,7 @@ namespace Atelia.Completion.OpenAI;
 internal static class OpenAIResponsesMessageConverter {
     private const string DebugCategory = "Provider";
     private const string EncryptedReasoningInclude = "reasoning.encrypted_content";
+    private const string ResponsesApiSpecId = "openai-responses-v1";
 
     public static OpenAIResponsesApiRequest ConvertToApiRequest(
         CompletionRequest request,
@@ -221,6 +222,12 @@ internal static class OpenAIResponsesMessageConverter {
     }
 
     private static OpenAIResponsesReasoningItem ConvertReasoningBlock(OpenAIResponsesReasoningBlock reasoningBlock) {
+        if (!string.Equals(reasoningBlock.Origin.ApiSpecId, ResponsesApiSpecId, StringComparison.Ordinal)) {
+            throw new InvalidOperationException(
+                $"OpenAI Responses reasoning replay requires Origin.ApiSpecId='{ResponsesApiSpecId}', got '{reasoningBlock.Origin.ApiSpecId}'."
+            );
+        }
+
         try {
             using var document = JsonDocument.Parse(reasoningBlock.RawItemJson);
             var root = document.RootElement;

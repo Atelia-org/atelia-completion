@@ -12,8 +12,10 @@ namespace Atelia.Completion.OpenAI;
 /// </summary>
 internal sealed class OpenAIResponsesStreamParser {
     private const string DebugCategory = "Provider";
+    private const string FunctionCallItemType = "function_call";
 
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _completedFunctionCallItemIds = new(StringComparer.Ordinal);
     private string? _activeReasoningItemId;
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
@@ -89,6 +91,7 @@ internal sealed class OpenAIResponsesStreamParser {
 
     public void DiscardIncompleteStreamingState() {
         _functionCalls.Clear();
+        _completedFunctionCallItemIds.Clear();
         _activeReasoningItemId = null;
     }
 
@@ -97,7 +100,7 @@ internal sealed class OpenAIResponsesStreamParser {
 
         var itemType = item["type"]?.GetValue<string>();
         switch (itemType) {
-            case "function_call":
+            case FunctionCallItemType:
                 GetOrCreateFunctionCallState(obj, item);
                 break;
 
@@ -138,7 +141,12 @@ internal sealed class OpenAIResponsesStreamParser {
 
         var itemType = item["type"]?.GetValue<string>();
         switch (itemType) {
-            case "function_call":
+            case FunctionCallItemType:
+                var itemId = GetItemId(obj, item);
+                if (!string.IsNullOrWhiteSpace(itemId) && _completedFunctionCallItemIds.Contains(itemId)) {
+                    return;
+                }
+
                 var state = GetOrCreateFunctionCallState(obj, item);
                 if (state is not null) {
                     FinalizeFunctionCall(state, aggregator);
@@ -201,6 +209,10 @@ internal sealed class OpenAIResponsesStreamParser {
             return null;
         }
 
+        if (_completedFunctionCallItemIds.Contains(itemId)) {
+            return null;
+        }
+
         if (!_functionCalls.TryGetValue(itemId, out var state)) {
             state = new FunctionCallState(itemId);
             _functionCalls[itemId] = state;
@@ -240,6 +252,7 @@ internal sealed class OpenAIResponsesStreamParser {
 
     private void FinalizeFunctionCall(FunctionCallState state, CompletionAggregator aggregator) {
         _functionCalls.Remove(state.ItemId);
+        _completedFunctionCallItemIds.Add(state.ItemId);
 
         var rawArgumentsText = StreamParserToolUtility.NormalizeRawArgumentsJson(state.ArgumentsBuilder.ToString());
         var toolName = state.ToolName ?? string.Empty;

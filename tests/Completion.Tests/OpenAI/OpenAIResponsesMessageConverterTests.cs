@@ -204,6 +204,32 @@ public sealed class OpenAIResponsesMessageConverterTests {
         Assert.Contains("Cross-provider reasoning replay is not supported", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ConvertToApiRequest_OpenAIResponsesReasoningWithMismatchedOriginFailsFast() {
+        var request = new CompletionRequest(
+            ModelId: "gpt-4.1",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ActionMessage(
+                    [
+                        new OpenAIResponsesReasoningBlock(
+                            """{"type":"reasoning","id":"rs_1","encrypted_content":"enc_123"}""",
+                            new CompletionDescriptor("openai", "openai-chat-v1", "gpt-4.1")
+                        )
+                    ]
+                )
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OpenAIResponsesMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("Origin.ApiSpecId", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("openai-responses-v1", exception.Message, StringComparison.Ordinal);
+    }
+
     private static void AssertUserMessage(OpenAIResponsesInputItem item, string expectedText) {
         var message = Assert.IsType<OpenAIResponsesMessageItem>(item);
         Assert.Equal("user", message.Role);

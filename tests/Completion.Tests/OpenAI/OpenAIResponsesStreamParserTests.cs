@@ -78,6 +78,38 @@ public sealed class OpenAIResponsesStreamParserTests {
     }
 
     [Fact]
+    public void ParseEvent_OutputItemDoneDoesNotDuplicateFunctionCallAfterArgumentsDone() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"city\":\"Par"}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.function_call_arguments.done","item_id":"fc_1","arguments":"{\"city\":\"Paris\"}","item":{"id":"fc_1","type":"function_call","call_id":"call_123","name":"get_weather"}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call","call_id":"call_123","name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}
+            """,
+            aggregator
+        );
+
+        var result = aggregator.Build();
+
+        var toolCall = Assert.IsType<ActionBlock.ToolCall>(Assert.Single(result.Message.Blocks)).Call;
+        Assert.Equal("call_123", toolCall.ToolCallId);
+        Assert.Equal("get_weather", toolCall.ToolName);
+        Assert.Equal("{\"city\":\"Paris\"}", toolCall.RawArgumentsJson);
+    }
+
+    [Fact]
     public void ParseEvent_FailedAndTopLevelErrorAppendErrors() {
         var parser = new OpenAIResponsesStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);

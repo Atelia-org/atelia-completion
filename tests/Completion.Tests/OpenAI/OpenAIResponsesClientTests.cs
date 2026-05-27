@@ -164,6 +164,83 @@ public sealed class OpenAIResponsesClientTests {
         Assert.Equal("http://localhost:8000/prefix/v1/responses", Assert.Single(handler.RequestUris));
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_UsesMessageConverterForReasoningReplayContinuity() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent(
+                    """
+                    data: {"type":"response.output_text.delta","delta":"done"}
+
+                    data: {"type":"response.completed"}
+
+                    data: [DONE]
+
+                    """,
+                    Encoding.UTF8,
+                    "text/event-stream"
+                )
+            }
+        );
+
+        using var httpClient = new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+
+        var client = new OpenAIResponsesClient(apiKey: null, httpClient: httpClient);
+        var request = new CompletionRequest(
+            ModelId: "gpt-5",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("What's the weather in Paris?"),
+                new ActionMessage(
+                    [
+                        new OpenAIResponsesReasoningBlock(
+                            """{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Need tool."}],"encrypted_content":"enc_123"}""",
+                            new CompletionDescriptor("openai", "openai-responses-v1", "gpt-5"),
+                            "Need tool."
+                        ),
+                        new ActionBlock.ToolCall(new RawToolCall("get_weather", "call_123", """{"city":"Paris"}"""))
+                    ]
+                ),
+                new ToolResultsMessage(
+                    content: null,
+                    results: [
+                        ToolResult.FromText("get_weather", "call_123", ToolExecutionStatus.Success, "Sunny")
+                    ]
+                ),
+                new ObservationMessage("What should I wear?")
+            },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var result = await client.StreamCompletionAsync(request, null, CancellationToken.None);
+
+        Assert.Equal("done", result.Message.GetFlattenedText());
+
+        using var document = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        Assert.Collection(
+            document.RootElement.GetProperty("input").EnumerateArray().ToArray(),
+            item => Assert.Equal("message", item.GetProperty("type").GetString()),
+            item => {
+                Assert.Equal("reasoning", item.GetProperty("type").GetString());
+                Assert.Equal("enc_123", item.GetProperty("encrypted_content").GetString());
+            },
+            item => {
+                Assert.Equal("function_call", item.GetProperty("type").GetString());
+                Assert.Equal("call_123", item.GetProperty("call_id").GetString());
+            },
+            item => {
+                Assert.Equal("function_call_output", item.GetProperty("type").GetString());
+                Assert.Equal("Sunny", item.GetProperty("output").GetString());
+            },
+            item => {
+                Assert.Equal("message", item.GetProperty("type").GetString());
+                Assert.Equal("What should I wear?", item.GetProperty("content")[0].GetProperty("text").GetString());
+            }
+        );
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gpt-5",

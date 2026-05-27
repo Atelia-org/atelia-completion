@@ -36,6 +36,7 @@ internal sealed class OpenAIResponsesApiRequest {
 [JsonDerivedType(typeof(OpenAIResponsesMessageItem), "message")]
 [JsonDerivedType(typeof(OpenAIResponsesFunctionCallItem), "function_call")]
 [JsonDerivedType(typeof(OpenAIResponsesFunctionCallOutputItem), "function_call_output")]
+[JsonDerivedType(typeof(OpenAIResponsesReasoningItem), "reasoning")]
 internal abstract class OpenAIResponsesInputItem {
 }
 
@@ -64,6 +65,11 @@ internal sealed class OpenAIResponsesFunctionCallOutputItem : OpenAIResponsesInp
 
     [JsonPropertyName("output")]
     public required string Output { get; set; }
+}
+
+internal sealed class OpenAIResponsesReasoningItem : OpenAIResponsesInputItem {
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]

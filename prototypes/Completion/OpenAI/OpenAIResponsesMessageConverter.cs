@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Utils;
 using Atelia.Diagnostics;
@@ -165,9 +166,15 @@ internal static class OpenAIResponsesMessageConverter {
                     emittedItemCount++;
                     break;
 
+                case OpenAIResponsesReasoningBlock reasoningBlock:
+                    FlushAssistantText();
+                    inputItems.Add(ConvertReasoningBlock(reasoningBlock));
+                    emittedItemCount++;
+                    break;
+
                 case ActionBlock.ReasoningBlock reasoningBlock:
                     throw new InvalidOperationException(
-                        $"Cannot project reasoning block type '{reasoningBlock.GetType().Name}' via OpenAI Responses request converter in Phase 1."
+                        $"OpenAI Responses replay only supports {nameof(OpenAIResponsesReasoningBlock)}. Cross-provider reasoning replay is not supported (got '{reasoningBlock.GetType().Name}')."
                     );
 
                 default:
@@ -179,7 +186,7 @@ internal static class OpenAIResponsesMessageConverter {
 
         if (emittedItemCount == 0) {
             throw new InvalidOperationException(
-                "Action message has no text content and no tool calls; nothing to send as assistant turn."
+                "Action message has no replayable text, reasoning, or tool call content; nothing to send as assistant turn."
             );
         }
 
@@ -211,6 +218,42 @@ internal static class OpenAIResponsesMessageConverter {
                 }
             ]
         };
+    }
+
+    private static OpenAIResponsesReasoningItem ConvertReasoningBlock(OpenAIResponsesReasoningBlock reasoningBlock) {
+        try {
+            using var document = JsonDocument.Parse(reasoningBlock.RawItemJson);
+            var root = document.RootElement;
+
+            if (root.ValueKind is not JsonValueKind.Object) {
+                throw new InvalidOperationException(
+                    $"OpenAI Responses reasoning replay expected a JSON object payload, but got '{reasoningBlock.RawItemJson}'."
+                );
+            }
+
+            var itemType = root.GetProperty("type").GetString();
+            if (!string.Equals(itemType, "reasoning", StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    $"OpenAI Responses reasoning replay expected a reasoning item payload, but got '{reasoningBlock.RawItemJson}'."
+                );
+            }
+
+            var extensionData = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var property in root.EnumerateObject()) {
+                if (string.Equals(property.Name, "type", StringComparison.Ordinal)) { continue; }
+                extensionData[property.Name] = property.Value.Clone();
+            }
+
+            return new OpenAIResponsesReasoningItem {
+                ExtensionData = extensionData
+            };
+        }
+        catch (JsonException ex) {
+            throw new InvalidOperationException(
+                "OpenAI Responses reasoning replay payload is not valid JSON.",
+                ex
+            );
+        }
     }
 
     private static List<OpenAIResponsesTool>? BuildToolDefinitions(ImmutableArray<ToolDefinition> tools) {

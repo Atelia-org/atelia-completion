@@ -103,7 +103,7 @@ using Atelia.Completion.Anthropic;
 using Atelia.Completion.Transport;
 
 using var anthropicHttpClient = CompletionHttpTransportFactory.CreateLiveClient(
-    new Uri("http://localhost:8000/")
+    new Uri("http://localhost:8888/")
 );
 
 var anthropic = new AnthropicClient(

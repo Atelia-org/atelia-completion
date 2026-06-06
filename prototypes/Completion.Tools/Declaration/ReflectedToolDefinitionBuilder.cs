@@ -9,8 +9,6 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Completion.Tools.Declaration;
 
 public static class ReflectedToolDefinitionBuilder {
-    private static readonly NullabilityInfoContext NullabilityContext = new();
-
     public static ToolDefinition BuildDefinitionUsingTypeDescription<TInput>(string toolName)
         where TInput : class
         => BuildDefinitionUsingTypeDescription(toolName, typeof(TInput));
@@ -37,15 +35,20 @@ public static class ReflectedToolDefinitionBuilder {
 
     public static ToolSchema.Object BuildInputObjectSchema(Type inputType) {
         ArgumentNullException.ThrowIfNull(inputType);
-        return BuildRootSchema(inputType, new HashSet<Type>());
+        return BuildRootSchema(inputType, new HashSet<Type>(), new NullabilityInfoContext());
     }
 
-    private static ToolSchema.Object BuildRootSchema(Type type, HashSet<Type> typePath) {
+    private static ToolSchema.Object BuildRootSchema(Type type, HashSet<Type> typePath, NullabilityInfoContext nullabilityContext) {
         EnsureSupportedObjectType(type, "root tool declaration");
-        return BuildObjectSchema(type, schemaDescription: null, typePath);
+        return BuildObjectSchema(type, schemaDescription: null, typePath, nullabilityContext);
     }
 
-    private static ToolSchema.Object BuildObjectSchema(Type type, string? schemaDescription, HashSet<Type> typePath) {
+    private static ToolSchema.Object BuildObjectSchema(
+        Type type,
+        string? schemaDescription,
+        HashSet<Type> typePath,
+        NullabilityInfoContext nullabilityContext
+    ) {
         EnsureSupportedObjectType(type, "object schema");
 
         if (!typePath.Add(type)) { throw new NotSupportedException($"Cycle detected while reflecting tool declaration type '{type.FullName}'."); }
@@ -72,9 +75,9 @@ public static class ReflectedToolDefinitionBuilder {
                 }
 
                 var propertyDescription = ResolvePropertyDescription(property);
-                var nullability = NullabilityContext.Create(property);
+                var nullability = nullabilityContext.Create(property);
                 var isRequired = property.GetCustomAttribute<RequiredAttribute>() is not null || !AllowsNull(property.PropertyType, nullability);
-                var propertySchema = BuildSchemaForProperty(property, propertyDescription, nullability, typePath);
+                var propertySchema = BuildSchemaForProperty(property, propertyDescription, nullability, typePath, nullabilityContext);
                 properties.Add(new ToolSchema.Property(propertyName, propertySchema, isRequired));
             }
 
@@ -89,7 +92,8 @@ public static class ReflectedToolDefinitionBuilder {
         PropertyInfo property,
         string propertyDescription,
         NullabilityInfo nullability,
-        HashSet<Type> typePath
+        HashSet<Type> typePath,
+        NullabilityInfoContext nullabilityContext
     ) {
         var propertyType = property.PropertyType;
         var underlyingNullableType = Nullable.GetUnderlyingType(propertyType);
@@ -108,7 +112,8 @@ public static class ReflectedToolDefinitionBuilder {
                 GetOptionalDescription(elementType),
                 elementNullability,
                 property,
-                typePath
+                typePath,
+                nullabilityContext
             );
 
             return new ToolSchema.Array(itemSchema, description: propertyDescription);
@@ -118,7 +123,7 @@ public static class ReflectedToolDefinitionBuilder {
 
         if (AllowsNull(propertyType, nullability)) { throw new NotSupportedException($"Nullable array/object property '{property.DeclaringType?.FullName}.{property.Name}' is not supported."); }
 
-        return BuildObjectSchema(effectiveType, propertyDescription, typePath);
+        return BuildObjectSchema(effectiveType, propertyDescription, typePath, nullabilityContext);
     }
 
     private static ToolSchema BuildSchemaForNestedType(
@@ -126,7 +131,8 @@ public static class ReflectedToolDefinitionBuilder {
         string? schemaDescription,
         NullabilityInfo? nullability,
         PropertyInfo declaringProperty,
-        HashSet<Type> typePath
+        HashSet<Type> typePath,
+        NullabilityInfoContext nullabilityContext
     ) {
         var underlyingNullableType = Nullable.GetUnderlyingType(type);
         var effectiveType = underlyingNullableType ?? type;
@@ -147,7 +153,7 @@ public static class ReflectedToolDefinitionBuilder {
 
         if (nullability is not null && AllowsNull(type, nullability)) { throw new NotSupportedException($"Nullable array/object property '{declaringProperty.DeclaringType?.FullName}.{declaringProperty.Name}' is not supported."); }
 
-        return BuildObjectSchema(effectiveType, schemaDescription, typePath);
+        return BuildObjectSchema(effectiveType, schemaDescription, typePath, nullabilityContext);
     }
 
     private static bool TryBuildScalarSchema(

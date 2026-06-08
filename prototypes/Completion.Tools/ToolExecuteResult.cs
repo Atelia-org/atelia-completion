@@ -4,7 +4,7 @@ namespace Atelia.Completion.Tools;
 
 public sealed record ToolExecutionContext {
     public ToolExecutionContext(
-        ToolSessionState session,
+        ToolSession session,
         RawToolCall rawToolCall,
         long executionSequence
     ) {
@@ -15,7 +15,7 @@ public sealed record ToolExecutionContext {
         ExecutionSequence = executionSequence;
     }
 
-    public ToolSessionState Session { get; }
+    public ToolSession Session { get; }
 
     public RawToolCall RawToolCall { get; }
 
@@ -32,9 +32,7 @@ public sealed record ToolExecuteResult {
         IReadOnlyList<ToolResultBlock> blocks
     ) {
         ArgumentNullException.ThrowIfNull(blocks);
-        if (blocks.Any(static block => block is null)) {
-            throw new ArgumentException("Tool execution result blocks cannot contain null elements.", nameof(blocks));
-        }
+        if (blocks.Any(static block => block is null)) { throw new ArgumentException("Tool execution result blocks cannot contain null elements.", nameof(blocks)); }
 
         Status = status;
         Blocks = Array.AsReadOnly(blocks.ToArray());

@@ -27,7 +27,7 @@ public sealed class MethodToolWrapperTests {
         var properties = providerSchema.GetProperty("properties").EnumerateObject().Select(property => property.Name).ToArray();
         Assert.Equal(new[] { "text" }, properties);
 
-        var session = new ToolSessionState(items: new Dictionary<string, object?> { ["scope"] = "session-scope" });
+        var session = new ToolRegistry(Array.Empty<ITool>()).CreateSession(items: new Dictionary<string, object?> { ["scope"] = "session-scope" });
         var context = new ToolExecutionContext(
             session,
             new RawToolCall("method.with_context", "call-1", """{"text":"hello"}"""),
@@ -82,7 +82,7 @@ public sealed class MethodToolWrapperTests {
         );
 
         var context = new ToolExecutionContext(
-            new ToolSessionState(),
+            new ToolRegistry(Array.Empty<ITool>()).CreateSession(),
             new RawToolCall("method.parse_failure", "call-parse", """{"text":"hello","unexpected":123}"""),
             executionSequence: 9
         );
@@ -107,7 +107,7 @@ public sealed class MethodToolWrapperTests {
         );
 
         var context = new ToolExecutionContext(
-            new ToolSessionState(),
+            new ToolRegistry(Array.Empty<ITool>()).CreateSession(),
             new RawToolCall("method.validation_failure", "call-2", """{"text":"a"}"""),
             executionSequence: 8
         );

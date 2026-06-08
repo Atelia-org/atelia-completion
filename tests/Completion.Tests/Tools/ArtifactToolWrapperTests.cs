@@ -25,7 +25,7 @@ public sealed class ArtifactToolWrapperTests {
             }
         );
 
-        var session = new ToolSessionState(items: new Dictionary<string, object?> { ["scope"] = "artifact-scope" });
+        var session = new ToolRegistry(Array.Empty<ITool>()).CreateSession(items: new Dictionary<string, object?> { ["scope"] = "artifact-scope" });
         var context = new ToolExecutionContext(
             session,
             new RawToolCall("artifact.with_context", "call-2", """{"Title":"draft"}"""),
@@ -56,7 +56,7 @@ public sealed class ArtifactToolWrapperTests {
         );
 
         var context = new ToolExecutionContext(
-            new ToolSessionState(),
+            new ToolRegistry(Array.Empty<ITool>()).CreateSession(),
             new RawToolCall("artifact.validation_failure", "call-3", """{"Title":"a"}"""),
             executionSequence: 12
         );
@@ -86,7 +86,7 @@ public sealed class ArtifactToolWrapperTests {
         );
 
         var context = new ToolExecutionContext(
-            new ToolSessionState(),
+            new ToolRegistry(Array.Empty<ITool>()).CreateSession(),
             new RawToolCall("artifact.deserialize_failure", "call-4", """{"Title":"draft"}"""),
             executionSequence: 13
         );

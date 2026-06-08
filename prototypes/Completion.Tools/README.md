@@ -22,11 +22,9 @@ DTO / Artifact class
 MethodToolWrapper / ArtifactToolWrapper<T>
     ↓ 注册
 ToolRegistry
-    ↓ session 投影
-ToolSessionState
-    ↓ 暴露给模型 + 执行 RawToolCall
-ToolExecutor
-    ↓
+    ↓ CreateSession 工厂
+ToolSession（持有可逐轮替换的 Access 快照，内化执行）
+    ↓ VisibleDefinitions + ExecuteAsync(RawToolCall)
 CompletionRequest.Tools / ToolResultsMessage
 ```
 
@@ -34,7 +32,7 @@ CompletionRequest.Tools / ToolResultsMessage
 
 1. **`MethodToolWrapper`**：把一个正常的业务方法包装成 `ITool`。适合“读文件”“查索引”“调用宿主服务”这类能力型工具。
 2. **`ArtifactToolWrapper<T>`**：把“让模型交一个结构化产物 `T`”包装成工具。适合 outline、patch plan、抽取结果、排序结果这类产物型工具。
-3. **`ToolExecutor`**：按 session 可见性投影工具定义，并把 `RawToolCall` 执行成 `ToolResult`，用于接 `CompletionRequest` 和 `ToolResultsMessage`。
+3. **`ToolSession`**：由 `registry.CreateSession(...)` 工厂产出，是使用方唯一持有的有状态对象。它按 `Access` 快照投影 `VisibleDefinitions`，并内化执行把 `RawToolCall` 执行成 `ToolResult`。
 
 ---
 
@@ -42,16 +40,15 @@ CompletionRequest.Tools / ToolResultsMessage
 
 先分清三层状态：
 
-- **`ToolRegistry`**：共享注册表。通常跟宿主或 app 生命周期一致。
-- **`ToolSessionState`**：单个 LLM session 的运行态。携带可见性策略、`IServiceProvider`、任意 `Items`。
-- **`ToolExecutor`**：绑定某个 `registry + session` 的轻量执行壳。
+- **`ToolRegistry`**：共享注册表（静态、不可变）。通常跟宿主或 app 生命周期一致；通过 `CreateSession(...)` 工厂产出会话。
+- **`ToolSession`**：单个 LLM session 的运行态，使用方唯一需要持有的有状态主概念。携带可逐轮替换的 `Access` 快照、`IServiceProvider`、任意 `Items`，并内化了工具执行（`ExecuteAsync`）。
 
 `ToolExecutionContext` 是工具真正看到的运行时入口，里面有：
 
-- `Session`：当前 `ToolSessionState`
+- `Session`：当前 `ToolSession`
 - `RawToolCall`：模型原始发出的工具调用
-- `ExecutionSequence`：本 session 内单调递增的执行序号
-- `Services` / `Items`：直接透出自 `ToolSessionState`
+- `ExecutionSequence`：本 session 内单调递增的执行序号（跨轮、跨工具集变化都不重置）
+- `Services` / `Items`：直接透出自 `ToolSession`
 
 这意味着：
 
@@ -114,12 +111,11 @@ var echoTool = MethodToolWrapper.FromMethod(
 );
 
 var registry = new ToolRegistry([echoTool]);
-var session = new ToolSessionState(
+var session = registry.CreateSession(
     items: new Dictionary<string, object?> { ["scope"] = "quick-start" }
 );
-var executor = new ToolExecutor(registry, session);
 
-var execution = await executor.ExecuteAsync(
+var execution = await session.ExecuteAsync(
     new RawToolCall("workspace.echo", "call-1", """{"text":"hello"}"""),
     CancellationToken.None
 );
@@ -205,12 +201,9 @@ var submitDraft = ArtifactToolWrapper<OutlineDraft>.Create(
     }
 );
 
-var executor = new ToolExecutor(
-    new ToolRegistry([submitDraft]),
-    new ToolSessionState()
-);
+var session = new ToolRegistry([submitDraft]).CreateSession();
 
-var execution = await executor.ExecuteAsync(
+var execution = await session.ExecuteAsync(
     new RawToolCall(
         "draft.submit",
         "call-2",
@@ -249,9 +242,9 @@ Console.WriteLine(execution.ExecuteResult.GetFlattenedText());
 
 ---
 
-## 5. `ToolExecutor` 怎么接进 Completion 主循环
+## 5. `ToolSession` 怎么接进 Completion 主循环
 
-`ToolExecutor` 有两个直接用途：
+`ToolSession` 有两个直接用途：
 
 1. 把当前 session 可见的工具投影成 `CompletionRequest.Tools`
 2. 把模型返回的 `RawToolCall` 执行成 `ToolResult`，再回灌成 `ToolResultsMessage`
@@ -259,7 +252,7 @@ Console.WriteLine(execution.ExecuteResult.GetFlattenedText());
 最小接法是：
 
 ```csharp
-var executor = new ToolExecutor(registry, session);
+var session = registry.CreateSession();
 
 var history = new List<IHistoryMessage> {
     new ObservationMessage("Read README and propose an outline."),
@@ -269,7 +262,7 @@ var request = new CompletionRequest(
     ModelId: "Qwen3.5-27b-GPTQ-Int4",
     SystemPrompt: "You are a helpful coding agent.",
     Context: history,
-    Tools: executor.VisibleToolDefinitions
+    Tools: session.VisibleDefinitions
 );
 
 var completion = await client.StreamCompletionAsync(request, null, cancellationToken);
@@ -279,7 +272,7 @@ if (completion.Message.ToolCalls.Count > 0) {
     var toolResults = new List<ToolResult>();
 
     foreach (var call in completion.Message.ToolCalls) {
-        var execution = await executor.ExecuteAsync(call, cancellationToken);
+        var execution = await session.ExecuteAsync(call, cancellationToken);
         toolResults.Add(execution.ToToolResult());
     }
 
@@ -290,7 +283,7 @@ if (completion.Message.ToolCalls.Count > 0) {
 这里的桥接关系非常重要：
 
 - `completion.Message.ToolCalls` 给你 `RawToolCall`
-- `ToolExecutor.ExecuteAsync(...)` 给你 `ToolCallExecutionResult`
+- `ToolSession.ExecuteAsync(...)` 给你 `ToolCallExecutionResult`
 - `ToolCallExecutionResult.ToToolResult()` 变成可回灌的 `ToolResult`
 - `new ToolResultsMessage(null, results)` 再喂回下一轮 `CompletionRequest.Context`
 
@@ -300,24 +293,24 @@ if (completion.Message.ToolCalls.Count > 0) {
 
 ## 6. session 可见性与运行时注入
 
-`ToolSessionState` 负责当前 session 的三件事：
+`ToolSession` 负责当前 session 的三件事：
 
-- `ToolAccessPolicy`：哪些工具对当前模型可见 / 可执行
+- `Access`（`ToolAccessSnapshot`）：哪些工具对当前模型可见 / 可执行，可逐轮替换
 - `Services`：工具运行时依赖的服务容器
 - `Items`：轻量 session 数据，比如 scope、repo root、当前用户上下文
 
 示例：隐藏某个工具
 
 ```csharp
-var session = new ToolSessionState(
-    toolAccess: new ToolAccessPolicy(hiddenToolNames: ["internal.only"]),
+var session = registry.CreateSession(
+    access: new ToolAccessSnapshot(hiddenToolNames: ["internal.only"]),
     items: new Dictionary<string, object?> { ["scope"] = "review" }
 );
 ```
 
 此时：
 
-- `executor.VisibleToolDefinitions` 不会把 `internal.only` 暴露给模型
+- `session.VisibleDefinitions` 不会把 `internal.only` 暴露给模型
 - 即使模型伪造了 `RawToolCall("internal.only", ...)`，`ExecuteAsync(...)` 也会返回 `Failed`，而不是执行成功
 
 这是一层简单但有用的 defense in depth。
@@ -383,7 +376,7 @@ var definition = ReflectedToolDefinitionBuilder.BuildDefinitionUsingTypeDescript
 - `tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs`
 - `tests/Completion.Tests/Tools/MethodToolWrapperTests.cs`
 - `tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs`
-- `tests/Completion.Tests/Tools/ToolExecutorTests.cs`
+- `tests/Completion.Tests/Tools/ToolSessionTests.cs`
 
 只跑这批样例可用：
 

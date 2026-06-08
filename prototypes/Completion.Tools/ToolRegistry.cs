@@ -41,6 +41,15 @@ public sealed class ToolRegistry {
 
         return _tools.TryGetValue(toolName, out tool!);
     }
+
+    /// <summary>
+    /// 产出一个绑定到本注册表的 <see cref="ToolSession"/>——使用方与工具系统交互的唯一公开装配入口。
+    /// </summary>
+    public ToolSession CreateSession(
+        ToolAccessSnapshot? access = null,
+        IServiceProvider? services = null,
+        IReadOnlyDictionary<string, object?>? items = null
+    ) => new(this, access ?? ToolAccessSnapshot.AllowAll, services, items);
 }
 
 public sealed record RegisteredTool(

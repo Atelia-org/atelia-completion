@@ -3,33 +3,31 @@ using Xunit;
 
 namespace Atelia.Completion.Tools.Tests;
 
-public sealed class ToolExecutorTests {
+public sealed class ToolSessionTests {
     [Fact]
-    public void VisibleToolDefinitions_UsesSessionPolicy() {
+    public void VisibleDefinitions_UsesSessionAccess() {
         var alpha = new RecordingTool("alpha");
         var beta = new RecordingTool("beta");
         var registry = new ToolRegistry(new ITool[] { alpha, beta });
-        var session = new ToolSessionState(new ToolAccessPolicy(hiddenToolNames: new[] { "BETA" }));
-        var executor = new ToolExecutor(registry, session);
+        var session = registry.CreateSession(new ToolAccessSnapshot(hiddenToolNames: new[] { "BETA" }));
 
-        var visibleDefinitions = executor.VisibleToolDefinitions;
+        var visibleDefinitions = session.VisibleDefinitions;
 
         var visibleDefinition = Assert.Single(visibleDefinitions);
         Assert.Equal("alpha", visibleDefinition.Name);
-        Assert.True(executor.TryGetTool("ALPHA", out var visibleTool));
+        Assert.True(session.TryGetTool("ALPHA", out var visibleTool));
         Assert.Same(alpha, visibleTool);
-        Assert.False(executor.TryGetTool("beta", out _));
+        Assert.False(session.TryGetTool("beta", out _));
     }
 
     [Fact]
     public async Task ExecuteAsync_UsesSessionSequenceAndContextItems() {
         var tool = new RecordingTool("alpha");
         var registry = new ToolRegistry(new ITool[] { tool });
-        var session = new ToolSessionState(items: new Dictionary<string, object?> { ["scope"] = "session-scope" });
-        var executor = new ToolExecutor(registry, session);
+        var session = registry.CreateSession(items: new Dictionary<string, object?> { ["scope"] = "session-scope" });
 
-        var first = await executor.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
-        var second = await executor.ExecuteAsync(new RawToolCall("alpha", "call-2", "{}"), CancellationToken.None);
+        var first = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
+        var second = await session.ExecuteAsync(new RawToolCall("alpha", "call-2", "{}"), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Success, first.ExecuteResult.Status);
         AssertSingleTextBlock(first.ExecuteResult.Blocks, "sequence=1 scope=session-scope");
@@ -42,12 +40,31 @@ public sealed class ToolExecutorTests {
     }
 
     [Fact]
+    public async Task ExecuteAsync_SequenceSurvivesAccessSwapAndRegistryRebind() {
+        // 方案 F 的核心承诺：执行序号是 session 级的，
+        // 既不随逐轮替换 Access 重置，也不随工具集变化 rebind Registry 重置。
+        var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
+        var session = registry.CreateSession();
+
+        var first = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
+        AssertSingleTextBlock(first.ExecuteResult.Blocks, "sequence=1 scope=");
+
+        session.Access = new ToolAccessSnapshot(hiddenToolNames: new[] { "unused" });
+        var second = await session.ExecuteAsync(new RawToolCall("alpha", "call-2", "{}"), CancellationToken.None);
+        AssertSingleTextBlock(second.ExecuteResult.Blocks, "sequence=2 scope=");
+
+        session.Registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha"), new RecordingTool("beta") });
+        var third = await session.ExecuteAsync(new RawToolCall("beta", "call-3", "{}"), CancellationToken.None);
+        AssertSingleTextBlock(third.ExecuteResult.Blocks, "sequence=3 scope=");
+        Assert.Equal(2, session.VisibleDefinitions.Length);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_HiddenToolFailsAuthorization() {
         var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
-        var session = new ToolSessionState(new ToolAccessPolicy(hiddenToolNames: new[] { "ALPHA" }));
-        var executor = new ToolExecutor(registry, session);
+        var session = registry.CreateSession(new ToolAccessSnapshot(hiddenToolNames: new[] { "ALPHA" }));
 
-        var result = await executor.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
+        var result = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.ExecuteResult.Status);
         var block = Assert.Single(result.ExecuteResult.Blocks);
@@ -58,10 +75,10 @@ public sealed class ToolExecutorTests {
     public async Task ExecuteAsync_CanBridgeLosslesslyToToolResult() {
         var tool = new RecordingTool("alpha");
         var registry = new ToolRegistry(new ITool[] { tool });
-        var executor = new ToolExecutor(registry, new ToolSessionState());
+        var session = registry.CreateSession();
         var rawToolCall = new RawToolCall("alpha", "call-1", "{}");
 
-        var result = await executor.ExecuteAsync(rawToolCall, CancellationToken.None);
+        var result = await session.ExecuteAsync(rawToolCall, CancellationToken.None);
         var bridged = result.ToToolResult();
 
         Assert.Same(rawToolCall, result.RawToolCall);
@@ -75,7 +92,7 @@ public sealed class ToolExecutorTests {
     public void ToolExecutionContext_UsesSessionItemsAndServicesAsSingleSourceOfTruth() {
         var services = new ServiceCollectionStub();
         var items = new Dictionary<string, object?> { ["scope"] = "session-scope" };
-        var session = new ToolSessionState(services: services, items: items);
+        var session = new ToolRegistry(Array.Empty<ITool>()).CreateSession(services: services, items: items);
         var context = new ToolExecutionContext(session, new RawToolCall("alpha", "call-1", "{}"), executionSequence: 3);
 
         Assert.Same(session, context.Session);

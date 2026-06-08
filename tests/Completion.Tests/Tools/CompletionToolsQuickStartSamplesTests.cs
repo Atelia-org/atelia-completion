@@ -8,19 +8,18 @@ namespace Atelia.Completion.Tools.Tests;
 
 public sealed class CompletionToolsQuickStartSamplesTests {
     [Fact]
-    public async Task QuickStart_MethodToolWrapper_RunsThroughToolExecutor() {
+    public async Task QuickStart_MethodToolWrapper_RunsThroughToolSession() {
         var host = new QuickStartTools();
         var echoTool = MethodToolWrapper.FromMethod(
             host,
             typeof(QuickStartTools).GetMethod(nameof(QuickStartTools.EchoAsync))!
         );
 
-        var executor = new ToolExecutor(
-            new ToolRegistry([echoTool]),
-            new ToolSessionState(items: new Dictionary<string, object?> { ["scope"] = "quick-start" })
+        var session = new ToolRegistry([echoTool]).CreateSession(
+            items: new Dictionary<string, object?> { ["scope"] = "quick-start" }
         );
 
-        var execution = await executor.ExecuteAsync(
+        var execution = await session.ExecuteAsync(
             new RawToolCall("workspace.echo", "call-1", """{"text":"hello"}"""),
             CancellationToken.None
         );
@@ -28,7 +27,7 @@ public sealed class CompletionToolsQuickStartSamplesTests {
         Assert.Equal(ToolExecutionStatus.Success, execution.ExecuteResult.Status);
         Assert.Equal("hello|quick-start|1", execution.ExecuteResult.GetFlattenedText());
 
-        var definition = Assert.Single(executor.VisibleToolDefinitions);
+        var definition = Assert.Single(session.VisibleDefinitions);
         Assert.Equal("workspace.echo", definition.Name);
     }
 
@@ -43,12 +42,9 @@ public sealed class CompletionToolsQuickStartSamplesTests {
             }
         );
 
-        var executor = new ToolExecutor(
-            new ToolRegistry([submitDraft]),
-            new ToolSessionState()
-        );
+        var session = new ToolRegistry([submitDraft]).CreateSession();
 
-        var execution = await executor.ExecuteAsync(
+        var execution = await session.ExecuteAsync(
             new RawToolCall(
                 "draft.submit",
                 "call-2",
@@ -73,9 +69,8 @@ public sealed class CompletionToolsQuickStartSamplesTests {
             typeof(QuickStartTools).GetMethod(nameof(QuickStartTools.EchoAsync))!
         );
 
-        var executor = new ToolExecutor(
-            new ToolRegistry([echoTool]),
-            new ToolSessionState(items: new Dictionary<string, object?> { ["scope"] = "loop" })
+        var session = new ToolRegistry([echoTool]).CreateSession(
+            items: new Dictionary<string, object?> { ["scope"] = "loop" }
         );
 
         var history = new List<IHistoryMessage> {
@@ -86,12 +81,13 @@ public sealed class CompletionToolsQuickStartSamplesTests {
             ModelId: "demo-model",
             SystemPrompt: "You are a helpful assistant.",
             Context: history,
-            Tools: executor.VisibleToolDefinitions
+            Tools: session.VisibleDefinitions
         );
 
         Assert.Equal("workspace.echo", Assert.Single(request.Tools).Name);
 
-        var assistantMessage = new ActionMessage([
+        var assistantMessage = new ActionMessage(
+            [
             new ActionBlock.ToolCall(
                 new RawToolCall(
                     "workspace.echo",
@@ -99,13 +95,14 @@ public sealed class CompletionToolsQuickStartSamplesTests {
                     """{"text":"hello from tool"}"""
                 )
             )
-        ]);
+        ]
+        );
 
         history.Add(assistantMessage);
 
         var toolResults = new List<ToolResult>();
         foreach (var call in assistantMessage.ToolCalls) {
-            var execution = await executor.ExecuteAsync(call, CancellationToken.None);
+            var execution = await session.ExecuteAsync(call, CancellationToken.None);
             toolResults.Add(execution.ToToolResult());
         }
 

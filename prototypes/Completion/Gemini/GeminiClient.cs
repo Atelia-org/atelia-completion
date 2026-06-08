@@ -21,6 +21,8 @@ public sealed class GeminiClient : ICompletionClient {
     public string ApiSpecId => "google-gemini-generate-content-v1beta";
 
     public GeminiClient(string? apiKey, HttpClient httpClient) {
+        Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
+
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(GeminiClient));

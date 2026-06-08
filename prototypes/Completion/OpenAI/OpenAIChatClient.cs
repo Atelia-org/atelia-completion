@@ -35,6 +35,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
         OpenAIChatDialect? dialect = null,
         OpenAIChatClientOptions? options = null
     ) {
+        Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
+
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(OpenAIChatClient));

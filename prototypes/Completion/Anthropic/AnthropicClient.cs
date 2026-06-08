@@ -27,6 +27,8 @@ public sealed class AnthropicClient : ICompletionClient {
     public string ApiSpecId => "messages-v1";
 
     public AnthropicClient(string? apiKey, HttpClient httpClient, string? apiVersion = null) {
+        Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
+
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(AnthropicClient));

@@ -58,6 +58,12 @@ public sealed class ToolSession {
     public IReadOnlyDictionary<string, object?>? Items { get; }
 
     /// <summary>
+    /// 当前 session 已分配到的最后一个执行序号。
+    /// 值为 <c>0</c> 表示尚未执行过任何工具调用。
+    /// </summary>
+    public long LastIssuedExecutionSequence => Interlocked.Read(ref _nextExecutionSequence);
+
+    /// <summary>
     /// 当前对模型可见的工具定义，是 <c>Registry × Access</c> 的交叉派生。
     /// join 归属于 session，使用方无需再把 registry 传回去。
     /// </summary>
@@ -99,6 +105,32 @@ public sealed class ToolSession {
     /// </summary>
     public ValueTask<ToolCallExecutionResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken)
         => ToolDispatch.ExecuteAsync(this, request, cancellationToken);
+
+    /// <summary>
+    /// 将执行序号恢复到已知 checkpoint。
+    /// 仅应用于会话恢复场景；恢复后的下一次工具执行会从 <paramref name="lastIssuedExecutionSequence"/> + 1 继续分配。
+    /// </summary>
+    /// <param name="lastIssuedExecutionSequence">checkpoint 中记录的最后一个已发放执行序号；可为 0。</param>
+    /// <exception cref="ArgumentOutOfRangeException">当 <paramref name="lastIssuedExecutionSequence"/> 小于 0。</exception>
+    /// <exception cref="InvalidOperationException">当尝试将执行序号回退到当前值以下。</exception>
+    public void RestoreExecutionSequence(long lastIssuedExecutionSequence) {
+        if (lastIssuedExecutionSequence < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(lastIssuedExecutionSequence),
+                lastIssuedExecutionSequence,
+                "Execution sequence checkpoint must be greater than or equal to zero."
+            );
+        }
+
+        var current = Interlocked.Read(ref _nextExecutionSequence);
+        if (lastIssuedExecutionSequence < current) {
+            throw new InvalidOperationException(
+                $"Cannot restore tool session execution sequence backwards. Current={current}, Requested={lastIssuedExecutionSequence}."
+            );
+        }
+
+        Interlocked.Exchange(ref _nextExecutionSequence, lastIssuedExecutionSequence);
+    }
 
     internal long AllocateExecutionSequence() => Interlocked.Increment(ref _nextExecutionSequence);
 }

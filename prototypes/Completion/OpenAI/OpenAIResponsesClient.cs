@@ -36,6 +36,8 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         HttpClient httpClient,
         OpenAIResponsesClientOptions? options = null
     ) {
+        Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
+
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(OpenAIResponsesClient));

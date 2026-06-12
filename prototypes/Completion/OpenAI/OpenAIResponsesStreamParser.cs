@@ -17,6 +17,7 @@ internal sealed class OpenAIResponsesStreamParser {
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _completedFunctionCallItemIds = new(StringComparer.Ordinal);
     private string? _activeReasoningItemId;
+    private bool _sawCompletedEvent;
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
         JsonNode? node;
@@ -31,7 +32,9 @@ internal sealed class OpenAIResponsesStreamParser {
         if (node is not JsonObject obj) { return; }
 
         if (obj["error"] is JsonObject inlineError) {
-            aggregator.AppendError(ExtractErrorMessage(inlineError, "Unknown error"));
+            var errorMessage = ExtractErrorMessage(inlineError, "Unknown error");
+            aggregator.AppendError(errorMessage);
+            aggregator.MarkFailed("error", errorMessage);
             return;
         }
 
@@ -63,21 +66,30 @@ internal sealed class OpenAIResponsesStreamParser {
                 break;
 
             case "response.completed":
+                _sawCompletedEvent = true;
+                aggregator.MarkCompleted("response.completed");
                 break;
 
             case "response.failed":
             case "error":
-                aggregator.AppendError(ExtractErrorMessage(obj, "OpenAI Responses stream failed."));
+                var errorMessage = ExtractErrorMessage(obj, "OpenAI Responses stream failed.");
+                aggregator.AppendError(errorMessage);
+                aggregator.MarkFailed(eventType, errorMessage);
                 break;
         }
     }
 
     public void Complete(CompletionAggregator aggregator) {
+        if (!_sawCompletedEvent) {
+            aggregator.MarkIncomplete(detail: "OpenAI Responses stream ended without response.completed.");
+        }
+
         if (_activeReasoningItemId is not null) {
             DebugUtil.Warning(
                 DebugCategory,
                 $"[OpenAI/Responses] Stream completed with unfinished reasoning item_id={_activeReasoningItemId}."
             );
+            aggregator.MarkIncomplete(detail: "OpenAI Responses stream ended with unfinished reasoning.");
         }
 
         if (_functionCalls.Count > 0) {
@@ -86,6 +98,7 @@ internal sealed class OpenAIResponsesStreamParser {
                 DebugCategory,
                 $"[OpenAI/Responses] Stream completed with unfinished function calls item_ids=[{pendingIds}]."
             );
+            aggregator.MarkIncomplete(detail: $"OpenAI Responses stream ended with unfinished function calls [{pendingIds}].");
         }
     }
 
@@ -143,9 +156,7 @@ internal sealed class OpenAIResponsesStreamParser {
         switch (itemType) {
             case FunctionCallItemType:
                 var itemId = GetItemId(obj, item);
-                if (!string.IsNullOrWhiteSpace(itemId) && _completedFunctionCallItemIds.Contains(itemId)) {
-                    return;
-                }
+                if (!string.IsNullOrWhiteSpace(itemId) && _completedFunctionCallItemIds.Contains(itemId)) { return; }
 
                 var state = GetOrCreateFunctionCallState(obj, item);
                 if (state is not null) {
@@ -209,9 +220,7 @@ internal sealed class OpenAIResponsesStreamParser {
             return null;
         }
 
-        if (_completedFunctionCallItemIds.Contains(itemId)) {
-            return null;
-        }
+        if (_completedFunctionCallItemIds.Contains(itemId)) { return null; }
 
         if (!_functionCalls.TryGetValue(itemId, out var state)) {
             state = new FunctionCallState(itemId);
@@ -291,13 +300,9 @@ internal sealed class OpenAIResponsesStreamParser {
         var directMessage = obj["message"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(directMessage)) { return directMessage; }
 
-        if (obj["error"] is JsonObject nestedError) {
-            return ExtractErrorMessage(nestedError, fallbackMessage);
-        }
+        if (obj["error"] is JsonObject nestedError) { return ExtractErrorMessage(nestedError, fallbackMessage); }
 
-        if (obj["response"] is JsonObject response) {
-            return ExtractErrorMessage(response, fallbackMessage);
-        }
+        if (obj["response"] is JsonObject response) { return ExtractErrorMessage(response, fallbackMessage); }
 
         return fallbackMessage;
     }

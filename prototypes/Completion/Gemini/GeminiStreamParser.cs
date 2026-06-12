@@ -10,6 +10,7 @@ internal sealed class GeminiStreamParser {
     private const string DebugCategory = "Provider";
 
     private readonly List<GeminiReplayPayloadCodec.GeminiReplayPayloadPart> _replayParts = new();
+    private bool _sawFinishReason;
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
         JsonNode? node;
@@ -27,6 +28,7 @@ internal sealed class GeminiStreamParser {
             var errorMessage = error["message"]?.GetValue<string>() ?? "Unknown error";
             DebugUtil.Warning(DebugCategory, $"[Gemini] API error: {errorMessage}");
             aggregator.AppendError(errorMessage);
+            aggregator.MarkFailed("error", errorMessage);
             return;
         }
 
@@ -40,6 +42,10 @@ internal sealed class GeminiStreamParser {
     }
 
     public void Complete(CompletionAggregator aggregator) {
+        if (!_sawFinishReason) {
+            aggregator.MarkIncomplete(detail: "Gemini stream ended without finishReason.");
+        }
+
         EmitReplayBlockIfNeeded(aggregator);
     }
 
@@ -58,7 +64,9 @@ internal sealed class GeminiStreamParser {
 
         var finishReason = candidate["finishReason"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(finishReason)) {
+            _sawFinishReason = true;
             EmitReplayBlockIfNeeded(aggregator);
+            RecordTermination(finishReason, aggregator);
         }
     }
 
@@ -139,5 +147,16 @@ internal sealed class GeminiStreamParser {
         );
 
         _replayParts.Clear();
+    }
+
+    private static void RecordTermination(string finishReason, CompletionAggregator aggregator) {
+        switch (finishReason) {
+            case "STOP":
+                aggregator.MarkCompleted(finishReason);
+                break;
+            default:
+                aggregator.MarkIncomplete(finishReason);
+                break;
+        }
     }
 }

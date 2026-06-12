@@ -17,6 +17,7 @@ internal sealed class OpenAIChatStreamParser {
     private readonly OpenAIChatReasoningMode _reasoningMode;
     private readonly Dictionary<int, ToolCallState> _toolCalls = new();
     private readonly StringBuilder _reasoningContentBuilder = new();
+    private bool _sawTerminalFinishReason;
     private bool _reasoningInProgress;
 
     public OpenAIChatStreamParser(
@@ -43,6 +44,7 @@ internal sealed class OpenAIChatStreamParser {
             var errorMessage = error["message"]?.GetValue<string>() ?? "Unknown error";
             DebugUtil.Warning(DebugCategory, $"[OpenAI] API error: {errorMessage}");
             aggregator.AppendError(errorMessage);
+            aggregator.MarkFailed("error", errorMessage);
             return;
         }
 
@@ -55,6 +57,10 @@ internal sealed class OpenAIChatStreamParser {
     }
 
     public void Complete(CompletionAggregator aggregator) {
+        if (!_sawTerminalFinishReason) {
+            aggregator.MarkIncomplete(detail: "OpenAI chat stream ended without finish_reason.");
+        }
+
         FlushPendingStreamingState(aggregator);
     }
 
@@ -71,7 +77,9 @@ internal sealed class OpenAIChatStreamParser {
 
         var finishReason = choice["finish_reason"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(finishReason)) {
+            _sawTerminalFinishReason = true;
             FlushPendingStreamingState(aggregator);
+            RecordTermination(finishReason, aggregator);
         }
     }
 
@@ -135,9 +143,7 @@ internal sealed class OpenAIChatStreamParser {
     }
 
     private bool ShouldIgnoreContentDelta(string content, bool hasToolCallsInCurrentDelta) {
-        if (_whitespaceContentMode is not OpenAIChatWhitespaceContentMode.IgnoreWhitespaceDuringToolCalls) {
-            return false;
-        }
+        if (_whitespaceContentMode is not OpenAIChatWhitespaceContentMode.IgnoreWhitespaceDuringToolCalls) { return false; }
 
         return (_toolCalls.Count > 0 || hasToolCallsInCurrentDelta) && string.IsNullOrWhiteSpace(content);
     }
@@ -190,6 +196,23 @@ internal sealed class OpenAIChatStreamParser {
 
     private static RawToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
         => StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
+
+    private static void RecordTermination(string finishReason, CompletionAggregator aggregator) {
+        switch (finishReason) {
+            case "stop":
+            case "tool_calls":
+            case "function_call":
+                aggregator.MarkCompleted(finishReason);
+                break;
+            case "length":
+            case "content_filter":
+                aggregator.MarkIncomplete(finishReason);
+                break;
+            default:
+                aggregator.MarkIncomplete(finishReason, $"Unhandled OpenAI finish_reason '{finishReason}'.");
+                break;
+        }
+    }
 
     private sealed class ToolCallState {
         public ToolCallState(int index) {

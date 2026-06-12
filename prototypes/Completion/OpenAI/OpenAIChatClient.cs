@@ -88,6 +88,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
         if (stoppedEarly) {
             parser.DiscardIncompleteStreamingState();
             aggregator.AbortIncompleteStreamingState();
+            aggregator.MarkIncomplete(detail: "Streaming observer stopped OpenAI chat completion early.");
         }
         else {
             parser.Complete(aggregator);

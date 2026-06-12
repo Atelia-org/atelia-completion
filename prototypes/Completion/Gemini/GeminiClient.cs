@@ -69,6 +69,7 @@ public sealed class GeminiClient : ICompletionClient {
         if (stoppedEarly) {
             parser.DiscardIncompleteStreamingState();
             aggregator.AbortIncompleteStreamingState();
+            aggregator.MarkIncomplete(detail: "Streaming observer stopped Gemini completion early.");
         }
         else {
             parser.Complete(aggregator);

@@ -27,6 +27,8 @@ public sealed class CompletionResultTests {
         Assert.Equal("alpha", result.Message.GetFlattenedText());
         Assert.Collection(result.Message.ToolCalls, call => Assert.Equal("call-1", call.ToolCallId));
         Assert.Equal(new[] { "boom-1" }, result.Errors);
+        Assert.True(result.Termination.IsSuccess);
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
     }
 
     [Fact]
@@ -62,5 +64,19 @@ public sealed class CompletionResultTests {
         );
         Assert.Equal("beta", cloned.Message.GetFlattenedText());
         Assert.Equal(new[] { "warn-1" }, cloned.Errors);
+    }
+
+    [Fact]
+    public void Constructor_PreservesExplicitTermination() {
+        var result = new CompletionResult(
+            new ActionMessage(new[] { new ActionBlock.Text("partial") }),
+            Descriptor,
+            termination: CompletionTermination.Incomplete("length", "max tokens reached")
+        );
+
+        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
+        Assert.Equal("length", result.Termination.ProviderReason);
+        Assert.Equal("max tokens reached", result.Termination.Detail);
+        Assert.False(result.Termination.IsSuccess);
     }
 }

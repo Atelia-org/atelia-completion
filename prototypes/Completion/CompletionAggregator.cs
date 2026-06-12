@@ -31,6 +31,7 @@ public sealed class CompletionAggregator {
     private readonly CompletionStreamObserver? _observer;
     private readonly List<ActionBlock> _blocks = new();
     private readonly StringBuilder _contentBuilder = new();
+    private CompletionTermination? _termination;
     private List<string>? _errors;
     private bool _thinkingInProgress;
 
@@ -155,6 +156,18 @@ public sealed class CompletionAggregator {
         }
     }
 
+    public void MarkCompleted(string? providerReason = null, string? detail = null) {
+        UpdateTermination(CompletionTermination.Completed(providerReason, detail));
+    }
+
+    public void MarkIncomplete(string? providerReason = null, string? detail = null) {
+        UpdateTermination(CompletionTermination.Incomplete(providerReason, detail));
+    }
+
+    public void MarkFailed(string? providerReason = null, string? detail = null) {
+        UpdateTermination(CompletionTermination.Failed(providerReason, detail));
+    }
+
     /// <summary>
     /// 喂入一条错误文本。错误不会抛异常，仅被收集到 <see cref="CompletionResult.Errors"/>。
     /// </summary>
@@ -172,18 +185,48 @@ public sealed class CompletionAggregator {
     public CompletionResult Build() {
         FlushPendingText();
 
+        if (_thinkingInProgress) {
+            _observer?.OnThinkingEnd();
+            _thinkingInProgress = false;
+            MarkIncomplete(detail: "Completion stream ended with an unfinished thinking block.");
+        }
+
         if (_blocks.Count == 0) {
             // 形状确定性兜底：下游始终能拿到至少一个块。
             _blocks.Add(new ActionBlock.Text(string.Empty));
         }
 
         var message = new ActionMessage(_blocks);
-        return new CompletionResult(message, _invocation, _errors);
+        return new CompletionResult(
+            message,
+            _invocation,
+            _errors,
+            _termination ?? CompletionTermination.Incomplete(
+                detail: "Completion stream ended without an explicit terminal status."
+            )
+        );
     }
 
     private void FlushPendingText() {
         if (_contentBuilder.Length == 0) { return; }
         _blocks.Add(new ActionBlock.Text(_contentBuilder.ToString()));
         _contentBuilder.Clear();
+    }
+
+    private void UpdateTermination(CompletionTermination candidate) {
+        ArgumentNullException.ThrowIfNull(candidate);
+
+        if (_termination is null || GetSeverity(candidate.Kind) >= GetSeverity(_termination.Kind)) {
+            _termination = candidate;
+        }
+    }
+
+    private static int GetSeverity(CompletionTerminationKind kind) {
+        return kind switch {
+            CompletionTerminationKind.Completed => 1,
+            CompletionTerminationKind.Incomplete => 2,
+            CompletionTerminationKind.Failed => 3,
+            _ => 0
+        };
     }
 }

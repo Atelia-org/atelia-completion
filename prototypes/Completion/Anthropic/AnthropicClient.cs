@@ -75,6 +75,10 @@ public sealed class AnthropicClient : ICompletionClient {
 
         if (stoppedEarly) {
             aggregator.AbortIncompleteStreamingState();
+            aggregator.MarkIncomplete(detail: "Streaming observer stopped Anthropic completion early.");
+        }
+        else {
+            parser.Complete(aggregator);
         }
 
         DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");

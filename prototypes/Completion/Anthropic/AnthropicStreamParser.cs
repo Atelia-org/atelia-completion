@@ -15,6 +15,8 @@ internal sealed class AnthropicStreamParser {
     private const string DebugCategory = "Provider";
 
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
+    private string? _stopReason;
+    private bool _sawMessageStop;
 
     public AnthropicStreamParser() {
     }
@@ -47,8 +49,10 @@ internal sealed class AnthropicStreamParser {
                 HandleContentBlockStop(obj, aggregator);
                 break;
             case "message_delta":
+                HandleMessageDelta(obj);
                 break;
             case "message_stop":
+                HandleMessageStop(aggregator);
                 break;
             case "ping":
                 break;
@@ -58,6 +62,16 @@ internal sealed class AnthropicStreamParser {
             default:
                 HandleUnknownEvent(eventType);
                 break;
+        }
+    }
+
+    public void Complete(CompletionAggregator aggregator) {
+        if (_contentBlocks.Count > 0) {
+            aggregator.MarkIncomplete(detail: "Anthropic stream ended with unfinished content blocks.");
+        }
+
+        if (!_sawMessageStop) {
+            aggregator.MarkIncomplete(detail: "Anthropic stream ended without message_stop.");
         }
     }
 
@@ -157,10 +171,37 @@ internal sealed class AnthropicStreamParser {
         _contentBlocks.Remove(index);
     }
 
+    private void HandleMessageDelta(JsonObject obj) {
+        if (obj["delta"] is not JsonObject delta) { return; }
+
+        var stopReason = delta["stop_reason"]?.GetValue<string>();
+        if (!string.IsNullOrWhiteSpace(stopReason)) {
+            _stopReason = stopReason;
+        }
+    }
+
+    private void HandleMessageStop(CompletionAggregator aggregator) {
+        _sawMessageStop = true;
+        switch (_stopReason) {
+            case "end_turn":
+            case "tool_use":
+                aggregator.MarkCompleted(_stopReason);
+                break;
+            case null:
+            case "":
+                aggregator.MarkIncomplete(detail: "Anthropic message_stop arrived without stop_reason.");
+                break;
+            default:
+                aggregator.MarkIncomplete(_stopReason);
+                break;
+        }
+    }
+
     private void HandleError(JsonObject obj, CompletionAggregator aggregator) {
         var error = obj["error"]?["message"]?.GetValue<string>() ?? "Unknown error";
         DebugUtil.Warning(DebugCategory, $"[Anthropic] API error: {error}");
         aggregator.AppendError(error);
+        aggregator.MarkFailed("error", error);
     }
 
     private void HandleUnknownEvent(string eventType) {

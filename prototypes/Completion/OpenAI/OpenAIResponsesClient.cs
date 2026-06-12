@@ -87,6 +87,7 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         if (stoppedEarly) {
             parser.DiscardIncompleteStreamingState();
             aggregator.AbortIncompleteStreamingState();
+            aggregator.MarkIncomplete(detail: "Streaming observer stopped OpenAI Responses completion early.");
         }
         else {
             parser.Complete(aggregator);

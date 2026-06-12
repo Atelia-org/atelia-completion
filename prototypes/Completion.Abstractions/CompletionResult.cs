@@ -21,6 +21,7 @@ namespace Atelia.Completion.Abstractions;
 public sealed record CompletionResult {
     private ActionMessage _message = null!;
     private CompletionDescriptor _invocation = null!;
+    private CompletionTermination _termination = null!;
     private IReadOnlyList<string>? _errors;
 
     /// <summary>
@@ -29,11 +30,13 @@ public sealed record CompletionResult {
     public CompletionResult(
         ActionMessage message,
         CompletionDescriptor invocation,
-        IReadOnlyList<string>? errors = null
+        IReadOnlyList<string>? errors = null,
+        CompletionTermination? termination = null
     ) {
         Message = message ?? throw new ArgumentNullException(nameof(message));
         Invocation = invocation ?? throw new ArgumentNullException(nameof(invocation));
         Errors = errors;
+        Termination = termination ?? CompletionTermination.Completed();
     }
 
     /// <summary>Canonical action 消息体。历史回灌请使用此字段。</summary>
@@ -46,6 +49,15 @@ public sealed record CompletionResult {
     public CompletionDescriptor Invocation {
         get => _invocation;
         init => _invocation = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    /// <summary>
+    /// 本次 Completion 在协议层面的完成状态。
+    /// 只有 <see cref="CompletionTerminationKind.Completed"/> 才适合进入 durable history。
+    /// </summary>
+    public CompletionTermination Termination {
+        get => _termination;
+        init => _termination = value ?? throw new ArgumentNullException(nameof(value));
     }
 
     /// <summary>流中通过错误事件报告的错误文本；无错误时为 <see langword="null"/>。</summary>

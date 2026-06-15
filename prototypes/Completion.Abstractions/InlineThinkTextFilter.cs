@@ -13,6 +13,10 @@ public sealed class InlineThinkTextFilter {
     private string _pending = string.Empty;
     private bool _insideThink;
 
+    public InlineThinkTextFilter(bool startInsideThink = false) {
+        _insideThink = startInsideThink;
+    }
+
     public string Filter(string delta) {
         if (string.IsNullOrEmpty(delta)) { return string.Empty; }
 
@@ -24,10 +28,10 @@ public sealed class InlineThinkTextFilter {
         return DrainPending(flushTrailingSafeText: true);
     }
 
-    public static string StripInlineThinkBlocks(string text) {
+    public static string StripInlineThinkBlocks(string text, bool startInsideThink = false) {
         if (string.IsNullOrEmpty(text)) { return text; }
 
-        var filter = new InlineThinkTextFilter();
+        var filter = new InlineThinkTextFilter(startInsideThink);
         string visibleText = filter.Filter(text);
         return visibleText + filter.FlushVisibleRemainder();
     }
@@ -85,9 +89,7 @@ public sealed class InlineThinkTextFilter {
     private static int FindLongestPrefixSuffix(string text, string tag) {
         int maxLength = Math.Min(text.Length, tag.Length - 1);
         for (int length = maxLength; length > 0; length--) {
-            if (text.EndsWith(tag.AsSpan(0, length), StringComparison.Ordinal)) {
-                return length;
-            }
+            if (text.EndsWith(tag.AsSpan(0, length), StringComparison.Ordinal)) { return length; }
         }
 
         return 0;

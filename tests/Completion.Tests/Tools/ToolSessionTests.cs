@@ -9,7 +9,7 @@ public sealed class ToolSessionTests {
         var alpha = new RecordingTool("alpha");
         var beta = new RecordingTool("beta");
         var registry = new ToolRegistry(new ITool[] { alpha, beta });
-        var session = registry.CreateSession(new ToolAccessSnapshot(hiddenToolNames: new[] { "BETA" }));
+        var session = registry.CreateSession(ToolAccessSnapshot.Hide(["BETA"]));
 
         var visibleDefinitions = session.VisibleDefinitions;
 
@@ -49,7 +49,7 @@ public sealed class ToolSessionTests {
         var first = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
         AssertSingleTextBlock(first.ExecuteResult.Blocks, "sequence=1 scope=");
 
-        session.Access = new ToolAccessSnapshot(hiddenToolNames: new[] { "unused" });
+        session.Access = ToolAccessSnapshot.Hide(["unused"]);
         var second = await session.ExecuteAsync(new RawToolCall("alpha", "call-2", "{}"), CancellationToken.None);
         AssertSingleTextBlock(second.ExecuteResult.Blocks, "sequence=2 scope=");
 
@@ -62,13 +62,40 @@ public sealed class ToolSessionTests {
     [Fact]
     public async Task ExecuteAsync_HiddenToolFailsAuthorization() {
         var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
-        var session = registry.CreateSession(new ToolAccessSnapshot(hiddenToolNames: new[] { "ALPHA" }));
+        var session = registry.CreateSession(ToolAccessSnapshot.Hide(["ALPHA"]));
 
         var result = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.ExecuteResult.Status);
         var block = Assert.Single(result.ExecuteResult.Blocks);
         Assert.Contains("不允许执行工具", Assert.IsType<ToolResultBlock.Text>(block).Content);
+    }
+
+    [Fact]
+    public void VisibleDefinitions_AllowOnlyModeRestrictsVisibilityAndExecution() {
+        var alpha = new RecordingTool("alpha");
+        var beta = new RecordingTool("beta");
+        var registry = new ToolRegistry(new ITool[] { alpha, beta });
+        var session = registry.CreateSession(ToolAccessSnapshot.AllowOnly(["beta"]));
+
+        var visibleDefinition = Assert.Single(session.VisibleDefinitions);
+        Assert.Equal("beta", visibleDefinition.Name);
+        Assert.False(session.TryGetTool("alpha", out _));
+        Assert.True(session.TryGetTool("beta", out var visibleTool));
+        Assert.Same(beta, visibleTool);
+    }
+
+    [Fact]
+    public void Intersect_AllowOnlyAndHide_ProducesExpectedCapabilityIntersection() {
+        var combined = ToolAccessSnapshot.Intersect(
+            ToolAccessSnapshot.AllowOnly(["alpha", "beta"]),
+            ToolAccessSnapshot.Hide(["beta", "gamma"])
+        );
+
+        Assert.Equal(ToolAccessMode.AllowOnlyListed, combined.Mode);
+        Assert.True(combined.IsVisible("alpha"));
+        Assert.False(combined.IsVisible("beta"));
+        Assert.False(combined.IsVisible("gamma"));
     }
 
     [Fact]

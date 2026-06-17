@@ -1,9 +1,14 @@
 namespace Atelia.Completion.Abstractions;
 
 /// <summary>
-/// 表示 Agent 历史中的一个事件，是对强化学习（RL）中 <c>history</c> 概念的抽象。
-/// 此接口旨在屏蔽不同聊天或助手（Chat/Assistant）服务提供商在角色命名上的差异，从而允许上层 Agent 能够以统一的方式处理观测（Observation）与动作（Action）序列。
+/// 表示一次 completion 调用前要发给 provider 的一条历史消息。
+/// 此接口旨在屏蔽不同聊天或助手（Chat/Assistant）服务提供商在角色命名上的差异，
+/// 从而允许上层 Agent 能够以统一的方式构造 observation / action 序列。
 /// </summary>
+/// <remarks>
+/// 它是 provider-facing projection unit，而不必等同于运行时内部的历史账本条目。
+/// 例如 Agent.Core 的 RecentHistory 可以按更细粒度记录事件，再在调用前把多个条目投影并合并成一条 <see cref="IHistoryMessage"/>。
+/// </remarks>
 public interface IHistoryMessage {
     /// <summary>
     /// 指示该历史事件的类型。其命名遵循强化学习（RL）中的 <c>Observation</c> 和 <c>Action</c> 术语，而非各服务提供商常用的 <c>user</c> 或 <c>assistant</c> 等角色名称。

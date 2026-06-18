@@ -58,6 +58,11 @@ public sealed class ToolSession {
     public IReadOnlyDictionary<string, object?>? Items { get; }
 
     /// <summary>
+    /// Optional observer invoked immediately after a tool execution sequence is allocated.
+    /// </summary>
+    public Action<long>? ExecutionSequenceAllocated { get; set; }
+
+    /// <summary>
     /// 当前 session 已分配到的最后一个执行序号。
     /// 值为 <c>0</c> 表示尚未执行过任何工具调用。
     /// </summary>
@@ -132,5 +137,9 @@ public sealed class ToolSession {
         Interlocked.Exchange(ref _nextExecutionSequence, lastIssuedExecutionSequence);
     }
 
-    internal long AllocateExecutionSequence() => Interlocked.Increment(ref _nextExecutionSequence);
+    internal long AllocateExecutionSequence() {
+        var sequence = Interlocked.Increment(ref _nextExecutionSequence);
+        ExecutionSequenceAllocated?.Invoke(sequence);
+        return sequence;
+    }
 }

@@ -63,12 +63,16 @@ public sealed class ToolSessionTests {
     public async Task ExecuteAsync_HiddenToolFailsAuthorization() {
         var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
         var session = registry.CreateSession(ToolAccessSnapshot.Hide(["ALPHA"]));
+        var allocatedSequences = new List<long>();
+        session.ExecutionSequenceAllocated = allocatedSequences.Add;
 
         var result = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
 
         Assert.Equal(ToolExecutionStatus.Failed, result.ExecuteResult.Status);
         var block = Assert.Single(result.ExecuteResult.Blocks);
         Assert.Contains("不允许执行工具", Assert.IsType<ToolResultBlock.Text>(block).Content);
+        Assert.Equal([1L], allocatedSequences);
+        Assert.Equal(1L, session.LastIssuedExecutionSequence);
     }
 
     [Fact]

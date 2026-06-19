@@ -64,7 +64,12 @@ public sealed class ToolSessionTests {
         var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
         var session = registry.CreateSession(ToolAccessSnapshot.Hide(["ALPHA"]));
         var allocatedSequences = new List<long>();
-        session.ExecutionSequenceAllocated = allocatedSequences.Add;
+        long authoritativeSequence = 0;
+        session.AuthoritativeExecutionSequenceAllocator = () => {
+            var next = ++authoritativeSequence;
+            allocatedSequences.Add(next);
+            return next;
+        };
 
         var result = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
 
@@ -72,6 +77,28 @@ public sealed class ToolSessionTests {
         var block = Assert.Single(result.ExecuteResult.Blocks);
         Assert.Contains("不允许执行工具", Assert.IsType<ToolResultBlock.Text>(block).Content);
         Assert.Equal([1L], allocatedSequences);
+        Assert.Equal(1L, session.LastIssuedExecutionSequence);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AuthoritativeAllocatorFailure_DoesNotAdvanceLocalSequence() {
+        var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
+        var session = registry.CreateSession();
+
+        session.AuthoritativeExecutionSequenceAllocator = () => throw new InvalidOperationException("persist-failed");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None).AsTask()
+        );
+        Assert.Equal("persist-failed", exception.Message);
+        Assert.Equal(0L, session.LastIssuedExecutionSequence);
+
+        long authoritativeSequence = 0;
+        session.AuthoritativeExecutionSequenceAllocator = () => ++authoritativeSequence;
+
+        var result = await session.ExecuteAsync(new RawToolCall("alpha", "call-2", "{}"), CancellationToken.None);
+
+        AssertSingleTextBlock(result.ExecuteResult.Blocks, "sequence=1 scope=");
         Assert.Equal(1L, session.LastIssuedExecutionSequence);
     }
 

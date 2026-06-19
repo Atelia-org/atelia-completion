@@ -58,9 +58,11 @@ public sealed class ToolSession {
     public IReadOnlyDictionary<string, object?>? Items { get; }
 
     /// <summary>
-    /// Optional observer invoked immediately after a tool execution sequence is allocated.
+    /// Optional authoritative allocator invoked before a tool execution sequence is consumed.
+    /// Live durable hosts can use this to reserve the next execution sequence in durable state first,
+    /// then let the session backfill the local checkpoint from that authoritative value.
     /// </summary>
-    public Action<long>? ExecutionSequenceAllocated { get; set; }
+    public Func<long>? AuthoritativeExecutionSequenceAllocator { get; set; }
 
     /// <summary>
     /// 当前 session 已分配到的最后一个执行序号。
@@ -138,8 +140,20 @@ public sealed class ToolSession {
     }
 
     internal long AllocateExecutionSequence() {
+        if (AuthoritativeExecutionSequenceAllocator is not null) {
+            var current = Interlocked.Read(ref _nextExecutionSequence);
+            var authoritativeSequence = AuthoritativeExecutionSequenceAllocator();
+            if (authoritativeSequence <= current) {
+                throw new InvalidOperationException(
+                    $"Authoritative tool session execution allocator must advance the sequence. Current={current}, Allocated={authoritativeSequence}."
+                );
+            }
+
+            Interlocked.Exchange(ref _nextExecutionSequence, authoritativeSequence);
+            return authoritativeSequence;
+        }
+
         var sequence = Interlocked.Increment(ref _nextExecutionSequence);
-        ExecutionSequenceAllocated?.Invoke(sequence);
         return sequence;
     }
 }

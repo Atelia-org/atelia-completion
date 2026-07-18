@@ -102,9 +102,7 @@ public sealed record ToolResultsMessage : ObservationMessage {
     public ToolResultsMessage(string? content, IReadOnlyList<ToolResult> results)
         : base(content) {
         ArgumentNullException.ThrowIfNull(results);
-        if (results.Any(static result => result is null)) {
-            throw new ArgumentException("Tool results cannot contain null elements.", nameof(results));
-        }
+        if (results.Any(static result => result is null)) { throw new ArgumentException("Tool results cannot contain null elements.", nameof(results)); }
         Results = Array.AsReadOnly(results.ToArray());
     }
 
@@ -116,6 +114,11 @@ public sealed record ToolResultsMessage : ObservationMessage {
 /// 定义历史消息的类型。命名遵循强化学习（RL）的术语，为未来向更高级的 Agentic 模式演进预留空间，其内部可映射到不同服务提供商的角色定义。
 /// </summary>
 public enum HistoryMessageKind {
+    /// <summary>
+    /// 上层会话账本中的上下文头。它不是 provider-facing 消息；调用 completion 前必须由宿主投影成 system / observation / action 片段。
+    /// </summary>
+    ContextHeader,
+
     /// <summary>
     /// 从环境到 Agent 的观测信息。
     /// </summary>

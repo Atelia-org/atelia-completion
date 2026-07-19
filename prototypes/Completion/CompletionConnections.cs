@@ -54,7 +54,6 @@ public static class CompletionConnectionConfigLoader {
             RequireNonBlank(connection.Kind, $"Completion connection '{connection.Id}' must have a non-empty kind.");
             RequireNonBlank(connection.ModelId, $"Completion connection '{connection.Id}' must have a non-empty modelId.");
             RequireNonBlank(connection.CompletionSurfaceId, $"Completion connection '{connection.Id}' must have a non-empty completionSurfaceId.");
-            RequireNonBlank(connection.BaseAddress, $"Completion connection '{connection.Id}' must have a non-empty baseAddress.");
 
             string baseAddress = connection.BaseAddress;
             string? apiKey = connection.ApiKey;
@@ -80,6 +79,8 @@ public static class CompletionConnectionConfigLoader {
                 }
                 apiKey = resolved;
             }
+
+            RequireNonBlank(baseAddress, $"Completion connection '{connection.Id}' must have a non-empty baseAddress.");
 
             resolvedConnections.Add(connection with { BaseAddress = baseAddress, ApiKey = apiKey });
         }

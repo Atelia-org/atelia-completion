@@ -51,7 +51,11 @@ public static class CompletionConnectionConfigLoader {
 
             RequireNonBlank(connection.Kind, $"Completion connection '{connection.Id}' must have a non-empty kind.");
             RequireNonBlank(connection.ModelId, $"Completion connection '{connection.Id}' must have a non-empty modelId.");
-            RequireNonBlank(connection.CompletionSurfaceId, $"Completion connection '{connection.Id}' must have a non-empty completionSurfaceId.");
+
+            // completionSurfaceId only disambiguates the openai-chat dialect; for single-surface
+            // kinds (anthropic, openai-responses) it is redundant, so default it from the kind when
+            // omitted instead of forcing every connection to spell it out.
+            string completionSurfaceId = ResolveCompletionSurfaceId(connection.Kind, connection.CompletionSurfaceId);
 
             string baseAddress = connection.BaseAddress;
             string? apiKey = connection.ApiKey;
@@ -80,7 +84,7 @@ public static class CompletionConnectionConfigLoader {
 
             RequireNonBlank(baseAddress, $"Completion connection '{connection.Id}' must have a non-empty baseAddress.");
 
-            resolvedConnections.Add(connection with { BaseAddress = baseAddress, ApiKey = apiKey });
+            resolvedConnections.Add(connection with { CompletionSurfaceId = completionSurfaceId, BaseAddress = baseAddress, ApiKey = apiKey });
         }
 
         string defaultConnectionId = !string.IsNullOrWhiteSpace(config.DefaultConnectionId)
@@ -94,6 +98,20 @@ public static class CompletionConnectionConfigLoader {
 
     private static void RequireNonBlank(string? value, string message) {
         if (string.IsNullOrWhiteSpace(value)) { throw new InvalidOperationException(message); }
+    }
+
+    private static string ResolveCompletionSurfaceId(string kind, string? explicitSurfaceId) {
+        if (!string.IsNullOrWhiteSpace(explicitSurfaceId)) { return explicitSurfaceId; }
+
+        // openai-chat defaults to the strict dialect, matching DefaultCompletionClientFactory's
+        // fallback; anthropic/openai-responses have a single surface. Unknown kinds fall back to
+        // the kind itself so the value stays non-blank for logging/storage.
+        return kind.Trim().ToLowerInvariant() switch {
+            "openai-chat" => "openai-chat/strict",
+            "openai-responses" => "openai-responses",
+            "anthropic" => "anthropic",
+            _ => kind.Trim()
+        };
     }
 }
 

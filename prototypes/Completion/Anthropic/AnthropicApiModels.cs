@@ -14,7 +14,7 @@ internal sealed class AnthropicApiRequest {
     public required List<AnthropicMessage> Messages { get; set; }
 
     [JsonPropertyName("max_tokens")]
-    public int MaxTokens { get; set; } = 32000;
+    public int MaxTokens { get; set; } = 200_000;
 
     [JsonPropertyName("system")]
     public string? System { get; set; }

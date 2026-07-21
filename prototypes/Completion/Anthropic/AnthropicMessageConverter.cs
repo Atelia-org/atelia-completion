@@ -15,7 +15,7 @@ internal static class AnthropicMessageConverter {
     private const string DebugCategory = "Provider";
     private const string EmptyLeadingUserPlaceholder = "<empty>";
 
-    public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request, int? defaultMaxTokens = null) {
+    public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request, int? defaultMaxTokens = null, bool enablePromptCaching = false) {
         var messages = new List<AnthropicMessage>();
         var pendingToolCalls = new List<PendingToolCall>();
 
@@ -66,11 +66,44 @@ internal static class AnthropicMessageConverter {
             Tools = BuildToolDefinitions(request.Tools)
         };
 
+        if (enablePromptCaching) {
+            ApplyPromptCaching(apiRequest);
+        }
+
         DebugUtil.Info(
             DebugCategory,
             $"[Anthropic] Converted {request.Context.Count} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}"
         );
         return apiRequest;
+    }
+
+    /// <summary>
+    /// 在稳定前缀的各段末尾放置 ephemeral cache 断点（Anthropic 前缀顺序：tools → system → messages）。
+    /// 断点最多 4 个；此处最多用 3 个，使多轮 tool loop 能命中前缀缓存——后续轮次仅重算新增尾部，
+    /// 稳定前缀（tools + system + 已有历史）按缓存读取计费。
+    /// </summary>
+    private static void ApplyPromptCaching(AnthropicApiRequest apiRequest) {
+        // 1) tools 段末尾：缓存整段工具定义。
+        if (apiRequest.Tools is { Count: > 0 } tools) {
+            tools[^1].CacheControl = AnthropicCacheControl.Ephemeral;
+        }
+
+        // 2) system 段：转为 content-block 数组形式以承载 cache_control。
+        if (apiRequest.System is string systemText && !string.IsNullOrWhiteSpace(systemText)) {
+            apiRequest.System = new List<AnthropicSystemTextBlock> {
+                new() { Text = systemText, CacheControl = AnthropicCacheControl.Ephemeral }
+            };
+        }
+
+        // 3) messages 段末尾（最后一条消息的最后一个内容块）：缓存 tools + system + 全部历史前缀。
+        //    请求 completion 时最后一条消息恒为 user（observation / tool_result），其末块为 text / tool_result，
+        //    可安全承载 cache_control；下一轮请求即可命中该前缀。
+        if (apiRequest.Messages is { Count: > 0 } messages) {
+            var lastBlocks = messages[^1].Content;
+            if (lastBlocks.Count > 0) {
+                lastBlocks[^1].CacheControl = AnthropicCacheControl.Ephemeral;
+            }
+        }
     }
 
     private static void BuildObservationMessage(ObservationMessage input, List<AnthropicMessage> messages, List<PendingToolCall> pendingToolCalls) {

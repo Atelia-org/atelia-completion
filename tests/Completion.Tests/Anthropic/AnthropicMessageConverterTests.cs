@@ -559,4 +559,121 @@ public sealed class AnthropicMessageConverterTests {
 
         Assert.Contains("Cannot replay non-Anthropic reasoning block", exception.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ConvertToApiRequest_PromptCachingDisabledByDefault_LeavesSystemStringAndNoBreakpoints() {
+        var request = BuildToolLoopRequest();
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        Assert.IsType<string>(apiRequest.System);
+        Assert.Null(Assert.Single(apiRequest.Tools!).CacheControl);
+        Assert.All(
+            apiRequest.Messages.SelectMany(message => message.Content),
+            block => Assert.Null(block.CacheControl)
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_PromptCachingEnabled_MarksToolsSystemAndLastMessageBreakpoints() {
+        var request = BuildToolLoopRequest();
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, defaultMaxTokens: null, enablePromptCaching: true);
+
+        // system 段：转为 content-block 数组并在其上打断点。
+        var systemBlocks = Assert.IsType<List<AnthropicSystemTextBlock>>(apiRequest.System);
+        var systemBlock = Assert.Single(systemBlocks);
+        Assert.Equal("You are a helpful assistant.", systemBlock.Text);
+        Assert.Equal("ephemeral", Assert.IsType<AnthropicCacheControl>(systemBlock.CacheControl).Type);
+
+        // tools 段：最后一个 tool 打断点。
+        Assert.Equal("ephemeral", Assert.IsType<AnthropicCacheControl>(Assert.Single(apiRequest.Tools!).CacheControl).Type);
+
+        // messages 段：仅最后一条消息的最后一个内容块打断点。
+        var lastMessage = apiRequest.Messages[^1];
+        Assert.NotNull(lastMessage.Content[^1].CacheControl);
+        var markedBlocks = apiRequest.Messages
+            .SelectMany(message => message.Content)
+            .Count(block => block.CacheControl is not null);
+        Assert.Equal(1, markedBlocks);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_PromptCachingEnabled_SerializesSystemArrayWithCacheControl() {
+        var request = BuildToolLoopRequest();
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, defaultMaxTokens: null, enablePromptCaching: true);
+
+        var options = new JsonSerializerOptions {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        };
+        var json = JsonSerializer.Serialize(apiRequest, options);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        var systemArray = root.GetProperty("system");
+        Assert.Equal(JsonValueKind.Array, systemArray.ValueKind);
+        var firstSystem = systemArray[0];
+        Assert.Equal("text", firstSystem.GetProperty("type").GetString());
+        Assert.Equal("ephemeral", firstSystem.GetProperty("cache_control").GetProperty("type").GetString());
+
+        var toolsArray = root.GetProperty("tools");
+        var lastTool = toolsArray[toolsArray.GetArrayLength() - 1];
+        Assert.Equal("ephemeral", lastTool.GetProperty("cache_control").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_PromptCachingEnabledWithoutSystem_SkipsSystemBreakpoint() {
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, defaultMaxTokens: null, enablePromptCaching: true);
+
+        Assert.Null(apiRequest.System);
+        Assert.Null(apiRequest.Tools);
+        var lastMessage = apiRequest.Messages[^1];
+        Assert.NotNull(lastMessage.Content[^1].CacheControl);
+    }
+
+    private static CompletionRequest BuildToolLoopRequest() {
+        var action = new ActionMessage(
+            new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")) }
+        );
+
+        return new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: "You are a helpful assistant.",
+            Context: new IHistoryMessage[] {
+                new ObservationMessage("Please search."),
+                action,
+                new ToolResultsMessage(
+                    content: null,
+                    results: new[] {
+                        ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
+                    }
+                )
+            },
+            Tools: ImmutableArray.Create(CreateSimpleTool())
+        );
+    }
+
+    private static ToolDefinition CreateSimpleTool()
+        => new(
+            name: "search",
+            description: "Search for something.",
+            inputSchema: new ToolSchema.Object(
+                properties: [
+                    new ToolSchema.Property(
+                        "query",
+                        new ToolSchema.Value(ToolParamType.String, description: "Query text."),
+                        isRequired: true
+                    )
+                ]
+            )
+        );
 }

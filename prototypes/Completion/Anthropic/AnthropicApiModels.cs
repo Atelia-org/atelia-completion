@@ -16,8 +16,12 @@ internal sealed class AnthropicApiRequest {
     [JsonPropertyName("max_tokens")]
     public int MaxTokens { get; set; } = 200_000;
 
+    /// <summary>
+    /// system 提示。默认承载一个 <see cref="string"/>；启用 prompt caching 时会被替换为
+    /// <see cref="List{T}"/> of <see cref="AnthropicSystemTextBlock"/>（数组形式）以承载 cache_control 断点。
+    /// </summary>
     [JsonPropertyName("system")]
-    public string? System { get; set; }
+    public object? System { get; set; }
 
     [JsonPropertyName("stream")]
     public bool Stream { get; set; }
@@ -52,6 +56,35 @@ internal sealed class AnthropicMessage {
 [JsonDerivedType(typeof(AnthropicToolUseBlock), "tool_use")]
 [JsonDerivedType(typeof(AnthropicToolResultBlock), "tool_result")]
 internal abstract class AnthropicContentBlock {
+    /// <summary>
+    /// 可选的 prompt caching 断点。非 null 时，Anthropic 会缓存自请求开头到本块（含）的整个前缀。
+    /// </summary>
+    [JsonPropertyName("cache_control")]
+    public AnthropicCacheControl? CacheControl { get; set; }
+}
+
+/// <summary>
+/// Anthropic prompt caching 断点标记。<c>type</c> 目前固定为 <c>ephemeral</c>。
+/// </summary>
+internal sealed class AnthropicCacheControl {
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "ephemeral";
+
+    public static AnthropicCacheControl Ephemeral { get; } = new();
+}
+
+/// <summary>
+/// system 提示的 content-block 形式（数组形式的 system），用于承载 cache_control 断点。
+/// </summary>
+internal sealed class AnthropicSystemTextBlock {
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "text";
+
+    [JsonPropertyName("text")]
+    public required string Text { get; set; }
+
+    [JsonPropertyName("cache_control")]
+    public AnthropicCacheControl? CacheControl { get; set; }
 }
 
 /// <summary>
@@ -129,4 +162,10 @@ internal sealed class AnthropicTool {
 
     [JsonPropertyName("input_schema")]
     public required JsonElement InputSchema { get; set; }
+
+    /// <summary>
+    /// 可选的 prompt caching 断点。放在最后一个 tool 上可缓存整段 tools 定义。
+    /// </summary>
+    [JsonPropertyName("cache_control")]
+    public AnthropicCacheControl? CacheControl { get; set; }
 }

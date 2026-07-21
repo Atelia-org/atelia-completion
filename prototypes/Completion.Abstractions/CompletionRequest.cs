@@ -7,5 +7,6 @@ public sealed record CompletionRequest(
     string ModelId,
     string SystemPrompt,
     IReadOnlyList<IHistoryMessage> Context,
-    ImmutableArray<ToolDefinition> Tools
+    ImmutableArray<ToolDefinition> Tools,
+    int? MaxTokens = null
 );

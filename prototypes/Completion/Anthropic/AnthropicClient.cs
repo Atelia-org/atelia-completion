@@ -22,11 +22,12 @@ public sealed class AnthropicClient : ICompletionClient {
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
     private readonly string _apiVersion;
+    private readonly int? _defaultMaxTokens;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "anthropic";
     public string ApiSpecId => "messages-v1";
 
-    public AnthropicClient(string? apiKey, HttpClient httpClient, string? apiVersion = null) {
+    public AnthropicClient(string? apiKey, HttpClient httpClient, string? apiVersion = null, int? defaultMaxTokens = null) {
         Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
 
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
@@ -34,8 +35,9 @@ public sealed class AnthropicClient : ICompletionClient {
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(AnthropicClient));
 
         _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
+        _defaultMaxTokens = defaultMaxTokens;
 
-        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}");
+        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, defaultMaxTokens={_defaultMaxTokens?.ToString() ?? "(none)"}");
     }
 
     public async Task<CompletionResult> StreamCompletionAsync(
@@ -45,7 +47,7 @@ public sealed class AnthropicClient : ICompletionClient {
     ) {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, _defaultMaxTokens);
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);

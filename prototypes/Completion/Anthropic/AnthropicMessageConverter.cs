@@ -14,7 +14,7 @@ namespace Atelia.Completion.Anthropic;
 internal static class AnthropicMessageConverter {
     private const string DebugCategory = "Provider";
 
-    public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request) {
+    public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request, int? defaultMaxTokens = null) {
         var messages = new List<AnthropicMessage>();
         var pendingToolCalls = new List<PendingToolCall>();
 
@@ -55,7 +55,7 @@ internal static class AnthropicMessageConverter {
 
         var apiRequest = new AnthropicApiRequest {
             Model = request.ModelId,
-            MaxTokens = 4096, // 可配置
+            MaxTokens = request.MaxTokens ?? defaultMaxTokens ?? 32000,
             Messages = messages,
             System = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt,
             Stream = true,

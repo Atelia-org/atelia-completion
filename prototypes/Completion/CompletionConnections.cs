@@ -21,7 +21,8 @@ public sealed record CompletionConnectionConfig(
     string BaseAddress,
     string? ApiKey = null,
     string? BaseAddressEnv = null,
-    string? ApiKeyEnv = null
+    string? ApiKeyEnv = null,
+    int? MaxTokens = null
 );
 
 public static class CompletionConnectionConfigLoader {
@@ -137,7 +138,8 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
                 ),
                 "anthropic" => new AnthropicClient(
                     apiKey: connection.ApiKey,
-                    httpClient: httpClient
+                    httpClient: httpClient,
+                    defaultMaxTokens: connection.MaxTokens
                 ),
                 _ => throw new InvalidOperationException($"Unsupported completion connection kind '{connection.Kind}'.")
             };

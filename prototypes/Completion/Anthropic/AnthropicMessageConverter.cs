@@ -13,6 +13,7 @@ namespace Atelia.Completion.Anthropic;
 /// </summary>
 internal static class AnthropicMessageConverter {
     private const string DebugCategory = "Provider";
+    private const string EmptyLeadingUserPlaceholder = "<empty>";
 
     public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request, int? defaultMaxTokens = null) {
         var messages = new List<AnthropicMessage>();
@@ -41,12 +42,15 @@ internal static class AnthropicMessageConverter {
 
         EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
 
-        // Anthropic 要求第一条消息必须是 user。这一点不受后续"合并同 role 连续消息"的 normalize
-        // 影响（合并不会改变首条 role），提前检查可以让职责更清晰。
+        // 通用历史允许以 Action 开头（例如 ContextHeader 只有 Action memory carrier）。
+        // Anthropic 要求第一条消息必须是 user，且拒绝空文本，因此补一个最小非空形式占位符。
         if (messages.Count > 0 && messages[0].Role != "user") {
-            throw new InvalidOperationException(
-                "Anthropic conversations must start with a user message; the first projected message was assistant. "
-                + "Ensure the history begins with an Observation or ToolResults entry."
+            messages.Insert(
+                0,
+                new AnthropicMessage {
+                    Role = "user",
+                    Content = [new AnthropicTextBlock { Text = EmptyLeadingUserPlaceholder }]
+                }
             );
         }
 

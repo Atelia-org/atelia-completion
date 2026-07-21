@@ -390,9 +390,8 @@ public sealed class AnthropicMessageConverterTests {
     }
 
     [Fact]
-    public void ConvertToApiRequest_LeadingAssistantThrows() {
-        // Anthropic 要求第一条消息必须是 user；上游提供了以 Action 开头的历史应被早期拒绝，
-        // 而不是静默垫一个会被 API 拒绝的空文本块。
+    public void ConvertToApiRequest_LeadingAssistantGetsNonEmptyUserPlaceholder() {
+        // 通用历史允许 Action 开头；Anthropic projection 用非空占位 user 满足首消息约束。
         var actionMessage = new ActionMessage(
             new ActionBlock[] { new ActionBlock.Text("hello") }
         );
@@ -400,15 +399,31 @@ public sealed class AnthropicMessageConverterTests {
         var request = new CompletionRequest(
             ModelId: "claude-3",
             SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionMessage },
+            Context: new IHistoryMessage[] {
+                new ObservationMessage(null),
+                actionMessage,
+                new ObservationMessage("next")
+            },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => AnthropicMessageConverter.ConvertToApiRequest(request)
-        );
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
 
-        Assert.Contains("must start with a user message", exception.Message, StringComparison.Ordinal);
+        Assert.Collection(
+            apiRequest.Messages,
+            message => {
+                Assert.Equal("user", message.Role);
+                Assert.Equal("<empty>", Assert.IsType<AnthropicTextBlock>(Assert.Single(message.Content)).Text);
+            },
+            message => {
+                Assert.Equal("assistant", message.Role);
+                Assert.Equal("hello", Assert.IsType<AnthropicTextBlock>(Assert.Single(message.Content)).Text);
+            },
+            message => {
+                Assert.Equal("user", message.Role);
+                Assert.Equal("next", Assert.IsType<AnthropicTextBlock>(Assert.Single(message.Content)).Text);
+            }
+        );
     }
 
     [Fact]

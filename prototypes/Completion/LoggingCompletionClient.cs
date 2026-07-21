@@ -131,7 +131,6 @@ public sealed record CompletionCallLogEntry(
 
 public sealed record CompletionCallLogConnectionSnapshot(
     string Id,
-    string DisplayName,
     string Kind,
     string ModelId,
     string CompletionSurfaceId,
@@ -148,7 +147,6 @@ public sealed record CompletionCallLogConnectionSnapshot(
 
         return new CompletionCallLogConnectionSnapshot(
             connection.Id,
-            connection.DisplayName,
             connection.Kind,
             connection.ModelId,
             connection.CompletionSurfaceId,

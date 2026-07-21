@@ -21,7 +21,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
                   "connections": [
                     {
                       "id": "local-qwen",
-                      "displayName": "Local Qwen",
                       "kind": "openai-chat",
                       "modelId": "unsloth/qwen3.6",
                       "completionSurfaceId": "openai-chat/sglang-compatible",
@@ -64,7 +63,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
                   "connections": [
                     {
                       "id": "local-qwen",
-                      "displayName": "Local Qwen",
                       "kind": "openai-chat",
                       "modelId": "unsloth/qwen3.6",
                       "completionSurfaceId": "openai-chat/sglang-compatible",

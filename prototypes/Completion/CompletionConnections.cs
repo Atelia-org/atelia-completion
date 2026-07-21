@@ -15,7 +15,6 @@ public sealed record CompletionConnectionsFileConfig(
 
 public sealed record CompletionConnectionConfig(
     string Id,
-    string DisplayName,
     string Kind,
     string ModelId,
     string CompletionSurfaceId,
@@ -50,7 +49,6 @@ public static class CompletionConnectionConfigLoader {
             RequireNonBlank(connection.Id, $"Completion connection[{i}] must have a non-empty id.");
             if (!connectionIds.Add(connection.Id)) { throw new InvalidOperationException($"Completion connections contain duplicate id '{connection.Id}'."); }
 
-            RequireNonBlank(connection.DisplayName, $"Completion connection '{connection.Id}' must have a non-empty displayName.");
             RequireNonBlank(connection.Kind, $"Completion connection '{connection.Id}' must have a non-empty kind.");
             RequireNonBlank(connection.ModelId, $"Completion connection '{connection.Id}' must have a non-empty modelId.");
             RequireNonBlank(connection.CompletionSurfaceId, $"Completion connection '{connection.Id}' must have a non-empty completionSurfaceId.");

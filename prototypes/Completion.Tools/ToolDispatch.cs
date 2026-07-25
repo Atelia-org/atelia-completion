@@ -17,12 +17,11 @@ internal static class ToolDispatch {
     public static async ValueTask<ToolCallExecutionResult> ExecuteAsync(
         ToolSession session,
         RawToolCall request,
+        long executionSequence,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(request);
-
-        var executionSequence = session.AllocateExecutionSequence();
         var context = new ToolExecutionContext(session, request, executionSequence);
 
         DebugUtil.Info(DebugCategory, $"[Dispatch] toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");

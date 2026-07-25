@@ -60,46 +60,51 @@ public sealed class ToolSessionTests {
     }
 
     [Fact]
-    public async Task ExecuteAsync_HiddenToolFailsAuthorization() {
+    public async Task ExecuteReservedAsync_HiddenToolFailsAuthorizationAfterAcceptingReservation() {
         var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
         var session = registry.CreateSession(ToolAccessSnapshot.Hide(["ALPHA"]));
-        var allocatedSequences = new List<long>();
-        long authoritativeSequence = 0;
-        session.AuthoritativeExecutionSequenceAllocator = () => {
-            var next = ++authoritativeSequence;
-            allocatedSequences.Add(next);
-            return next;
-        };
 
-        var result = await session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None);
+        var result = await session.ExecuteReservedAsync(
+            new RawToolCall("alpha", "call-1", "{}"),
+            7,
+            CancellationToken.None
+        );
 
         Assert.Equal(ToolExecutionStatus.Failed, result.ExecuteResult.Status);
         var block = Assert.Single(result.ExecuteResult.Blocks);
         Assert.Contains("不允许执行工具", Assert.IsType<ToolResultBlock.Text>(block).Content);
-        Assert.Equal([1L], allocatedSequences);
-        Assert.Equal(1L, session.LastIssuedExecutionSequence);
+        Assert.Equal(7L, session.LastIssuedExecutionSequence);
     }
 
     [Fact]
-    public async Task ExecuteAsync_AuthoritativeAllocatorFailure_DoesNotAdvanceLocalSequence() {
+    public async Task ExecuteReservedAsync_UsesExactDurableSequence_AndAllowsSameOperationRetry() {
         var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
         var session = registry.CreateSession();
 
-        session.AuthoritativeExecutionSequenceAllocator = () => throw new InvalidOperationException("persist-failed");
+        var first = await session.ExecuteReservedAsync(
+            new RawToolCall("alpha", "call-1", "{}"),
+            42,
+            CancellationToken.None
+        );
+        var retry = await session.ExecuteReservedAsync(
+            new RawToolCall("alpha", "call-1", "{}"),
+            42,
+            CancellationToken.None
+        );
+
+        AssertSingleTextBlock(first.ExecuteResult.Blocks, "sequence=42 scope=");
+        AssertSingleTextBlock(retry.ExecuteResult.Blocks, "sequence=42 scope=");
+        Assert.Equal(42L, session.LastIssuedExecutionSequence);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => session.ExecuteAsync(new RawToolCall("alpha", "call-1", "{}"), CancellationToken.None).AsTask()
+            () => session.ExecuteReservedAsync(
+                new RawToolCall("alpha", "call-stale", "{}"),
+                41,
+                CancellationToken.None
+            ).AsTask()
         );
-        Assert.Equal("persist-failed", exception.Message);
-        Assert.Equal(0L, session.LastIssuedExecutionSequence);
-
-        long authoritativeSequence = 0;
-        session.AuthoritativeExecutionSequenceAllocator = () => ++authoritativeSequence;
-
-        var result = await session.ExecuteAsync(new RawToolCall("alpha", "call-2", "{}"), CancellationToken.None);
-
-        AssertSingleTextBlock(result.ExecuteResult.Blocks, "sequence=1 scope=");
-        Assert.Equal(1L, session.LastIssuedExecutionSequence);
+        Assert.Contains("stale reserved tool sequence", exception.Message);
+        Assert.Equal(42L, session.LastIssuedExecutionSequence);
     }
 
     [Fact]

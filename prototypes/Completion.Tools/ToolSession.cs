@@ -58,13 +58,6 @@ public sealed class ToolSession {
     public IReadOnlyDictionary<string, object?>? Items { get; }
 
     /// <summary>
-    /// Optional authoritative allocator invoked before a tool execution sequence is consumed.
-    /// Live durable hosts can use this to reserve the next execution sequence in durable state first,
-    /// then let the session backfill the local checkpoint from that authoritative value.
-    /// </summary>
-    public Func<long>? AuthoritativeExecutionSequenceAllocator { get; set; }
-
-    /// <summary>
     /// 当前 session 已分配到的最后一个执行序号。
     /// 值为 <c>0</c> 表示尚未执行过任何工具调用。
     /// </summary>
@@ -111,7 +104,25 @@ public sealed class ToolSession {
     /// <see cref="ToolDispatch"/> 承担。
     /// </summary>
     public ValueTask<ToolCallExecutionResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken)
-        => ToolDispatch.ExecuteAsync(this, request, cancellationToken);
+        => ToolDispatch.ExecuteAsync(this, request, AllocateExecutionSequence(), cancellationToken);
+
+    /// <summary>
+    /// 使用宿主已经持久化保留的 execution sequence 执行一次工具调用。
+    /// durable host 必须先提交 reservation，再调用本方法；这样工具看到的
+    /// <see cref="ToolExecutionContext.ExecutionSequence"/> 与恢复协议中的序号完全一致。
+    /// </summary>
+    /// <remarks>
+    /// 允许重复使用当前最后一个序号，以便 uncertain execution 按同一个 durable operation 重试；
+    /// 小于当前序号会被拒绝。大于当前序号允许跨进程恢复直接跳到 durable checkpoint。
+    /// </remarks>
+    public ValueTask<ToolCallExecutionResult> ExecuteReservedAsync(
+        RawToolCall request,
+        long reservedExecutionSequence,
+        CancellationToken cancellationToken
+    ) {
+        AcceptReservedExecutionSequence(reservedExecutionSequence);
+        return ToolDispatch.ExecuteAsync(this, request, reservedExecutionSequence, cancellationToken);
+    }
 
     /// <summary>
     /// 将执行序号恢复到已知 checkpoint。
@@ -139,21 +150,24 @@ public sealed class ToolSession {
         Interlocked.Exchange(ref _nextExecutionSequence, lastIssuedExecutionSequence);
     }
 
-    internal long AllocateExecutionSequence() {
-        if (AuthoritativeExecutionSequenceAllocator is not null) {
-            var current = Interlocked.Read(ref _nextExecutionSequence);
-            var authoritativeSequence = AuthoritativeExecutionSequenceAllocator();
-            if (authoritativeSequence <= current) {
-                throw new InvalidOperationException(
-                    $"Authoritative tool session execution allocator must advance the sequence. Current={current}, Allocated={authoritativeSequence}."
-                );
-            }
+    private long AllocateExecutionSequence() => Interlocked.Increment(ref _nextExecutionSequence);
 
-            Interlocked.Exchange(ref _nextExecutionSequence, authoritativeSequence);
-            return authoritativeSequence;
+    private void AcceptReservedExecutionSequence(long reservedExecutionSequence) {
+        if (reservedExecutionSequence <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(reservedExecutionSequence),
+                reservedExecutionSequence,
+                "Reserved execution sequence must be greater than zero."
+            );
         }
 
-        var sequence = Interlocked.Increment(ref _nextExecutionSequence);
-        return sequence;
+        var current = Interlocked.Read(ref _nextExecutionSequence);
+        if (reservedExecutionSequence < current) {
+            throw new InvalidOperationException(
+                $"Cannot execute a stale reserved tool sequence. Current={current}, Reserved={reservedExecutionSequence}."
+            );
+        }
+
+        Interlocked.Exchange(ref _nextExecutionSequence, reservedExecutionSequence);
     }
 }

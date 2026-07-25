@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Encodings.Web;
@@ -28,6 +29,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
     private readonly CompletionConnectionConfig _connection;
     private readonly string _callLogDir;
     private readonly CompletionCallLogContext _context;
+    private readonly ConcurrentQueue<string> _writtenCallLogPaths = new();
     private int _nextCallId;
 
     public LoggingCompletionClient(
@@ -48,6 +50,9 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
     public string ApiSpecId => _inner.ApiSpecId;
 
+    public IReadOnlyList<string> WrittenCallLogPaths
+        => Array.AsReadOnly(_writtenCallLogPaths.ToArray());
+
     public async Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
@@ -55,7 +60,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
     ) {
         ArgumentNullException.ThrowIfNull(request);
 
-        int callId = Interlocked.Increment(ref _nextCallId);
+        using var reservation = ReserveCallLog();
         var startedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         CompletionResult result;
@@ -66,7 +71,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         catch (Exception ex) {
             stopwatch.Stop();
             try {
-                WriteCallLog(callId, startedAt, stopwatch.Elapsed, request, result: null, ex);
+                WriteCallLog(reservation, startedAt, stopwatch.Elapsed, request, result: null, ex);
             }
             catch (Exception logException) {
                 throw new AggregateException("Completion call failed and writing the call log also failed.", ex, logException);
@@ -75,7 +80,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         }
 
         stopwatch.Stop();
-        WriteCallLog(callId, startedAt, stopwatch.Elapsed, request, result, exception: null);
+        WriteCallLog(reservation, startedAt, stopwatch.Elapsed, request, result, exception: null);
         return result;
     }
 
@@ -91,8 +96,27 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         return max;
     }
 
+    private CallLogReservation ReserveCallLog() {
+        while (true) {
+            int callId = Interlocked.Increment(ref _nextCallId);
+            string path = Path.Combine(_callLogDir, $"{callId:0000}.json");
+            try {
+                var stream = new FileStream(
+                    path,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.Read
+                );
+                return new CallLogReservation(callId, path, stream);
+            }
+            catch (IOException) when (File.Exists(path)) {
+                // Another client or process reserved this numeric id first.
+            }
+        }
+    }
+
     private void WriteCallLog(
-        int callId,
+        CallLogReservation reservation,
         DateTimeOffset startedAt,
         TimeSpan elapsed,
         CompletionRequest request,
@@ -101,7 +125,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
     ) {
         var log = new CompletionCallLogEntry(
             Schema: "atelia.completion.call-log.v1",
-            CallId: callId,
+            CallId: reservation.CallId,
             TimestampUtc: startedAt,
             ElapsedMs: (long)elapsed.TotalMilliseconds,
             Connection: CompletionCallLogConnectionSnapshot.From(_connection, _inner),
@@ -111,9 +135,48 @@ public sealed class LoggingCompletionClient : ICompletionClient {
             Exception: exception is null ? null : CompletionCallLogException.From(exception)
         );
 
-        string path = Path.Combine(_callLogDir, $"{callId:0000}.json");
-        string json = JsonSerializer.Serialize(log, JsonOptions);
-        File.WriteAllText(path, json);
+        JsonSerializer.Serialize(reservation.Stream, log, JsonOptions);
+        reservation.Complete();
+        _writtenCallLogPaths.Enqueue(reservation.Path);
+    }
+
+    private sealed class CallLogReservation(
+        int callId,
+        string path,
+        FileStream stream
+    ) : IDisposable {
+        private bool _completed;
+        private bool _disposed;
+
+        public int CallId { get; } = callId;
+        public string Path { get; } = path;
+        public FileStream Stream { get; } = stream;
+
+        public void Complete() {
+            Stream.Flush();
+            Stream.Dispose();
+            _completed = true;
+        }
+
+        public void Dispose() {
+            if (_disposed) { return; }
+            _disposed = true;
+            if (_completed) { return; }
+
+            try {
+                Stream.Dispose();
+            }
+            catch {
+                // Best-effort cleanup must not replace the original completion/logging failure.
+            }
+
+            try {
+                File.Delete(Path);
+            }
+            catch {
+                // Best-effort cleanup for an incomplete reserved log.
+            }
+        }
     }
 }
 

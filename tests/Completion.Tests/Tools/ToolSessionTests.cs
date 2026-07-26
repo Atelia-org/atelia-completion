@@ -36,6 +36,7 @@ public sealed class ToolSessionTests {
         AssertSingleTextBlock(second.ExecuteResult.Blocks, "sequence=2 scope=session-scope");
         Assert.NotNull(tool.LastContext);
         Assert.Equal(2, tool.LastContext!.ExecutionSequence);
+        Assert.Null(tool.LastContext.OperationId);
         Assert.Equal("session-scope", tool.LastContext.Items!["scope"]);
     }
 
@@ -67,6 +68,7 @@ public sealed class ToolSessionTests {
         var result = await session.ExecuteReservedAsync(
             new RawToolCall("alpha", "call-1", "{}"),
             7,
+            operationId: "operation-7",
             CancellationToken.None
         );
 
@@ -78,33 +80,56 @@ public sealed class ToolSessionTests {
 
     [Fact]
     public async Task ExecuteReservedAsync_UsesExactDurableSequence_AndAllowsSameOperationRetry() {
-        var registry = new ToolRegistry(new ITool[] { new RecordingTool("alpha") });
+        var tool = new RecordingTool("alpha");
+        var registry = new ToolRegistry(new ITool[] { tool });
         var session = registry.CreateSession();
 
         var first = await session.ExecuteReservedAsync(
             new RawToolCall("alpha", "call-1", "{}"),
             42,
+            operationId: "operation-42",
             CancellationToken.None
         );
         var retry = await session.ExecuteReservedAsync(
             new RawToolCall("alpha", "call-1", "{}"),
             42,
+            operationId: "operation-42",
             CancellationToken.None
         );
 
         AssertSingleTextBlock(first.ExecuteResult.Blocks, "sequence=42 scope=");
         AssertSingleTextBlock(retry.ExecuteResult.Blocks, "sequence=42 scope=");
         Assert.Equal(42L, session.LastIssuedExecutionSequence);
+        Assert.Equal("operation-42", tool.LastContext?.OperationId);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => session.ExecuteReservedAsync(
                 new RawToolCall("alpha", "call-stale", "{}"),
                 41,
+                operationId: "operation-stale",
                 CancellationToken.None
             ).AsTask()
         );
         Assert.Contains("stale reserved tool sequence", exception.Message);
         Assert.Equal(42L, session.LastIssuedExecutionSequence);
+    }
+
+    [Fact]
+    public void ExecuteReservedAsync_BlankOperationIdFailsBeforeAcceptingReservation() {
+        var session = new ToolRegistry([
+            new RecordingTool("alpha")
+        ]).CreateSession();
+
+        Assert.Throws<ArgumentException>(
+            () => session.ExecuteReservedAsync(
+                new RawToolCall("alpha", "call-1", "{}"),
+                7,
+                operationId: " ",
+                CancellationToken.None
+            )
+        );
+
+        Assert.Equal(0, session.LastIssuedExecutionSequence);
     }
 
     [Fact]
@@ -161,6 +186,7 @@ public sealed class ToolSessionTests {
         Assert.Same(session, context.Session);
         Assert.Same(services, context.Services);
         Assert.Same(items, context.Items);
+        Assert.Null(context.OperationId);
     }
 
     [Fact]

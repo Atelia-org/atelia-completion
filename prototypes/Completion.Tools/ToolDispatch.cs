@@ -18,11 +18,17 @@ internal static class ToolDispatch {
         ToolSession session,
         RawToolCall request,
         long executionSequence,
+        string? operationId,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(request);
-        var context = new ToolExecutionContext(session, request, executionSequence);
+        var context = new ToolExecutionContext(
+            session,
+            request,
+            executionSequence,
+            operationId
+        );
 
         DebugUtil.Info(DebugCategory, $"[Dispatch] toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
 

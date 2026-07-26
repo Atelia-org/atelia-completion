@@ -6,13 +6,21 @@ public sealed record ToolExecutionContext {
     public ToolExecutionContext(
         ToolSession session,
         RawToolCall rawToolCall,
-        long executionSequence
+        long executionSequence,
+        string? operationId = null
     ) {
         Session = session ?? throw new ArgumentNullException(nameof(session));
         RawToolCall = rawToolCall ?? throw new ArgumentNullException(nameof(rawToolCall));
         if (executionSequence <= 0) { throw new ArgumentOutOfRangeException(nameof(executionSequence), executionSequence, "Execution sequence must be greater than zero."); }
+        if (operationId is not null && string.IsNullOrWhiteSpace(operationId)) {
+            throw new ArgumentException(
+                "Operation id must be null or non-empty.",
+                nameof(operationId)
+            );
+        }
 
         ExecutionSequence = executionSequence;
+        OperationId = operationId;
     }
 
     public ToolSession Session { get; }
@@ -20,6 +28,12 @@ public sealed record ToolExecutionContext {
     public RawToolCall RawToolCall { get; }
 
     public long ExecutionSequence { get; }
+
+    /// <summary>
+    /// Stable host-supplied identity for a durable tool operation, or <c>null</c>
+    /// when the host does not provide durable execution semantics.
+    /// </summary>
+    public string? OperationId { get; }
 
     public IServiceProvider? Services => Session.Services;
 

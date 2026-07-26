@@ -104,7 +104,13 @@ public sealed class ToolSession {
     /// <see cref="ToolDispatch"/> 承担。
     /// </summary>
     public ValueTask<ToolCallExecutionResult> ExecuteAsync(RawToolCall request, CancellationToken cancellationToken)
-        => ToolDispatch.ExecuteAsync(this, request, AllocateExecutionSequence(), cancellationToken);
+        => ToolDispatch.ExecuteAsync(
+            this,
+            request,
+            AllocateExecutionSequence(),
+            operationId: null,
+            cancellationToken
+        );
 
     /// <summary>
     /// 使用宿主已经持久化保留的 execution sequence 执行一次工具调用。
@@ -118,10 +124,23 @@ public sealed class ToolSession {
     public ValueTask<ToolCallExecutionResult> ExecuteReservedAsync(
         RawToolCall request,
         long reservedExecutionSequence,
+        string? operationId,
         CancellationToken cancellationToken
     ) {
+        if (operationId is not null && string.IsNullOrWhiteSpace(operationId)) {
+            throw new ArgumentException(
+                "Operation id must be null or non-empty.",
+                nameof(operationId)
+            );
+        }
         AcceptReservedExecutionSequence(reservedExecutionSequence);
-        return ToolDispatch.ExecuteAsync(this, request, reservedExecutionSequence, cancellationToken);
+        return ToolDispatch.ExecuteAsync(
+            this,
+            request,
+            reservedExecutionSequence,
+            operationId,
+            cancellationToken
+        );
     }
 
     /// <summary>

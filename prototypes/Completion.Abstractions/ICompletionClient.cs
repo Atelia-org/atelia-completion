@@ -53,12 +53,22 @@ public interface ICompletionClient {
 /// 但本类保持上述区分以提升表达精度。</para>
 /// </remarks>
 public sealed class CompletionStreamObserver {
+    private int _shouldStop;
+
     /// <summary>
     /// 设为 <see langword="true"/> 以请求提前终止流处理。
     /// 已聚合的部分结果仍会通过 <see cref="CompletionResult"/> 返回。
-    /// 一旦设为 <see langword="true"/> 不会自动复位（单向累积语义）。
+    /// 一旦设为 <see langword="true"/>，后续写入 <see langword="false"/>
+    /// 也不会复位（线程安全的单向累积语义）。
     /// </summary>
-    public bool ShouldStop { get; set; }
+    public bool ShouldStop {
+        get => Volatile.Read(ref _shouldStop) != 0;
+        set {
+            if (value) {
+                _ = Interlocked.Exchange(ref _shouldStop, 1);
+            }
+        }
+    }
 
     // ── 文本增量 ──
 

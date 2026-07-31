@@ -225,6 +225,107 @@ public sealed class CompletionConnectionRegistry : IDisposable {
         );
     }
 
+    /// <summary>
+    /// Binds an exact durable dispatch identity without falling back to the
+    /// default connection. Connection metadata is validated before a concrete
+    /// client is created; adapter identity is validated after creation.
+    /// </summary>
+    public CompletionDispatchBindingResult BindExact(
+        CompletionDispatchIdentity required
+    ) {
+        ArgumentNullException.ThrowIfNull(required);
+        if (!_byId.TryGetValue(
+                required.ConnectionId,
+                out CompletionConnectionConfig? connection
+            )) {
+            return Unavailable(
+                CompletionDispatchBindingUnavailableReason
+                    .ConnectionMissing,
+                $"Required completion connection "
+                + $"'{required.ConnectionId}' is not registered."
+            );
+        }
+        if (!string.Equals(
+                connection.Kind,
+                required.Kind,
+                StringComparison.Ordinal
+            )) {
+            return Unavailable(
+                CompletionDispatchBindingUnavailableReason
+                    .ConnectionKindMismatch,
+                $"Completion connection '{required.ConnectionId}' kind "
+                + "does not match the required dispatch identity."
+            );
+        }
+        string connectionFingerprint =
+            CompletionDispatchIdentityFactory
+                .ComputeConnectionFingerprint(connection);
+        if (!string.Equals(
+                connectionFingerprint,
+                required.ConnectionFingerprint,
+                StringComparison.Ordinal
+            )) {
+            return Unavailable(
+                CompletionDispatchBindingUnavailableReason
+                    .ConnectionFingerprintMismatch,
+                $"Completion connection '{required.ConnectionId}' "
+                + "metadata does not match the required dispatch identity."
+            );
+        }
+
+        ICompletionClient client = GetClient(connection.Id);
+        if (!string.Equals(
+                client.Name,
+                required.ClientName,
+                StringComparison.Ordinal
+            )) {
+            return Unavailable(
+                CompletionDispatchBindingUnavailableReason
+                    .ClientNameMismatch,
+                $"Completion connection '{required.ConnectionId}' client "
+                + "name does not match the required dispatch identity."
+            );
+        }
+        if (!string.Equals(
+                client.ApiSpecId,
+                required.ApiSpecId,
+                StringComparison.Ordinal
+            )) {
+            return Unavailable(
+                CompletionDispatchBindingUnavailableReason
+                    .ClientApiSpecIdMismatch,
+                $"Completion connection '{required.ConnectionId}' client "
+                + "API specification does not match the required dispatch "
+                + "identity."
+            );
+        }
+        string adapterFingerprint =
+            CompletionDispatchIdentityFactory
+                .ComputeRequestAdapterFingerprint(client, connection);
+        if (!string.Equals(
+                adapterFingerprint,
+                required.RequestAdapterFingerprint,
+                StringComparison.Ordinal
+            )) {
+            return Unavailable(
+                CompletionDispatchBindingUnavailableReason
+                    .RequestAdapterFingerprintMismatch,
+                $"Completion connection '{required.ConnectionId}' request "
+                + "adapter does not match the required dispatch identity."
+            );
+        }
+
+        return new CompletionDispatchBindingResult.Bound(
+            connection,
+            client
+        );
+    }
+
+    private static CompletionDispatchBindingResult.Unavailable Unavailable(
+        CompletionDispatchBindingUnavailableReason reason,
+        string detail
+    ) => new(reason, detail);
+
     public void Dispose() {
         foreach (var client in _clients.Values) {
             if (client is IDisposable disposable) { disposable.Dispose(); }

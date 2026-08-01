@@ -202,7 +202,8 @@ public sealed record CompletionCallLogConnectionSnapshot(
     string? ApiKeyEnv,
     bool HasApiKey,
     string ProviderId,
-    string ApiSpecId
+    string ApiSpecId,
+    int EffectiveRequestTimeoutSeconds
 ) {
     public static CompletionCallLogConnectionSnapshot From(CompletionConnectionConfig connection, ICompletionClient client) {
         ArgumentNullException.ThrowIfNull(connection);
@@ -218,7 +219,9 @@ public sealed record CompletionCallLogConnectionSnapshot(
             connection.ApiKeyEnv,
             !string.IsNullOrWhiteSpace(connection.ApiKey),
             client.Name,
-            client.ApiSpecId
+            client.ApiSpecId,
+            DefaultCompletionClientFactory
+                .GetEffectiveRequestTimeoutSeconds(connection)
         );
     }
 }

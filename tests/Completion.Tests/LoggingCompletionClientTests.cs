@@ -64,7 +64,10 @@ public sealed class LoggingCompletionClientTests : IDisposable {
 
     [Fact]
     public async Task FailedCompletion_RecordsItsActualPathOnTheOwningClient() {
-        var client = CreateLoggingClient(new ThrowingCompletionClient());
+        var client = CreateLoggingClient(
+            new ThrowingCompletionClient(),
+            requestTimeoutSeconds: 300
+        );
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => client.StreamCompletionAsync(CreateRequest(), observer: null)
@@ -79,9 +82,42 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             typeof(InvalidOperationException).FullName,
             document.RootElement.GetProperty("exception").GetProperty("type").GetString()
         );
+        Assert.Equal(
+            300,
+            document.RootElement
+                .GetProperty("connection")
+                .GetProperty("effectiveRequestTimeoutSeconds")
+                .GetInt32()
+        );
     }
 
-    private LoggingCompletionClient CreateLoggingClient(ICompletionClient inner)
+    [Fact]
+    public async Task DefaultTimeoutIsReportedAsEffectiveOneHundredSeconds() {
+        var client = CreateLoggingClient(
+            new YieldingCompletionClient("default-timeout")
+        );
+
+        _ = await client.StreamCompletionAsync(
+            CreateRequest(),
+            observer: null
+        );
+
+        using JsonDocument document = JsonDocument.Parse(
+            File.ReadAllText(Assert.Single(client.WrittenCallLogPaths))
+        );
+        Assert.Equal(
+            100,
+            document.RootElement
+                .GetProperty("connection")
+                .GetProperty("effectiveRequestTimeoutSeconds")
+                .GetInt32()
+        );
+    }
+
+    private LoggingCompletionClient CreateLoggingClient(
+        ICompletionClient inner,
+        int? requestTimeoutSeconds = null
+    )
         => new(
             inner,
             new CompletionConnectionConfig(
@@ -89,7 +125,8 @@ public sealed class LoggingCompletionClientTests : IDisposable {
                 Kind: "scripted",
                 ModelId: "model-a",
                 CompletionSurfaceId: "surface-a",
-                BaseAddress: "http://localhost/"
+                BaseAddress: "http://localhost/",
+                RequestTimeoutSeconds: requestTimeoutSeconds
             ),
             _tempDirectory
         );

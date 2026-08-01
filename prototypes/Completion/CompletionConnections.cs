@@ -22,7 +22,8 @@ public sealed record CompletionConnectionConfig(
     string? ApiKey = null,
     string? BaseAddressEnv = null,
     string? ApiKeyEnv = null,
-    int? MaxTokens = null
+    int? MaxTokens = null,
+    int? RequestTimeoutSeconds = null
 );
 
 public static class CompletionConnectionConfigLoader {
@@ -52,6 +53,13 @@ public static class CompletionConnectionConfigLoader {
 
             RequireNonBlank(connection.Kind, $"Completion connection '{connection.Id}' must have a non-empty kind.");
             RequireNonBlank(connection.ModelId, $"Completion connection '{connection.Id}' must have a non-empty modelId.");
+            if (connection.RequestTimeoutSeconds is < 1 or > 3600) {
+                throw new InvalidOperationException(
+                    $"Completion connection '{connection.Id}' "
+                    + "requestTimeoutSeconds must be between 1 and "
+                    + "3600."
+                );
+            }
 
             // completionSurfaceId only disambiguates the openai-chat dialect; for single-surface
             // kinds (anthropic, openai-responses) it is redundant, so default it from the kind when
@@ -121,11 +129,18 @@ public interface ICompletionClientFactory {
 }
 
 public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
+    internal const int DefaultRequestTimeoutSeconds = 100;
+
     public ICompletionClient Create(CompletionConnectionConfig connection) {
         ArgumentNullException.ThrowIfNull(connection);
 
-        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(connection.BaseAddress, UriKind.Absolute));
+        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
+            new Uri(connection.BaseAddress, UriKind.Absolute)
+        );
         try {
+            httpClient.Timeout = TimeSpan.FromSeconds(
+                GetEffectiveRequestTimeoutSeconds(connection)
+            );
             ICompletionClient client = connection.Kind.Trim().ToLowerInvariant() switch {
                 "openai-chat" => new OpenAIChatClient(
                     apiKey: connection.ApiKey,
@@ -152,6 +167,14 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
         }
     }
 
+    internal static int GetEffectiveRequestTimeoutSeconds(
+        CompletionConnectionConfig connection
+    ) {
+        ArgumentNullException.ThrowIfNull(connection);
+        return connection.RequestTimeoutSeconds
+            ?? DefaultRequestTimeoutSeconds;
+    }
+
     private static OpenAIChatDialect ResolveOpenAiChatDialect(string completionSurfaceId) {
         return completionSurfaceId switch {
             "openai-chat/strict" => OpenAIChatDialects.Strict,
@@ -174,6 +197,8 @@ internal sealed class OwnedHttpCompletionClient : ICompletionClient, IDisposable
     public string Name => _inner.Name;
 
     public string ApiSpecId => _inner.ApiSpecId;
+
+    internal TimeSpan HttpRequestTimeout => _httpClient.Timeout;
 
     public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,

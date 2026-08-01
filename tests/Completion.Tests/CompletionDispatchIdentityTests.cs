@@ -44,6 +44,13 @@ public sealed class CompletionDispatchIdentityTests {
             identity.RequestAdapterFingerprint
         );
         Assert.Equal(identity, changedSecrets);
+        Assert.Equal(
+            identity,
+            CompletionDispatchIdentityFactory.Create(
+                connection with { RequestTimeoutSeconds = 300 },
+                client
+            )
+        );
     }
 
     [Fact]
@@ -62,6 +69,21 @@ public sealed class CompletionDispatchIdentityTests {
                     client,
                     connection
                 );
+        Assert.Equal(
+            connectionBaseline,
+            CompletionDispatchIdentityFactory
+                .ComputeConnectionFingerprint(
+                    connection with { RequestTimeoutSeconds = 300 }
+                )
+        );
+        Assert.Equal(
+            adapterBaseline,
+            CompletionDispatchIdentityFactory
+                .ComputeRequestAdapterFingerprint(
+                    client,
+                    connection with { RequestTimeoutSeconds = 300 }
+                )
+        );
 
         string[] connectionVariants = [
             CompletionDispatchIdentityFactory

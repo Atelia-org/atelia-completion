@@ -138,9 +138,13 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
             new Uri(connection.BaseAddress, UriKind.Absolute)
         );
         try {
-            httpClient.Timeout = TimeSpan.FromSeconds(
+            TimeSpan effectiveRequestTimeout = TimeSpan.FromSeconds(
                 GetEffectiveRequestTimeoutSeconds(connection)
             );
+            // Keep HttpClient's own timeout as an early headers fence. The
+            // owned wrapper applies the same timeout to the complete streaming
+            // operation, including content read after ResponseHeadersRead.
+            httpClient.Timeout = effectiveRequestTimeout;
             ICompletionClient client = connection.Kind.Trim().ToLowerInvariant() switch {
                 "openai-chat" => new OpenAIChatClient(
                     apiKey: connection.ApiKey,
@@ -159,7 +163,11 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
                 _ => throw new InvalidOperationException($"Unsupported completion connection kind '{connection.Kind}'.")
             };
 
-            return new OwnedHttpCompletionClient(client, httpClient);
+            return new OwnedHttpCompletionClient(
+                client,
+                httpClient,
+                effectiveRequestTimeout
+            );
         }
         catch {
             httpClient.Dispose();
@@ -188,10 +196,23 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
 internal sealed class OwnedHttpCompletionClient : ICompletionClient, IDisposable {
     private readonly ICompletionClient _inner;
     private readonly HttpClient _httpClient;
+    private readonly TimeSpan _wholeOperationTimeout;
 
-    public OwnedHttpCompletionClient(ICompletionClient inner, HttpClient httpClient) {
+    public OwnedHttpCompletionClient(
+        ICompletionClient inner,
+        HttpClient httpClient,
+        TimeSpan wholeOperationTimeout
+    ) {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        if (wholeOperationTimeout <= TimeSpan.Zero
+            || wholeOperationTimeout == Timeout.InfiniteTimeSpan) {
+            throw new ArgumentOutOfRangeException(
+                nameof(wholeOperationTimeout),
+                "Whole-operation timeout must be finite and positive."
+            );
+        }
+        _wholeOperationTimeout = wholeOperationTimeout;
     }
 
     public string Name => _inner.Name;
@@ -200,11 +221,49 @@ internal sealed class OwnedHttpCompletionClient : ICompletionClient, IDisposable
 
     internal TimeSpan HttpRequestTimeout => _httpClient.Timeout;
 
-    public Task<CompletionResult> StreamCompletionAsync(
+    internal TimeSpan WholeOperationTimeout => _wholeOperationTimeout;
+
+    public async Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
-    ) => _inner.StreamCompletionAsync(request, observer, cancellationToken);
+    ) {
+        using var timeoutSource =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken
+            );
+        timeoutSource.CancelAfter(_wholeOperationTimeout);
+        try {
+            return await _inner.StreamCompletionAsync(
+                    request,
+                    observer,
+                    timeoutSource.Token
+                )
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException exception) when (
+            cancellationToken.IsCancellationRequested
+        ) {
+            // Preserve caller cancellation authority and token identity even
+            // though the inner client observed the linked token.
+            throw new OperationCanceledException(
+                exception.Message,
+                exception,
+                cancellationToken
+            );
+        }
+        catch (OperationCanceledException exception) when (
+            timeoutSource.IsCancellationRequested
+        ) {
+            throw new TaskCanceledException(
+                "Completion request exceeded its configured whole-operation "
+                + $"timeout of {_wholeOperationTimeout.TotalSeconds:g} "
+                + "seconds.",
+                exception,
+                timeoutSource.Token
+            );
+        }
+    }
 
     public void Dispose() {
         if (_inner is IDisposable disposable) { disposable.Dispose(); }

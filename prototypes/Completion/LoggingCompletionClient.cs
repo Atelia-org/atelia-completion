@@ -5,6 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Diagnostics;
 
 namespace Atelia.Completion;
 
@@ -27,23 +28,51 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
     private readonly ICompletionClient _inner;
     private readonly CompletionConnectionConfig _connection;
-    private readonly string _callLogDir;
     private readonly CompletionCallLogContext _context;
     private readonly ConcurrentQueue<string> _writtenCallLogPaths = new();
-    private int _nextCallId;
+    private readonly ICompletionCallLogSink? _callLogSink;
+    private readonly Action<string, Exception> _callLogFailureReporter;
 
     public LoggingCompletionClient(
         ICompletionClient inner,
         CompletionConnectionConfig connection,
         string callLogDir,
         CompletionCallLogContext? context = null
+    ) : this(
+        inner,
+        connection,
+        callLogDir,
+        context,
+        static () => new FileCompletionCallLogSink()
+    ) { }
+
+    internal LoggingCompletionClient(
+        ICompletionClient inner,
+        CompletionConnectionConfig connection,
+        string callLogDir,
+        CompletionCallLogContext? context,
+        Func<ICompletionCallLogSink> callLogSinkFactory,
+        Action<string, Exception>? callLogFailureReporter = null
     ) {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
-        _callLogDir = string.IsNullOrWhiteSpace(callLogDir) ? throw new ArgumentException("Call log directory must not be blank.", nameof(callLogDir)) : Path.GetFullPath(callLogDir);
+        ArgumentException.ThrowIfNullOrWhiteSpace(callLogDir);
+        ArgumentNullException.ThrowIfNull(callLogSinkFactory);
         _context = context ?? new CompletionCallLogContext();
-        Directory.CreateDirectory(_callLogDir);
-        _nextCallId = GetMaxExistingCallId(_callLogDir);
+        _callLogFailureReporter = callLogFailureReporter
+            ?? DefaultCallLogFailureReporter;
+
+        try {
+            ICompletionCallLogSink sink = callLogSinkFactory()
+                ?? throw new InvalidOperationException(
+                    "The call-log sink factory returned null."
+                );
+            sink.Initialize(callLogDir);
+            _callLogSink = sink;
+        }
+        catch (Exception ex) {
+            ReportCallLogFailure("initialize", ex);
+        }
     }
 
     public string Name => _inner.Name;
@@ -60,7 +89,8 @@ public sealed class LoggingCompletionClient : ICompletionClient {
     ) {
         ArgumentNullException.ThrowIfNull(request);
 
-        using var reservation = ReserveCallLog();
+        using CompletionCallLogReservation? reservation =
+            TryReserveCallLog();
         var startedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
         CompletionResult result;
@@ -70,36 +100,129 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         }
         catch (Exception ex) {
             stopwatch.Stop();
-            try {
-                WriteCallLog(reservation, startedAt, stopwatch.Elapsed, request, result: null, ex);
-            }
-            catch (Exception logException) {
-                throw new AggregateException("Completion call failed and writing the call log also failed.", ex, logException);
-            }
+            TryWriteCallLog(
+                reservation,
+                startedAt,
+                stopwatch.Elapsed,
+                request,
+                result: null,
+                ex
+            );
             throw;
         }
 
         stopwatch.Stop();
-        WriteCallLog(reservation, startedAt, stopwatch.Elapsed, request, result, exception: null);
+        TryWriteCallLog(
+            reservation,
+            startedAt,
+            stopwatch.Elapsed,
+            request,
+            result,
+            exception: null
+        );
         return result;
     }
 
-    private static int GetMaxExistingCallId(string callLogDir) {
-        var max = 0;
-        foreach (var path in Directory.EnumerateFiles(callLogDir, "*.json")) {
-            string stem = Path.GetFileNameWithoutExtension(path);
-            if (int.TryParse(stem, NumberStyles.None, CultureInfo.InvariantCulture, out int callId)) {
-                max = Math.Max(max, callId);
-            }
-        }
+    private CompletionCallLogReservation? TryReserveCallLog() {
+        if (_callLogSink is null) { return null; }
 
-        return max;
+        try {
+            return _callLogSink.Reserve();
+        }
+        catch (Exception ex) {
+            ReportCallLogFailure("reserve", ex);
+            return null;
+        }
     }
 
-    private CallLogReservation ReserveCallLog() {
+    private void TryWriteCallLog(
+        CompletionCallLogReservation? reservation,
+        DateTimeOffset startedAt,
+        TimeSpan elapsed,
+        CompletionRequest request,
+        CompletionResult? result,
+        Exception? exception
+    ) {
+        if (reservation is null) { return; }
+
+        try {
+            var log = new CompletionCallLogEntry(
+                Schema: "atelia.completion.call-log.v1",
+                CallId: reservation.CallId,
+                TimestampUtc: startedAt,
+                ElapsedMs: (long)elapsed.TotalMilliseconds,
+                Connection: CompletionCallLogConnectionSnapshot.From(
+                    _connection,
+                    _inner
+                ),
+                Context: _context,
+                Request: CompletionCallLogRequest.From(request),
+                Response: result is null
+                    ? null
+                    : CompletionCallLogResponse.From(result),
+                Exception: exception is null
+                    ? null
+                    : CompletionCallLogException.From(exception)
+            );
+
+            JsonSerializer.Serialize(reservation.Stream, log, JsonOptions);
+            reservation.Complete();
+            _writtenCallLogPaths.Enqueue(reservation.Path);
+        }
+        catch (Exception ex) {
+            ReportCallLogFailure("write", ex);
+        }
+    }
+
+    private void ReportCallLogFailure(string stage, Exception exception) {
+        try {
+            _callLogFailureReporter(stage, exception);
+        }
+        catch {
+            // Diagnostics for best-effort logging must also remain best-effort.
+        }
+    }
+
+    private static void DefaultCallLogFailureReporter(
+        string stage,
+        Exception exception
+    ) => DebugUtil.Warning(
+        "Completion.CallLog",
+        $"Completion call-log {stage} failed; provider outcome is preserved.",
+        exception,
+        DebugEventKind.Failure
+    );
+}
+
+internal interface ICompletionCallLogSink {
+    void Initialize(string callLogDirectory);
+
+    CompletionCallLogReservation Reserve();
+}
+
+internal sealed class FileCompletionCallLogSink : ICompletionCallLogSink {
+    private string? _callLogDirectory;
+    private int _nextCallId;
+
+    public void Initialize(string callLogDirectory) {
+        string fullPath = Path.GetFullPath(callLogDirectory);
+        Directory.CreateDirectory(fullPath);
+        _nextCallId = GetMaxExistingCallId(fullPath);
+        _callLogDirectory = fullPath;
+    }
+
+    public CompletionCallLogReservation Reserve() {
+        string callLogDirectory = _callLogDirectory
+            ?? throw new InvalidOperationException(
+                "The call-log sink has not been initialized."
+            );
+
         while (true) {
             int callId = Interlocked.Increment(ref _nextCallId);
-            string path = Path.Combine(_callLogDir, $"{callId:0000}.json");
+            string path = Path.Combine(
+                callLogDirectory,
+                $"{callId:0000}.json"
+            );
             try {
                 var stream = new FileStream(
                     path,
@@ -107,7 +230,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
                     FileAccess.Write,
                     FileShare.Read
                 );
-                return new CallLogReservation(callId, path, stream);
+                return new CompletionCallLogReservation(callId, path, stream);
             }
             catch (IOException) when (File.Exists(path)) {
                 // Another client or process reserved this numeric id first.
@@ -115,67 +238,64 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         }
     }
 
-    private void WriteCallLog(
-        CallLogReservation reservation,
-        DateTimeOffset startedAt,
-        TimeSpan elapsed,
-        CompletionRequest request,
-        CompletionResult? result,
-        Exception? exception
-    ) {
-        var log = new CompletionCallLogEntry(
-            Schema: "atelia.completion.call-log.v1",
-            CallId: reservation.CallId,
-            TimestampUtc: startedAt,
-            ElapsedMs: (long)elapsed.TotalMilliseconds,
-            Connection: CompletionCallLogConnectionSnapshot.From(_connection, _inner),
-            Context: _context,
-            Request: CompletionCallLogRequest.From(request),
-            Response: result is null ? null : CompletionCallLogResponse.From(result),
-            Exception: exception is null ? null : CompletionCallLogException.From(exception)
-        );
-
-        JsonSerializer.Serialize(reservation.Stream, log, JsonOptions);
-        reservation.Complete();
-        _writtenCallLogPaths.Enqueue(reservation.Path);
-    }
-
-    private sealed class CallLogReservation(
-        int callId,
-        string path,
-        FileStream stream
-    ) : IDisposable {
-        private bool _completed;
-        private bool _disposed;
-
-        public int CallId { get; } = callId;
-        public string Path { get; } = path;
-        public FileStream Stream { get; } = stream;
-
-        public void Complete() {
-            Stream.Flush();
-            Stream.Dispose();
-            _completed = true;
+    private static int GetMaxExistingCallId(string callLogDirectory) {
+        var max = 0;
+        foreach (string path in Directory.EnumerateFiles(
+            callLogDirectory,
+            "*.json"
+        )) {
+            string stem = Path.GetFileNameWithoutExtension(path);
+            if (int.TryParse(
+                stem,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out int callId
+            )) {
+                max = Math.Max(max, callId);
+            }
         }
 
-        public void Dispose() {
-            if (_disposed) { return; }
-            _disposed = true;
-            if (_completed) { return; }
+        return max;
+    }
+}
 
-            try {
-                Stream.Dispose();
-            }
-            catch {
-                // Best-effort cleanup must not replace the original completion/logging failure.
-            }
+internal sealed class CompletionCallLogReservation(
+    int callId,
+    string path,
+    Stream stream,
+    Action<string>? cleanup = null
+) : IDisposable {
+    private readonly Action<string> _cleanup = cleanup ?? File.Delete;
+    private bool _completed;
+    private bool _disposed;
 
-            try {
-                File.Delete(Path);
-            }
-            catch {
-                // Best-effort cleanup for an incomplete reserved log.
-            }
+    public int CallId { get; } = callId;
+    public string Path { get; } = path;
+    public Stream Stream { get; } = stream;
+
+    public void Complete() {
+        Stream.Flush();
+        Stream.Dispose();
+        _completed = true;
+    }
+
+    public void Dispose() {
+        if (_disposed) { return; }
+        _disposed = true;
+        if (_completed) { return; }
+
+        try {
+            Stream.Dispose();
+        }
+        catch {
+            // Best-effort cleanup must not replace the original logging failure.
+        }
+
+        try {
+            _cleanup(Path);
+        }
+        catch {
+            // Best-effort cleanup for an incomplete reserved log.
         }
     }
 }

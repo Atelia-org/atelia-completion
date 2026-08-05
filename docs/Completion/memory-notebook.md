@@ -246,7 +246,7 @@ prototypes/Completion.Tools/
 
 - 目前已有OpenAI Chat Completions、OpenAI Responses、Anthropic Messages与Google Gemini
   generateContent四套原生实现
-- OpenAI 侧只覆盖 chat/completions，不含 Responses API
+- OpenAI侧分别覆盖Chat Completions与Responses；两条stream协议独立校验，不互相降级或猜测
 - 对于更广义的 OpenAI-compatible 服务，`finish_reason` 与 tool call 片段顺序仍可能存在方言差异
 - 请求侧会严格校验 `assistant.tool_calls -> tool` 的相邻关系；`ToolResultsMessage.Results` 必须与 pending `tool_call_id` / `tool_use_id` / Gemini functionCall id 1:1 对齐，缺失或错位都会在投影阶段直接失败
 - 当前只把已确认的高价值差异收敛进 `OpenAIChatDialect`，不做全量 profile 系统
@@ -294,13 +294,13 @@ Agent.Core (推理循环)
     ↓ depends on
 Completion.Abstractions (本项目)
     ↑ implements
-Completion (本项目，含 Anthropic / OpenAI Chat / Gemini)
+Completion (本项目，含 OpenAI Chat / OpenAI Responses / Anthropic / Gemini)
     ↓ HTTP
-Anthropic API / OpenAI-compatible API / 本地 sglang 服务
+OpenAI API / Anthropic API / Gemini API / OpenAI-compatible服务
 ```
 
 - Abstractions 不依赖任何 provider DLL
-- Completion 当前包含 Anthropic、OpenAI Chat 与 Gemini 三组实现，分层仍允许继续扩展 provider
+- Completion当前包含OpenAI Chat、OpenAI Responses、Anthropic与Gemini四组实现，分层仍允许继续扩展provider
 - `LlmProfile`（在 Agent.Core）= `ICompletionClient + ModelId + 显示名` 的捆绑
 
 ---
@@ -313,7 +313,7 @@ Anthropic API / OpenAI-compatible API / 本地 sglang 服务
 > 以下几项在调研过程中发现**代码中已经落地**，列在此处供后续读者快速校准：
 >
 > - **工具执行的归属**：当前执行主线位于 `Atelia.Completion.Tools`；`ToolExecutor` 负责调度，具体 tool（如 `MethodToolWrapper`）自行解析 `RawToolCall`
-> - **OpenAI 原生支持时机**：代码中已落地 `OpenAIChatClient`，但范围明确限制在 chat/completions；Responses API 仍未做
+> - **OpenAI双surface**：`OpenAIChatClient`与`OpenAIResponsesClient`均已落地，但各自保持独立wire/lifecycle契约
 
 ---
 

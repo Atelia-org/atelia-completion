@@ -218,7 +218,7 @@ MVP 已固定写入格式为 JSON Lines；后续再决定：
 ### MVP Golden Log 示例
 
 ```json
-{"method":"POST","requestUri":"http://localhost:8000/v1/chat/completions","requestText":"{\"model\":\"gpt-4.1\"}","statusCode":200,"responseText":"data: [DONE]\n"}
+{"method":"POST","requestUri":"http://localhost:8000/v1/chat/completions","requestText":"{\"model\":\"gpt-4.1\"}","statusCode":200,"responseText":"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"}
 ```
 
 ### Stage 3. 更强 replay
@@ -227,7 +227,7 @@ MVP 已固定写入格式为 JSON Lines；后续再决定：
 
 - header 断言
 - 多分支匹配
-- 半程流中断 / 超时模拟
+- terminal前EOF / 明确read failure模拟
 
 ---
 

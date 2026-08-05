@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Transport;
 using Atelia.Diagnostics;
 
 namespace Atelia.Completion.Gemini;
@@ -41,38 +42,41 @@ public sealed class GeminiClient : ICompletionClient {
         using var response = await SendStreamingRequestAsync(request.ModelId, apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
 
         var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new GeminiStreamParser();
-        string? line;
         var stoppedEarly = false;
 
-        while ((line = await reader.ReadLineAsync(cancellationToken)) is not null) {
-            cancellationToken.ThrowIfCancellationRequested();
+        try {
+            await foreach (var frame in CompletionSseEventReader.ReadFramesAsync(stream, cancellationToken)) {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (frame.Data is null) { continue; }
 
-            if (string.IsNullOrWhiteSpace(line)) { continue; }
+                parser.ParseEvent(frame.Data, aggregator);
+                if (parser.TerminalEventObserved) { break; }
 
-            if (!line.StartsWith("data: ", StringComparison.Ordinal)) { continue; }
+                if (aggregator.ShouldStop) {
+                    stoppedEarly = true;
+                    break;
+                }
+            }
 
-            var json = line["data: ".Length..];
-            if (json == "[DONE]") { break; }
-
-            parser.ParseEvent(json, aggregator);
-            if (aggregator.ShouldStop) {
-                stoppedEarly = true;
-                break;
+            if (stoppedEarly) {
+                parser.DiscardIncompleteStreamingState();
+                aggregator.AbortIncompleteStreamingState();
+                aggregator.MarkIncomplete(detail: "Streaming observer stopped Gemini completion early.");
+            }
+            else {
+                CompletionStreamTermination.RequireTerminalEvent(
+                    parser.TerminalEventObserved,
+                    "Gemini streamGenerateContent"
+                );
             }
         }
-
-        if (stoppedEarly) {
-            parser.DiscardIncompleteStreamingState();
-            aggregator.AbortIncompleteStreamingState();
-            aggregator.MarkIncomplete(detail: "Streaming observer stopped Gemini completion early.");
-        }
-        else {
-            parser.Complete(aggregator);
+        catch (Exception exception) {
+            CleanupAfterFailure(parser, aggregator, exception);
+            throw;
         }
 
         DebugUtil.Trace(DebugCategory, "[Gemini] Stream completed");
@@ -102,6 +106,7 @@ public sealed class GeminiClient : ICompletionClient {
         var request = new HttpRequestMessage(HttpMethod.Post, relativeUri) {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
         };
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         if (!string.IsNullOrWhiteSpace(_apiKey)) {
             request.Headers.Add("x-goog-api-key", _apiKey);
@@ -121,5 +126,33 @@ public sealed class GeminiClient : ICompletionClient {
 
         var suffix = normalized["models/".Length..];
         return $"models/{Uri.EscapeDataString(suffix)}";
+    }
+
+    private static void CleanupAfterFailure(
+        GeminiStreamParser parser,
+        CompletionAggregator aggregator,
+        Exception originalException
+    ) {
+        try {
+            parser.DiscardIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[Gemini] Parser cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
+
+        try {
+            aggregator.AbortIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[Gemini] Observer cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
     }
 }

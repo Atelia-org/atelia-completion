@@ -233,9 +233,8 @@ public sealed class CompletionHttpTransportTests {
 
                                 data: {"candidates":[{"content":{"role":"model","parts":[{"text":" world"}]},"finishReason":"STOP"}]}
 
-                                data: [DONE]
-
-                                """,
+                                """
+                                + "\n",
                             Encoding.UTF8,
                             "text/event-stream"
                         )

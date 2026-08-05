@@ -90,7 +90,7 @@ public sealed class GeminiClientTests {
                     """
                     data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}
 
-                    data: [DONE]
+                    data: {not-json}
 
                     """,
                     Encoding.UTF8,
@@ -106,8 +106,182 @@ public sealed class GeminiClientTests {
         var result = await InvokeStreamCompletionAsync(client, CreateRequest());
 
         Assert.Equal("ok", result.Message.GetFlattenedText());
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
         Assert.Equal("secret-key", handler.LastRequest?.Headers.GetValues("x-goog-api-key").Single());
         Assert.DoesNotContain("secret-key", handler.LastRequest?.RequestUri?.ToString(), StringComparison.Ordinal);
+        Assert.Equal("text/event-stream", handler.LastRequest?.Headers.Accept.ToString());
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_PromptBlockIsTerminalAndReturnsWithoutReadingLaterFrames() {
+        using var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"promptFeedback":{"blockReason":"SAFETY","futurePromptField":{"message":"ignored"}}}
+
+                data: {not-json}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
+        Assert.Equal("SAFETY", result.Termination.ProviderReason);
+        Assert.Contains("SAFETY", result.Termination.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_ErrorEnvelopeIsTerminalAndReturnsWithoutReadingLaterFrames() {
+        using var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: future-gemini-event
+                data: {"error":{"code":503,"message":"Unavailable","status":"UNAVAILABLE"}}
+
+                data: {not-json}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal("UNAVAILABLE", result.Termination.ProviderReason);
+        Assert.Equal("Unavailable", result.Termination.Detail);
+        Assert.Equal(["Unavailable"], result.Errors);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_EofBeforeProviderTerminalIsUncertainInterruption() {
+        using var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Equal("Gemini streamGenerateContent", exception.StreamDisplayName);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Theory]
+    [InlineData("data: [DONE]\n\n")]
+    [InlineData("data: {not-json}\n\n")]
+    [InlineData("data: []\n\n")]
+    [InlineData("data: {\"candidates\":7}\n\n")]
+    public async Task StreamCompletionAsync_RejectsDoneMalformedOrInvalidKnownShapes(string body) {
+        using var handler = new SequenceHttpMessageHandler(EventStreamResponse(body));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_ObserverEarlyStopReturnsLocalIncompleteResult() {
+        using var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"candidates":[{"content":{"role":"model","parts":[{"text":"first"}]}}]}
+
+                data: {"candidates":[{"content":{"role":"model","parts":[{"text":" second"}]}},"finishReason":"STOP"}]}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedTextDelta += _ => observer.ShouldStop = true;
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None);
+
+        Assert.Equal("first", result.Message.GetFlattenedText());
+        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
+        Assert.Contains("observer stopped", result.Termination.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_ReadExceptionPropagatesWithoutBeingReclassified() {
+        var expected = new IOException("scripted read failure");
+        var response = new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StreamContent(
+                new ThrowAfterPayloadStream(
+                    "data: {\"usageMetadata\":{}}\n\n"u8.ToArray(),
+                    expected
+                )
+            )
+        };
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            "text/event-stream"
+        );
+        using var handler = new SequenceHttpMessageHandler(response);
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        var actual = await Assert.ThrowsAsync<IOException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_CallerCancellationPreservesToken() {
+        var stream = new CancellationWaitingStream();
+        var response = new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StreamContent(stream)
+        };
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            "text/event-stream"
+        );
+        using var handler = new SequenceHttpMessageHandler(response);
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+        using var cancellation = new CancellationTokenSource();
+
+        var call = client.StreamCompletionAsync(CreateRequest(), null, cancellation.Token);
+        await stream.ReadStarted;
+        cancellation.Cancel();
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_SuccessWithNonEventStreamMediaTypeIsProtocolError() {
+        using var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            }
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("text/event-stream", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("application/json", exception.Message, StringComparison.Ordinal);
     }
 
     private static CompletionRequest CreateRequest() {
@@ -187,6 +361,18 @@ public sealed class GeminiClientTests {
         return assembly.GetType("Atelia.Completion.Gemini.GeminiClient") is not null;
     }
 
+    private static HttpClient CreateHttpClient(HttpMessageHandler handler) {
+        return new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+    }
+
+    private static HttpResponseMessage EventStreamResponse(string body) {
+        return new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StringContent(body, Encoding.UTF8, "text/event-stream")
+        };
+    }
+
     private sealed class EmptyHttpMessageHandler : HttpMessageHandler {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             throw new NotSupportedException();
@@ -200,7 +386,10 @@ public sealed class GeminiClientTests {
             _responses = new Queue<HttpResponseMessage>(responses);
         }
 
+        public int RequestCount { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            RequestCount++;
             return Task.FromResult(_responses.Dequeue());
         }
     }
@@ -218,5 +407,86 @@ public sealed class GeminiClientTests {
             LastRequest = request;
             return Task.FromResult(_response);
         }
+    }
+
+    private sealed class ThrowAfterPayloadStream : Stream {
+        private readonly byte[] _payload;
+        private readonly IOException _exception;
+        private int _position;
+
+        public ThrowAfterPayloadStream(byte[] payload, IOException exception) {
+            _payload = payload;
+            _exception = exception;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position {
+            get => _position;
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) {
+            if (_position >= _payload.Length) { throw _exception; }
+            int bytesToCopy = Math.Min(count, _payload.Length - _position);
+            _payload.AsSpan(_position, bytesToCopy).CopyTo(buffer.AsSpan(offset, bytesToCopy));
+            _position += bytesToCopy;
+            return bytesToCopy;
+        }
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_position >= _payload.Length) {
+                return ValueTask.FromException<int>(_exception);
+            }
+
+            int bytesToCopy = Math.Min(buffer.Length, _payload.Length - _position);
+            _payload.AsMemory(_position, bytesToCopy).CopyTo(buffer);
+            _position += bytesToCopy;
+            return ValueTask.FromResult(bytesToCopy);
+        }
+
+        public override void Flush() {
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class CancellationWaitingStream : Stream {
+        private readonly TaskCompletionSource _readStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public Task ReadStarted => _readStarted.Task;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position {
+            get => 0;
+            set => throw new NotSupportedException();
+        }
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default
+        ) {
+            _readStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() {
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

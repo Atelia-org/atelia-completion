@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Transport;
 using Xunit;
 
 namespace Atelia.Completion.Gemini.Tests;
@@ -78,6 +79,135 @@ public sealed class GeminiStreamParserTests {
                 Assert.Equal(1, functionCall.GetProperty("args").GetProperty("days").GetInt32());
             }
         );
+    }
+
+    [Theory]
+    [InlineData("STOP", CompletionTerminationKind.Completed)]
+    [InlineData("MAX_TOKENS", CompletionTerminationKind.Incomplete)]
+    [InlineData("SAFETY", CompletionTerminationKind.Incomplete)]
+    [InlineData("FUTURE_FINISH_REASON", CompletionTerminationKind.Incomplete)]
+    public void ParseEvent_FinishReasonIsExplicitTerminalWithConservativeMapping(
+        string finishReason,
+        CompletionTerminationKind expectedKind
+    ) {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            $$"""
+            {"candidates":[{"finishReason":"{{finishReason}}"}]}
+            """,
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(expectedKind, result.Termination.Kind);
+        Assert.Equal(finishReason, result.Termination.ProviderReason);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ParseEvent_PromptFeedbackBlockWithoutCandidatesIsExplicitIncompleteTerminal(
+        bool includeEmptyCandidates
+    ) {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+        var candidates = includeEmptyCandidates ? "\"candidates\":[]," : string.Empty;
+
+        parser.ParseEvent(
+            $"{{{candidates}\"promptFeedback\":{{\"blockReason\":\"PROHIBITED_CONTENT\",\"futurePromptField\":42}}}}",
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
+        Assert.Equal("PROHIBITED_CONTENT", result.Termination.ProviderReason);
+        Assert.Contains("PROHIBITED_CONTENT", result.Termination.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_ErrorEnvelopeIsExplicitFailedTerminal() {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"error":{"code":503,"message":"Unavailable","status":"UNAVAILABLE"}}
+            """,
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal("UNAVAILABLE", result.Termination.ProviderReason);
+        Assert.Equal("Unavailable", result.Termination.Detail);
+        Assert.Equal(["Unavailable"], result.Errors);
+    }
+
+    [Fact]
+    public void ParseEvent_UnknownFieldsAndMetadataOnlyResponseAreForwardCompatibleAndNonTerminal() {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"usageMetadata":{"promptTokenCount":1},"futureMetadata":{"phase":"reasoning"}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"candidates":[{"index":0,"futureCandidateField":42,"finishReason":"STOP"}],"futureTopLevelField":true}
+            """,
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        Assert.Equal(CompletionTerminationKind.Completed, aggregator.Build().Termination.Kind);
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("[]")]
+    [InlineData("{\"error\":null}")]
+    [InlineData("{\"error\":{\"status\":\"UNAVAILABLE\"}}")]
+    [InlineData("{\"error\":{\"message\":\"bad\",\"status\":7}}")]
+    [InlineData("{\"promptFeedback\":[]}")]
+    [InlineData("{\"candidates\":{}}")]
+    [InlineData("{\"candidates\":[7]}")]
+    [InlineData("{\"candidates\":[{},{}]}")]
+    [InlineData("{\"candidates\":[{\"index\":1}]}")]
+    [InlineData("{\"candidates\":[{\"content\":[]}]}")]
+    [InlineData("{\"candidates\":[{\"content\":{\"parts\":{}}}]}")]
+    [InlineData("{\"candidates\":[{\"content\":{\"parts\":[7]}}]}")]
+    [InlineData("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":7}]}}]}")]
+    [InlineData("{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":7}]}}]}")]
+    [InlineData("{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"args\":{}}}]}}]}")]
+    [InlineData("{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"tool\",\"args\":[]}}]}}]}")]
+    [InlineData("{\"candidates\":[{\"finishReason\":7}]}")]
+    public void ParseEvent_RejectsMalformedJsonOrInvalidKnownShapes(string json) {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        Assert.Throws<InvalidDataException>(() => parser.ParseEvent(json, aggregator));
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Fact]
+    public void Complete_WithoutProviderTerminalIsUncertainInterruption() {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+        parser.ParseEvent("""{"usageMetadata":{"promptTokenCount":1}}""", aggregator);
+
+        var exception = Assert.Throws<CompletionStreamInterruptedException>(
+            () => parser.Complete(aggregator)
+        );
+
+        Assert.Equal("Gemini streamGenerateContent", exception.StreamDisplayName);
     }
 
     private static ActionMessage ParseGeminiActionMessage(params string[] events) {

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Transport;
 
 namespace Atelia.Completion.Anthropic;
 
@@ -53,36 +54,40 @@ public sealed class AnthropicClient : ICompletionClient {
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
 
         var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new AnthropicStreamParser();
-        string? line;
         var stoppedEarly = false;
 
-        while ((line = await reader.ReadLineAsync(cancellationToken)) is not null) {
-            cancellationToken.ThrowIfCancellationRequested();
+        try {
+            await foreach (var frame in CompletionSseEventReader.ReadFramesAsync(stream, cancellationToken)) {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            if (string.IsNullOrWhiteSpace(line)) { continue; }
-            if (!line.StartsWith("data: ", StringComparison.Ordinal)) { continue; }
+                parser.ParseEvent(frame.Data, aggregator, frame.EventType);
+                if (parser.TerminalEventObserved) { break; }
 
-            var json = line["data: ".Length..];
-            if (json == "[DONE]") { break; }
+                if (aggregator.ShouldStop) {
+                    stoppedEarly = true;
+                    break;
+                }
+            }
 
-            parser.ParseEvent(json, aggregator);
-            if (aggregator.ShouldStop) {
-                stoppedEarly = true;
-                break;
+            if (stoppedEarly) {
+                parser.DiscardIncompleteStreamingState();
+                aggregator.AbortIncompleteStreamingState();
+                aggregator.MarkIncomplete(detail: "Streaming observer stopped Anthropic completion early.");
+            }
+            else {
+                CompletionStreamTermination.RequireTerminalEvent(
+                    parser.TerminalEventObserved,
+                    "Anthropic Messages"
+                );
             }
         }
-
-        if (stoppedEarly) {
-            aggregator.AbortIncompleteStreamingState();
-            aggregator.MarkIncomplete(detail: "Streaming observer stopped Anthropic completion early.");
-        }
-        else {
-            parser.Complete(aggregator);
+        catch (Exception exception) {
+            CleanupAfterFailure(parser, aggregator, exception);
+            throw;
         }
 
         DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");
@@ -105,6 +110,7 @@ public sealed class AnthropicClient : ICompletionClient {
         var request = new HttpRequestMessage(HttpMethod.Post, "v1/messages") {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
         };
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         if (!string.IsNullOrWhiteSpace(_apiKey)) {
             request.Headers.Add("x-api-key", _apiKey);
@@ -115,5 +121,33 @@ public sealed class AnthropicClient : ICompletionClient {
         }
 
         return request;
+    }
+
+    private static void CleanupAfterFailure(
+        AnthropicStreamParser parser,
+        CompletionAggregator aggregator,
+        Exception originalException
+    ) {
+        try {
+            parser.DiscardIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[Anthropic] Parser cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
+
+        try {
+            aggregator.AbortIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[Anthropic] Observer cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
     }
 }

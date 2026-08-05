@@ -701,19 +701,26 @@ public sealed class CompletionHttpTransportTests {
             return new HttpResponseMessage(HttpStatusCode.OK) {
                 Content = new StringContent(
                     """
+                    event: message_start
                     data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet-20241022","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}
 
+                    event: content_block_start
                     data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
 
+                    event: content_block_delta
                     data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}
 
+                    event: content_block_stop
                     data: {"type":"content_block_stop","index":0}
 
+                    event: message_delta
+                    data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+                    event: message_stop
                     data: {"type":"message_stop"}
 
-                    data: [DONE]
-
-                    """,
+                    """
+                    + "\n",
                     Encoding.UTF8,
                     "text/event-stream"
                 )

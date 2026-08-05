@@ -25,7 +25,7 @@ public sealed class AnthropicStreamParserTests {
         };
 
         foreach (var e in events) {
-            parser.ParseEvent(e, aggregator);
+            ParseNamedEvent(parser, e, aggregator);
         }
 
         var result = aggregator.Build();
@@ -56,7 +56,7 @@ public sealed class AnthropicStreamParserTests {
         };
 
         foreach (var e in events) {
-            parser.ParseEvent(e, aggregator);
+            ParseNamedEvent(parser, e, aggregator);
         }
 
         var result = aggregator.Build();
@@ -87,7 +87,7 @@ public sealed class AnthropicStreamParserTests {
         };
 
         foreach (var e in events) {
-            parser.ParseEvent(e, aggregator);
+            ParseNamedEvent(parser, e, aggregator);
         }
 
         var result = aggregator.Build();
@@ -127,7 +127,7 @@ public sealed class AnthropicStreamParserTests {
         };
 
         foreach (var e in events) {
-            parser.ParseEvent(e, aggregator);
+            ParseNamedEvent(parser, e, aggregator);
         }
 
         var result = aggregator.Build();
@@ -174,7 +174,7 @@ public sealed class AnthropicStreamParserTests {
         };
 
         foreach (var e in events) {
-            parser.ParseEvent(e, aggregator);
+            ParseNamedEvent(parser, e, aggregator);
         }
 
         var result = aggregator.Build();
@@ -187,5 +187,122 @@ public sealed class AnthropicStreamParserTests {
                 Assert.Equal("answer", ((ActionBlock.Text)block).Content);
             }
         );
+    }
+
+    [Theory]
+    [InlineData("end_turn", CompletionTerminationKind.Completed)]
+    [InlineData("tool_use", CompletionTerminationKind.Completed)]
+    [InlineData("max_tokens", CompletionTerminationKind.Incomplete)]
+    [InlineData("future_stop_reason", CompletionTerminationKind.Incomplete)]
+    public void ParseEvent_MessageStopIsExplicitTerminalAndPreservesStopReasonMapping(
+        string stopReason,
+        CompletionTerminationKind expectedKind
+    ) {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"message_delta","delta":{"stop_reason":"STOP_REASON"}}"""
+                .Replace("STOP_REASON", stopReason, StringComparison.Ordinal),
+            aggregator,
+            "message_delta"
+        );
+        parser.ParseEvent(
+            """{"type":"message_stop"}""",
+            aggregator,
+            "message_stop"
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(expectedKind, result.Termination.Kind);
+        Assert.Equal(stopReason, result.Termination.ProviderReason);
+    }
+
+    [Fact]
+    public void ParseEvent_MessageStopWithoutStopReasonIsExplicitIncompleteTerminal() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"message_stop"}""",
+            aggregator,
+            "message_stop"
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
+        Assert.Contains("without stop_reason", result.Termination.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_ErrorIsTerminalAndPreservesProviderErrorType() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+            """,
+            aggregator,
+            "error"
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal("overloaded_error", result.Termination.ProviderReason);
+        Assert.Equal("Overloaded", result.Termination.Detail);
+        Assert.Equal(["Overloaded"], result.Errors);
+    }
+
+    [Fact]
+    public void ParseEvent_PingAndMatchingUnknownEventAreNonTerminal() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent("""{"type":"ping"}""", aggregator, "ping");
+        parser.ParseEvent(
+            """{"type":"future_progress","value":42}""",
+            aggregator,
+            "future_progress"
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Theory]
+    [InlineData(null, "{\"type\":\"ping\"}")]
+    [InlineData("message_start", "{\"type\":\"ping\"}")]
+    [InlineData("message_start", "{")]
+    [InlineData("message_start", "[]")]
+    [InlineData("message_start", "{\"type\":\"message_start\"}")]
+    [InlineData("content_block_start", "{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"text\"}}")]
+    [InlineData("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0}")]
+    [InlineData("content_block_stop", "{\"type\":\"content_block_stop\",\"index\":0}")]
+    [InlineData("message_delta", "{\"type\":\"message_delta\",\"delta\":7}")]
+    [InlineData("error", "{\"type\":\"error\",\"error\":{\"message\":\"bad\"}}")]
+    public void ParseEvent_RejectsUnnamedMismatchedOrMalformedKnownEvents(
+        string? sseEventType,
+        string json
+    ) {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(json, aggregator, sseEventType)
+        );
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    private static void ParseNamedEvent(
+        AnthropicStreamParser parser,
+        string json,
+        CompletionAggregator aggregator
+    ) {
+        using var document = JsonDocument.Parse(json);
+        var eventType = document.RootElement.GetProperty("type").GetString();
+        parser.ParseEvent(json, aggregator, eventType);
     }
 }

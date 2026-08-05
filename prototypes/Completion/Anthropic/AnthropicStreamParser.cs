@@ -16,28 +16,58 @@ internal sealed class AnthropicStreamParser {
 
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
     private string? _stopReason;
-    private bool _sawMessageStop;
+    private bool _terminalEventObserved;
+
+    public bool TerminalEventObserved => _terminalEventObserved;
 
     public AnthropicStreamParser() {
     }
 
-    public void ParseEvent(string json, CompletionAggregator aggregator) {
+    public void ParseEvent(
+        string? json,
+        CompletionAggregator aggregator,
+        string? sseEventType
+    ) {
+        if (_terminalEventObserved) { return; }
+
+        if (string.IsNullOrWhiteSpace(sseEventType)) {
+            throw new InvalidDataException(
+                "Anthropic Messages stream requires a named SSE event."
+            );
+        }
+        if (json is null) {
+            throw new InvalidDataException(
+                $"Anthropic SSE event '{sseEventType}' requires a data field."
+            );
+        }
+
         JsonNode? node;
         try {
             node = JsonNode.Parse(json);
         }
         catch (JsonException ex) {
-            DebugUtil.Warning(DebugCategory, $"[Anthropic] Failed to parse event: {ex.Message}", ex);
-            return;
+            throw new InvalidDataException(
+                "Anthropic Messages stream contained malformed provider JSON.",
+                ex
+            );
         }
 
-        if (node is not JsonObject obj) { return; }
+        if (node is not JsonObject obj) {
+            throw new InvalidDataException(
+                "Anthropic Messages stream event root must be a JSON object."
+            );
+        }
 
-        var eventType = obj["type"]?.GetValue<string>();
-        if (eventType is null) { return; }
+        var eventType = GetRequiredString(obj, "type", "stream event");
+        if (!string.Equals(sseEventType, eventType, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"Anthropic SSE event type '{sseEventType}' does not match data type '{eventType}'."
+            );
+        }
 
         switch (eventType) {
             case "message_start":
+                _ = GetRequiredObject(obj, "message", eventType);
                 break;
             case "content_block_start":
                 HandleContentBlockStart(obj, aggregator);
@@ -65,32 +95,28 @@ internal sealed class AnthropicStreamParser {
         }
     }
 
-    public void Complete(CompletionAggregator aggregator) {
-        if (_contentBlocks.Count > 0) {
-            aggregator.MarkIncomplete(detail: "Anthropic stream ended with unfinished content blocks.");
-        }
-
-        if (!_sawMessageStop) {
-            aggregator.MarkIncomplete(detail: "Anthropic stream ended without message_stop.");
-        }
+    public void DiscardIncompleteStreamingState() {
+        _contentBlocks.Clear();
     }
 
     private void HandleContentBlockStart(JsonObject obj, CompletionAggregator aggregator) {
-        var index = obj["index"]?.GetValue<int>() ?? -1;
-        if (index < 0) { return; }
+        var index = GetRequiredNonNegativeInt(obj, "index", "content_block_start");
+        if (_contentBlocks.ContainsKey(index)) {
+            throw new InvalidDataException(
+                $"Anthropic content_block_start repeated active index {index}."
+            );
+        }
 
-        var contentBlock = obj["content_block"] as JsonObject;
-        if (contentBlock is null) { return; }
-
-        var blockType = contentBlock["type"]?.GetValue<string>();
+        var contentBlock = GetRequiredObject(obj, "content_block", "content_block_start");
+        var blockType = GetRequiredString(contentBlock, "type", "content_block_start content_block");
 
         var state = new ContentBlockState {
-            Type = blockType ?? "unknown"
+            Type = blockType
         };
 
         if (blockType == "tool_use") {
-            state.ToolUseId = contentBlock["id"]?.GetValue<string>() ?? string.Empty;
-            state.ToolName = contentBlock["name"]?.GetValue<string>() ?? string.Empty;
+            state.ToolUseId = GetRequiredString(contentBlock, "id", "tool_use content block");
+            state.ToolName = GetRequiredString(contentBlock, "name", "tool_use content block");
         }
         else if (blockType == "thinking") {
             // 通知 aggregator（及 observer）thinking 块开始
@@ -98,12 +124,12 @@ internal sealed class AnthropicStreamParser {
 
             // 偶尔 content_block_start 已携带初始 thinking/signature 文本（尽管常见为空），
             // 一并预填，后续 thinking_delta / signature_delta 继续追加。
-            var initialThinking = contentBlock["thinking"]?.GetValue<string>();
+            var initialThinking = GetOptionalString(contentBlock, "thinking", "thinking content block");
             if (!string.IsNullOrEmpty(initialThinking)) {
                 state.ThinkingTextBuilder.Append(initialThinking);
                 aggregator.AppendReasoningDelta(initialThinking);
             }
-            var initialSignature = contentBlock["signature"]?.GetValue<string>();
+            var initialSignature = GetOptionalString(contentBlock, "signature", "thinking content block");
             if (!string.IsNullOrEmpty(initialSignature)) { state.ThinkingSignatureBuilder.Append(initialSignature); }
         }
 
@@ -111,35 +137,41 @@ internal sealed class AnthropicStreamParser {
     }
 
     private void HandleContentBlockDelta(JsonObject obj, CompletionAggregator aggregator) {
-        var index = obj["index"]?.GetValue<int>() ?? -1;
-        if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { return; }
+        var index = GetRequiredNonNegativeInt(obj, "index", "content_block_delta");
+        if (!_contentBlocks.TryGetValue(index, out var state)) {
+            throw new InvalidDataException(
+                $"Anthropic content_block_delta referenced inactive index {index}."
+            );
+        }
 
-        var delta = obj["delta"] as JsonObject;
-        if (delta is null) { return; }
-
-        var deltaType = delta["type"]?.GetValue<string>();
+        var delta = GetRequiredObject(obj, "delta", "content_block_delta");
+        var deltaType = GetRequiredString(delta, "type", "content_block_delta delta");
 
         if (deltaType == "text_delta") {
-            var text = delta["text"]?.GetValue<string>();
+            RequireBlockType(state, "text", deltaType, index);
+            var text = GetRequiredString(delta, "text", deltaType, allowEmpty: true);
             if (!string.IsNullOrEmpty(text)) {
                 aggregator.AppendContent(text);
             }
         }
         else if (deltaType == "input_json_delta") {
-            var partial = delta["partial_json"]?.GetValue<string>();
+            RequireBlockType(state, "tool_use", deltaType, index);
+            var partial = GetRequiredString(delta, "partial_json", deltaType, allowEmpty: true);
             if (!string.IsNullOrEmpty(partial)) {
                 state.ToolInputJsonBuilder.Append(partial);
             }
         }
         else if (deltaType == "thinking_delta") {
-            var thinkingText = delta["thinking"]?.GetValue<string>();
+            RequireBlockType(state, "thinking", deltaType, index);
+            var thinkingText = GetRequiredString(delta, "thinking", deltaType, allowEmpty: true);
             if (!string.IsNullOrEmpty(thinkingText)) {
                 state.ThinkingTextBuilder.Append(thinkingText);
                 aggregator.AppendReasoningDelta(thinkingText);
             }
         }
         else if (deltaType == "signature_delta") {
-            var signature = delta["signature"]?.GetValue<string>();
+            RequireBlockType(state, "thinking", deltaType, index);
+            var signature = GetRequiredString(delta, "signature", deltaType, allowEmpty: true);
             if (!string.IsNullOrEmpty(signature)) {
                 state.ThinkingSignatureBuilder.Append(signature);
             }
@@ -147,8 +179,12 @@ internal sealed class AnthropicStreamParser {
     }
 
     private void HandleContentBlockStop(JsonObject obj, CompletionAggregator aggregator) {
-        var index = obj["index"]?.GetValue<int>() ?? -1;
-        if (index < 0 || !_contentBlocks.TryGetValue(index, out var state)) { return; }
+        var index = GetRequiredNonNegativeInt(obj, "index", "content_block_stop");
+        if (!_contentBlocks.TryGetValue(index, out var state)) {
+            throw new InvalidDataException(
+                $"Anthropic content_block_stop referenced inactive index {index}."
+            );
+        }
 
         if (state.Type == "tool_use") {
             var toolCall = CreateToolCallRequest(state);
@@ -172,16 +208,17 @@ internal sealed class AnthropicStreamParser {
     }
 
     private void HandleMessageDelta(JsonObject obj) {
-        if (obj["delta"] is not JsonObject delta) { return; }
+        var delta = GetRequiredObject(obj, "delta", "message_delta");
 
-        var stopReason = delta["stop_reason"]?.GetValue<string>();
+        var stopReason = GetOptionalString(delta, "stop_reason", "message_delta delta");
         if (!string.IsNullOrWhiteSpace(stopReason)) {
             _stopReason = stopReason;
         }
     }
 
     private void HandleMessageStop(CompletionAggregator aggregator) {
-        _sawMessageStop = true;
+        FinalizeTerminalStreamingState(aggregator);
+        _terminalEventObserved = true;
         switch (_stopReason) {
             case "end_turn":
             case "tool_use":
@@ -198,14 +235,35 @@ internal sealed class AnthropicStreamParser {
     }
 
     private void HandleError(JsonObject obj, CompletionAggregator aggregator) {
-        var error = obj["error"]?["message"]?.GetValue<string>() ?? "Unknown error";
-        DebugUtil.Warning(DebugCategory, $"[Anthropic] API error: {error}");
-        aggregator.AppendError(error);
-        aggregator.MarkFailed("error", error);
+        var errorObject = GetRequiredObject(obj, "error", "error event");
+        var errorType = GetRequiredString(errorObject, "type", "error event error");
+        var errorMessage = GetRequiredString(errorObject, "message", "error event error");
+
+        FinalizeTerminalStreamingState(aggregator);
+        DebugUtil.Warning(DebugCategory, $"[Anthropic] API error type={errorType}: {errorMessage}");
+        aggregator.AppendError(errorMessage);
+        aggregator.MarkFailed(errorType, errorMessage);
+        _terminalEventObserved = true;
     }
 
     private void HandleUnknownEvent(string eventType) {
         DebugUtil.Warning(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
+    }
+
+    private void FinalizeTerminalStreamingState(CompletionAggregator aggregator) {
+        if (_contentBlocks.Count > 0) {
+            var pendingIndexes = string.Join(", ", _contentBlocks.Keys.OrderBy(static index => index));
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[Anthropic] Terminal event arrived with unfinished content blocks indexes=[{pendingIndexes}]."
+            );
+            aggregator.MarkIncomplete(
+                detail: $"Anthropic terminal event arrived with unfinished content blocks [{pendingIndexes}]."
+            );
+        }
+
+        DiscardIncompleteStreamingState();
+        aggregator.AbortIncompleteStreamingState();
     }
 
     /// <summary>
@@ -222,21 +280,80 @@ internal sealed class AnthropicStreamParser {
     private static RawToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
         => StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
 
-    private static bool TryGetInt32(JsonObject obj, string propertyName, out int value) {
-        value = default;
+    private static JsonObject GetRequiredObject(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (obj[propertyName] is JsonObject value) { return value; }
 
-        if (!obj.TryGetPropertyValue(propertyName, out var node) || node is null) { return false; }
+        throw new InvalidDataException(
+            $"Anthropic {context} requires object field '{propertyName}'."
+        );
+    }
 
-        try {
-            value = node.GetValue<int>();
-            return true;
+    private static string GetRequiredString(
+        JsonObject obj,
+        string propertyName,
+        string context,
+        bool allowEmpty = false
+    ) {
+        if (obj[propertyName] is JsonValue value
+            && value.TryGetValue<string>(out var result)
+            && (allowEmpty || !string.IsNullOrWhiteSpace(result))) {
+            return result;
         }
-        catch (FormatException) {
-            return false;
+
+        throw new InvalidDataException(
+            $"Anthropic {context} requires string field '{propertyName}'."
+        );
+    }
+
+    private static string? GetOptionalString(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (!obj.TryGetPropertyValue(propertyName, out var node) || node is null) {
+            return null;
         }
-        catch (InvalidOperationException) {
-            return false;
+        if (node is JsonValue value && value.TryGetValue<string>(out var result)) {
+            return result;
         }
+
+        throw new InvalidDataException(
+            $"Anthropic {context} field '{propertyName}' must be a string or null."
+        );
+    }
+
+    private static int GetRequiredNonNegativeInt(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (obj[propertyName] is JsonValue value
+            && value.TryGetValue<int>(out var result)
+            && result >= 0) {
+            return result;
+        }
+
+        throw new InvalidDataException(
+            $"Anthropic {context} requires non-negative integer field '{propertyName}'."
+        );
+    }
+
+    private static void RequireBlockType(
+        ContentBlockState state,
+        string expectedType,
+        string deltaType,
+        int index
+    ) {
+        if (string.Equals(state.Type, expectedType, StringComparison.Ordinal)) { return; }
+
+        throw new InvalidDataException(
+            $"Anthropic {deltaType} at index {index} requires active "
+            + $"content block type '{expectedType}', but found '{state.Type}'."
+        );
     }
 
     private sealed class ContentBlockState {

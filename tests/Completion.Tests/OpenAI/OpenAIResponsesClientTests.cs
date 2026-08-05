@@ -356,6 +356,28 @@ public sealed class OpenAIResponsesClientTests {
         Assert.Contains("item_id", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_RejectsNamedSseEventAndErrorDataMismatch() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: response.completed
+                data: {"type":"error","error":{"message":"bad input"}}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("does not match", exception.Message, StringComparison.Ordinal);
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gpt-5",

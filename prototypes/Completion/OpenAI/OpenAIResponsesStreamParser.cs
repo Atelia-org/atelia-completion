@@ -54,19 +54,6 @@ internal sealed class OpenAIResponsesStreamParser {
             throw new InvalidDataException("OpenAI Responses stream event root must be a JSON object.");
         }
 
-        if (obj.TryGetPropertyValue("error", out var errorNode) && errorNode is not null) {
-            if (errorNode is not JsonObject inlineError) {
-                throw new InvalidDataException("OpenAI Responses stream error must be a JSON object.");
-            }
-
-            var errorMessage = ExtractErrorMessage(inlineError, "Unknown error");
-            FinalizeTerminalStreamingState(aggregator);
-            aggregator.AppendError(errorMessage);
-            aggregator.MarkFailed("error", errorMessage);
-            _terminalEventObserved = true;
-            return;
-        }
-
         var eventType = GetRequiredString(obj, "type", "stream event");
 
         if (!string.IsNullOrWhiteSpace(sseEventType)
@@ -75,6 +62,20 @@ internal sealed class OpenAIResponsesStreamParser {
             throw new InvalidDataException(
                 $"OpenAI Responses SSE event type '{sseEventType}' does not match data type '{eventType}'."
             );
+        }
+
+        if (obj.TryGetPropertyValue("error", out var errorNode)
+            && errorNode is not null) {
+            if (!string.Equals(eventType, "error", StringComparison.Ordinal)) {
+                throw new InvalidDataException(
+                    $"OpenAI Responses event type '{eventType}' cannot contain a top-level error object."
+                );
+            }
+            if (errorNode is not JsonObject) {
+                throw new InvalidDataException(
+                    "OpenAI Responses stream error field must be a JSON object."
+                );
+            }
         }
 
         switch (eventType) {

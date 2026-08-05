@@ -128,15 +128,16 @@ public sealed class OpenAIResponsesStreamParserTests {
     }
 
     [Fact]
-    public void ParseEvent_TopLevelErrorIsSemanticTerminalAndAppendsError() {
+    public void ParseEvent_OfficialErrorEventIsSemanticTerminalAndAppendsError() {
         var parser = new OpenAIResponsesStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         parser.ParseEvent(
             """
-            {"error":{"message":"bad input"}}
+            {"type":"error","code":"invalid_request_error","message":"bad input","param":null,"sequence_number":7}
             """,
-            aggregator
+            aggregator,
+            "error"
         );
 
         Assert.True(parser.TerminalEventObserved);
@@ -209,6 +210,24 @@ public sealed class OpenAIResponsesStreamParserTests {
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         Assert.Throws<InvalidDataException>(() => parser.ParseEvent(json, aggregator));
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Theory]
+    [InlineData("{\"error\":{\"message\":\"bad input\"}}", "requires string field 'type'")]
+    [InlineData("{\"type\":\"error\",\"error\":{\"message\":\"bad input\"}}", "does not match")]
+    public void ParseEvent_RejectsNamedSseEventBeforeConsideringErrorShape(
+        string json,
+        string expectedMessage
+    ) {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(json, aggregator, "response.completed")
+        );
+
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.Ordinal);
         Assert.False(parser.TerminalEventObserved);
     }
 

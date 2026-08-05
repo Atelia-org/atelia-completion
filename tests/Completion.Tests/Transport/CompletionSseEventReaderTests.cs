@@ -95,7 +95,7 @@ public sealed class CompletionSseEventReaderTests {
     }
 
     [Fact]
-    public async Task ReadFramesAsync_RejectsMalformedUtf8() {
+    public async Task ReadFramesAsync_ReplacesMalformedUtf8() {
         byte[] bytes = [
             .. Encoding.UTF8.GetBytes("data: "),
             0xC3,
@@ -104,9 +104,58 @@ public sealed class CompletionSseEventReaderTests {
         ];
         using var stream = new MemoryStream(bytes);
 
-        await Assert.ThrowsAsync<DecoderFallbackException>(
-            async () => await ReadAllAsync(stream)
+        CompletionSseFrame frame = Assert.Single(
+            await ReadAllAsync(stream)
         );
+
+        Assert.Equal("\uFFFD(", frame.Data);
+    }
+
+    [Fact]
+    public async Task ReadFramesAsync_PreservesCallerCancellationTokenIdentity() {
+        using var stream = new ControlledReadStream(
+            prefix: [],
+            failure: null,
+            waitForCancellation: true
+        );
+        using var caller = new CancellationTokenSource();
+        await using IAsyncEnumerator<CompletionSseFrame> enumerator =
+            CompletionSseEventReader.ReadFramesAsync(
+                stream,
+                caller.Token
+            ).GetAsyncEnumerator();
+
+        ValueTask<bool> moveNext = enumerator.MoveNextAsync();
+        caller.Cancel();
+        OperationCanceledException exception =
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                async () => await moveNext.AsTask()
+            );
+
+        Assert.Equal(caller.Token, exception.CancellationToken);
+    }
+
+    [Fact]
+    public async Task ReadFramesAsync_PropagatesReadFailureWithoutDispatchingPartialFrame() {
+        var expected = new IOException("scripted read failure");
+        using var stream = new ControlledReadStream(
+            Encoding.UTF8.GetBytes("data: partial\n"),
+            expected,
+            waitForCancellation: false
+        );
+        var frames = new List<CompletionSseFrame>();
+
+        IOException actual = await Assert.ThrowsAsync<IOException>(
+            async () => {
+                await foreach (CompletionSseFrame frame in
+                    CompletionSseEventReader.ReadFramesAsync(stream)) {
+                    frames.Add(frame);
+                }
+            }
+        );
+
+        Assert.Same(expected, actual);
+        Assert.Empty(frames);
     }
 
     [Fact]
@@ -146,5 +195,57 @@ public sealed class CompletionSseEventReaderTests {
             frames.Add(frame);
         }
         return frames;
+    }
+
+    private sealed class ControlledReadStream(
+        byte[] prefix,
+        Exception? failure,
+        bool waitForCancellation
+    ) : Stream {
+        private int _offset;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() { }
+
+        public override int Read(byte[] buffer, int offset, int count)
+            => throw new NotSupportedException();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default
+        ) {
+            if (_offset < prefix.Length) {
+                int count = Math.Min(buffer.Length, prefix.Length - _offset);
+                prefix.AsSpan(_offset, count).CopyTo(buffer.Span);
+                _offset += count;
+                return count;
+            }
+
+            if (failure is not null) { throw failure; }
+            if (!waitForCancellation) { return 0; }
+
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException(
+                "An infinite read returned without cancellation."
+            );
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+            => throw new NotSupportedException();
+
+        public override void SetLength(long value)
+            => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+            => throw new NotSupportedException();
     }
 }

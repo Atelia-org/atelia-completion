@@ -50,7 +50,12 @@ public sealed class CompletionHttpClientBuilder {
             };
         }
 
-        return new HttpClient(pipeline, disposeHandler: true);
+        return new HttpClient(pipeline, disposeHandler: true) {
+            // Completion streams may legitimately stay silent while a
+            // provider is computing. Lifetime is controlled only by caller
+            // cancellation or a concrete transport failure.
+            Timeout = Timeout.InfiniteTimeSpan
+        };
     }
 
     private sealed class CompletionHttpCaptureHandler : DelegatingHandler {

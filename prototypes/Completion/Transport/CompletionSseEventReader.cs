@@ -21,10 +21,10 @@ internal sealed record CompletionSseFrame(
 /// completion semantics to them.
 /// </summary>
 internal static class CompletionSseEventReader {
-    private static readonly Encoding StrictUtf8 =
+    private static readonly Encoding Utf8 =
         new UTF8Encoding(
             encoderShouldEmitUTF8Identifier: false,
-            throwOnInvalidBytes: true
+            throwOnInvalidBytes: false
         );
 
     public static async IAsyncEnumerable<CompletionSseFrame> ReadFramesAsync(
@@ -35,7 +35,7 @@ internal static class CompletionSseEventReader {
 
         using var reader = new StreamReader(
             stream,
-            StrictUtf8,
+            Utf8,
             detectEncodingFromByteOrderMarks: false,
             bufferSize: 1024,
             leaveOpen: true

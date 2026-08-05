@@ -87,10 +87,6 @@ public static class CompletionHttpTransportFactory {
 
         var httpClient = builder.Build();
         httpClient.BaseAddress = CompletionHttpRequestUtility.NormalizeBaseAddress(baseAddress);
-        // Completion streams may legitimately stay silent while a provider is
-        // computing. Lifetime is controlled only by caller cancellation or a
-        // concrete transport failure, not by an elapsed-operation timer.
-        httpClient.Timeout = Timeout.InfiniteTimeSpan;
         return httpClient;
     }
 }

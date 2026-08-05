@@ -24,6 +24,23 @@ public sealed class CompletionHttpTransportTests {
     }
 
     [Fact]
+    public void BuildDirectly_UsesInfiniteTimeoutForPrimaryAndReplayPipelines() {
+        using var primaryClient = new CompletionHttpClientBuilder()
+            .UsePrimaryHandler(
+                new StubHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                )
+            )
+            .Build();
+        using var replayClient = new CompletionHttpClientBuilder()
+            .UseReplayResponder(new AnthropicReplayResponder())
+            .Build();
+
+        Assert.Equal(Timeout.InfiniteTimeSpan, primaryClient.Timeout);
+        Assert.Equal(Timeout.InfiniteTimeSpan, replayClient.Timeout);
+    }
+
+    [Fact]
     public async Task CapturePipeline_RecordsRequestAndStreamingResponseText_ForOpenAIClient() {
         var captureSink = new InMemoryCompletionHttpExchangeSink();
         using var httpClient = new CompletionHttpClientBuilder()

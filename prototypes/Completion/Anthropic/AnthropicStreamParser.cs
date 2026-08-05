@@ -16,6 +16,9 @@ internal sealed class AnthropicStreamParser {
 
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
     private string? _stopReason;
+    private bool _messageStarted;
+    private bool _messageDeltaObserved;
+    private int _nextContentBlockIndex;
     private bool _terminalEventObserved;
 
     public bool TerminalEventObserved => _terminalEventObserved;
@@ -67,21 +70,26 @@ internal sealed class AnthropicStreamParser {
 
         switch (eventType) {
             case "message_start":
-                _ = GetRequiredObject(obj, "message", eventType);
+                HandleMessageStart(obj);
                 break;
             case "content_block_start":
+                RequireMessageStarted(eventType);
                 HandleContentBlockStart(obj, aggregator);
                 break;
             case "content_block_delta":
+                RequireMessageStarted(eventType);
                 HandleContentBlockDelta(obj, aggregator);
                 break;
             case "content_block_stop":
+                RequireMessageStarted(eventType);
                 HandleContentBlockStop(obj, aggregator);
                 break;
             case "message_delta":
+                RequireMessageStarted(eventType);
                 HandleMessageDelta(obj);
                 break;
             case "message_stop":
+                RequireMessageStarted(eventType);
                 HandleMessageStop(aggregator);
                 break;
             case "ping":
@@ -99,11 +107,33 @@ internal sealed class AnthropicStreamParser {
         _contentBlocks.Clear();
     }
 
-    private void HandleContentBlockStart(JsonObject obj, CompletionAggregator aggregator) {
-        var index = GetRequiredNonNegativeInt(obj, "index", "content_block_start");
-        if (_contentBlocks.ContainsKey(index)) {
+    private void HandleMessageStart(JsonObject obj) {
+        if (_messageStarted) {
             throw new InvalidDataException(
-                $"Anthropic content_block_start repeated active index {index}."
+                "Anthropic Messages stream contained repeated message_start."
+            );
+        }
+
+        _ = GetRequiredObject(obj, "message", "message_start");
+        _messageStarted = true;
+    }
+
+    private void HandleContentBlockStart(JsonObject obj, CompletionAggregator aggregator) {
+        if (_messageDeltaObserved) {
+            throw new InvalidDataException(
+                "Anthropic content_block_start arrived after message_delta."
+            );
+        }
+        if (_contentBlocks.Count > 0) {
+            throw new InvalidDataException(
+                "Anthropic content_block_start arrived before the active content block stopped."
+            );
+        }
+
+        var index = GetRequiredNonNegativeInt(obj, "index", "content_block_start");
+        if (index != _nextContentBlockIndex) {
+            throw new InvalidDataException(
+                $"Anthropic content_block_start expected index {_nextContentBlockIndex}, but received {index}."
             );
         }
 
@@ -137,6 +167,12 @@ internal sealed class AnthropicStreamParser {
     }
 
     private void HandleContentBlockDelta(JsonObject obj, CompletionAggregator aggregator) {
+        if (_messageDeltaObserved) {
+            throw new InvalidDataException(
+                "Anthropic content_block_delta arrived after message_delta."
+            );
+        }
+
         var index = GetRequiredNonNegativeInt(obj, "index", "content_block_delta");
         if (!_contentBlocks.TryGetValue(index, out var state)) {
             throw new InvalidDataException(
@@ -179,6 +215,12 @@ internal sealed class AnthropicStreamParser {
     }
 
     private void HandleContentBlockStop(JsonObject obj, CompletionAggregator aggregator) {
+        if (_messageDeltaObserved) {
+            throw new InvalidDataException(
+                "Anthropic content_block_stop arrived after message_delta."
+            );
+        }
+
         var index = GetRequiredNonNegativeInt(obj, "index", "content_block_stop");
         if (!_contentBlocks.TryGetValue(index, out var state)) {
             throw new InvalidDataException(
@@ -205,28 +247,49 @@ internal sealed class AnthropicStreamParser {
         }
 
         _contentBlocks.Remove(index);
+        _nextContentBlockIndex++;
     }
 
     private void HandleMessageDelta(JsonObject obj) {
+        if (_contentBlocks.Count > 0) {
+            throw new InvalidDataException(
+                "Anthropic message_delta arrived before the active content block stopped."
+            );
+        }
+
         var delta = GetRequiredObject(obj, "delta", "message_delta");
 
         var stopReason = GetOptionalString(delta, "stop_reason", "message_delta delta");
         if (!string.IsNullOrWhiteSpace(stopReason)) {
+            if (_stopReason is not null
+                && !string.Equals(_stopReason, stopReason, StringComparison.Ordinal)) {
+                throw new InvalidDataException(
+                    $"Anthropic message_delta changed stop_reason from '{_stopReason}' to '{stopReason}'."
+                );
+            }
             _stopReason = stopReason;
         }
+        _messageDeltaObserved = true;
     }
 
     private void HandleMessageStop(CompletionAggregator aggregator) {
-        FinalizeTerminalStreamingState(aggregator);
+        if (_contentBlocks.Count > 0) {
+            throw new InvalidDataException(
+                "Anthropic message_stop arrived with an active content block."
+            );
+        }
+        if (!_messageDeltaObserved || string.IsNullOrWhiteSpace(_stopReason)) {
+            throw new InvalidDataException(
+                "Anthropic message_stop requires a preceding message_delta with stop_reason."
+            );
+        }
+
+        aggregator.AbortIncompleteStreamingState();
         _terminalEventObserved = true;
         switch (_stopReason) {
             case "end_turn":
             case "tool_use":
                 aggregator.MarkCompleted(_stopReason);
-                break;
-            case null:
-            case "":
-                aggregator.MarkIncomplete(detail: "Anthropic message_stop arrived without stop_reason.");
                 break;
             default:
                 aggregator.MarkIncomplete(_stopReason);
@@ -248,6 +311,14 @@ internal sealed class AnthropicStreamParser {
 
     private void HandleUnknownEvent(string eventType) {
         DebugUtil.Warning(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
+    }
+
+    private void RequireMessageStarted(string eventType) {
+        if (!_messageStarted) {
+            throw new InvalidDataException(
+                $"Anthropic {eventType} arrived before message_start."
+            );
+        }
     }
 
     private void FinalizeTerminalStreamingState(CompletionAggregator aggregator) {

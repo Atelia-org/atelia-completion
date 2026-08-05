@@ -239,6 +239,30 @@ public sealed class AnthropicClientTests {
         Assert.Equal("Anthropic Messages", exception.StreamDisplayName);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_DeltaAndStopWithoutMessageStartCannotBecomeCompleted() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+                event: message_stop
+                data: {"type":"message_stop"}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("before message_start", exception.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("data: {\"type\":\"ping\"}\n\n")]
     [InlineData("event: message_start\ndata: {\"type\":\"ping\"}\n\n")]
@@ -261,6 +285,9 @@ public sealed class AnthropicClientTests {
         var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(
                 """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
                 event: content_block_start
                 data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
 

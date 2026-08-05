@@ -42,6 +42,9 @@ public sealed class AnthropicStreamParserTests {
 
         var events = new[] {
             """
+            {"type":"message_start","message":{}}
+            """,
+            """
             {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_123","name":"get_weather","input":{}}}
             """,
             """
@@ -76,6 +79,9 @@ public sealed class AnthropicStreamParserTests {
 
         var events = new[] {
             """
+            {"type":"message_start","message":{}}
+            """,
+            """
             {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_456","name":"unknown_tool","input":{}}}
             """,
             """
@@ -106,6 +112,9 @@ public sealed class AnthropicStreamParserTests {
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
+            """
+            {"type":"message_start","message":{}}
+            """,
             """
             {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
             """,
@@ -150,6 +159,9 @@ public sealed class AnthropicStreamParserTests {
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         var events = new[] {
+            """
+            {"type":"message_start","message":{}}
+            """,
             """
             {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
             """,
@@ -202,6 +214,11 @@ public sealed class AnthropicStreamParserTests {
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         parser.ParseEvent(
+            """{"type":"message_start","message":{}}""",
+            aggregator,
+            "message_start"
+        );
+        parser.ParseEvent(
             """{"type":"message_delta","delta":{"stop_reason":"STOP_REASON"}}"""
                 .Replace("STOP_REASON", stopReason, StringComparison.Ordinal),
             aggregator,
@@ -220,20 +237,24 @@ public sealed class AnthropicStreamParserTests {
     }
 
     [Fact]
-    public void ParseEvent_MessageStopWithoutStopReasonIsExplicitIncompleteTerminal() {
+    public void ParseEvent_MessageStopWithoutAuthoritativeStopReasonIsProtocolError() {
         var parser = new AnthropicStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         parser.ParseEvent(
-            """{"type":"message_stop"}""",
+            """{"type":"message_start","message":{}}""",
             aggregator,
-            "message_stop"
+            "message_start"
         );
 
-        Assert.True(parser.TerminalEventObserved);
-        var result = aggregator.Build();
-        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
-        Assert.Contains("without stop_reason", result.Termination.Detail, StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """{"type":"message_stop"}""",
+                aggregator,
+                "message_stop"
+            )
+        );
+        Assert.False(parser.TerminalEventObserved);
     }
 
     [Fact]
@@ -270,6 +291,128 @@ public sealed class AnthropicStreamParserTests {
         );
 
         Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Theory]
+    [InlineData("message_delta", "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}")]
+    [InlineData("message_stop", "{\"type\":\"message_stop\"}")]
+    [InlineData("content_block_start", "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}")]
+    [InlineData("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}")]
+    [InlineData("content_block_stop", "{\"type\":\"content_block_stop\",\"index\":0}")]
+    public void ParseEvent_KnownMessageLifecycleEventBeforeStartIsProtocolError(
+        string eventType,
+        string json
+    ) {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(json, aggregator, eventType)
+        );
+
+        Assert.Contains("before message_start", exception.Message, StringComparison.Ordinal);
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Fact]
+    public void ParseEvent_RepeatedMessageStartIsProtocolError() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+        const string MessageStart = """{"type":"message_start","message":{}}""";
+
+        parser.ParseEvent(MessageStart, aggregator, "message_start");
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(MessageStart, aggregator, "message_start")
+        );
+        Assert.Contains("repeated message_start", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_MessageDeltaBeforeActiveBlockStopIsProtocolError() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"message_start","message":{}}""",
+            aggregator,
+            "message_start"
+        );
+        parser.ParseEvent(
+            """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}""",
+            aggregator,
+            "content_block_start"
+        );
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """{"type":"message_delta","delta":{"stop_reason":"end_turn"}}""",
+                aggregator,
+                "message_delta"
+            )
+        );
+        Assert.Contains("active content block", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_RejectsNonSequentialOrOverlappingContentBlockStarts() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"message_start","message":{}}""",
+            aggregator,
+            "message_start"
+        );
+
+        var nonSequential = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}""",
+                aggregator,
+                "content_block_start"
+            )
+        );
+        Assert.Contains("expected index 0", nonSequential.Message, StringComparison.Ordinal);
+
+        parser.ParseEvent(
+            """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}""",
+            aggregator,
+            "content_block_start"
+        );
+        var overlapping = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}""",
+                aggregator,
+                "content_block_start"
+            )
+        );
+        Assert.Contains("active content block", overlapping.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_ContentBlockAfterMessageDeltaIsProtocolError() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"message_start","message":{}}""",
+            aggregator,
+            "message_start"
+        );
+        parser.ParseEvent(
+            """{"type":"message_delta","delta":{"stop_reason":"end_turn"}}""",
+            aggregator,
+            "message_delta"
+        );
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}""",
+                aggregator,
+                "content_block_start"
+            )
+        );
+        Assert.Contains("after message_delta", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]

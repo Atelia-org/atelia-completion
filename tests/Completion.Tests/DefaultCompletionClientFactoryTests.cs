@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
@@ -7,75 +6,22 @@ namespace Atelia.Completion.Tests;
 
 public sealed class DefaultCompletionClientFactoryTests {
     [Fact]
-    public void CreateAppliesOnlyTheSelectedConnectionsEffectiveTimeout() {
+    public void CreateUsesAnInfiniteHttpClientTimeout() {
         var factory = new DefaultCompletionClientFactory();
-        using var defaultClient = Assert.IsType<OwnedHttpCompletionClient>(
-            factory.Create(Connection("default", requestTimeoutSeconds: null))
-        );
-        using var extendedClient = Assert.IsType<OwnedHttpCompletionClient>(
-            factory.Create(Connection("extended", requestTimeoutSeconds: 300))
+        using var client = Assert.IsType<OwnedHttpCompletionClient>(
+            factory.Create(Connection("default"))
         );
 
-        Assert.Equal(
-            TimeSpan.FromSeconds(100),
-            defaultClient.HttpRequestTimeout
-        );
-        Assert.Equal(
-            TimeSpan.FromSeconds(100),
-            defaultClient.WholeOperationTimeout
-        );
-        Assert.Equal(
-            TimeSpan.FromSeconds(300),
-            extendedClient.HttpRequestTimeout
-        );
-        Assert.Equal(
-            TimeSpan.FromSeconds(300),
-            extendedClient.WholeOperationTimeout
-        );
-    }
-
-    [Fact]
-    public async Task WholeOperationTimeoutCancelsAStalledStreamingInner() {
-        var inner = new StalledStreamingClient();
-        using var httpClient = new HttpClient {
-            Timeout = TimeSpan.FromMilliseconds(50)
-        };
-        using var client = new OwnedHttpCompletionClient(
-            inner,
-            httpClient,
-            TimeSpan.FromMilliseconds(50)
-        );
-        var stopwatch = Stopwatch.StartNew();
-
-        TaskCanceledException exception = await Assert.ThrowsAsync<
-            TaskCanceledException
-        >(() => client.StreamCompletionAsync(Request(), observer: null));
-
-        stopwatch.Stop();
-        Assert.True(inner.Entered);
-        Assert.True(inner.ObservedToken.CanBeCanceled);
-        Assert.True(inner.ObservedToken.IsCancellationRequested);
-        Assert.Contains(
-            "configured whole-operation timeout",
-            exception.Message,
-            StringComparison.Ordinal
-        );
-        Assert.True(
-            stopwatch.Elapsed < TimeSpan.FromSeconds(2),
-            $"Timeout took unexpectedly long: {stopwatch.Elapsed}."
-        );
+        Assert.Equal(Timeout.InfiniteTimeSpan, client.HttpClientTimeout);
     }
 
     [Fact]
     public async Task CallerCancellationRetainsCallerTokenIdentity() {
         var inner = new StalledStreamingClient();
-        using var httpClient = new HttpClient {
-            Timeout = TimeSpan.FromSeconds(30)
-        };
+        using var httpClient = new HttpClient();
         using var client = new OwnedHttpCompletionClient(
             inner,
-            httpClient,
-            TimeSpan.FromSeconds(30)
+            httpClient
         );
         using var caller = new CancellationTokenSource();
         Task<CompletionResult> operation = client.StreamCompletionAsync(
@@ -91,18 +37,15 @@ public sealed class DefaultCompletionClientFactoryTests {
 
         Assert.Equal(caller.Token, exception.CancellationToken);
         Assert.True(inner.Entered);
+        Assert.Equal(caller.Token, inner.ObservedToken);
     }
 
-    private static CompletionConnectionConfig Connection(
-        string id,
-        int? requestTimeoutSeconds
-    ) => new(
+    private static CompletionConnectionConfig Connection(string id) => new(
         id,
         "openai-chat",
         "model-a",
         "openai-chat/strict",
-        "http://localhost/",
-        RequestTimeoutSeconds: requestTimeoutSeconds
+        "http://localhost/"
     );
 
     private static CompletionRequest Request() => new(

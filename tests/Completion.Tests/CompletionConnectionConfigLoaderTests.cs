@@ -24,7 +24,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
                       "kind": "openai-chat",
                       "modelId": "unsloth/qwen3.6",
                       "completionSurfaceId": "openai-chat/sglang-compatible",
-                      "requestTimeoutSeconds": 300,
                       "baseAddressEnv": "{{baseAddressEnv}}",
                       "apiKeyEnv": "{{apiKeyEnv}}"
                     }
@@ -41,53 +40,10 @@ public sealed class CompletionConnectionConfigLoaderTests {
             Assert.Equal("sk-test", connection.ApiKey);
             Assert.Equal(baseAddressEnv, connection.BaseAddressEnv);
             Assert.Equal(apiKeyEnv, connection.ApiKeyEnv);
-            Assert.Equal(300, connection.RequestTimeoutSeconds);
         }
         finally {
             Environment.SetEnvironmentVariable(baseAddressEnv, null);
             Environment.SetEnvironmentVariable(apiKeyEnv, null);
-            Directory.Delete(tempDirectory, recursive: true);
-        }
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(3601)]
-    public void LoadFile_RejectsRequestTimeoutOutsideBoundedRange(
-        int requestTimeoutSeconds
-    ) {
-        string tempDirectory = CreateTempDirectory();
-        try {
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                $$"""
-                {
-                  "connections": [
-                    {
-                      "id": "bounded-timeout",
-                      "kind": "openai-chat",
-                      "modelId": "model-a",
-                      "completionSurfaceId": "openai-chat/strict",
-                      "baseAddress": "http://localhost/",
-                      "requestTimeoutSeconds": {{requestTimeoutSeconds}}
-                    }
-                  ]
-                }
-                """
-            );
-
-            InvalidOperationException exception = Assert.Throws<
-                InvalidOperationException
-            >(() => CompletionConnectionConfigLoader.LoadFile(path));
-
-            Assert.Contains(
-                "requestTimeoutSeconds must be between 1 and 3600",
-                exception.Message,
-                StringComparison.Ordinal
-            );
-        }
-        finally {
             Directory.Delete(tempDirectory, recursive: true);
         }
     }

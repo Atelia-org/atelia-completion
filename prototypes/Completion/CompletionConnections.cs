@@ -22,8 +22,7 @@ public sealed record CompletionConnectionConfig(
     string? ApiKey = null,
     string? BaseAddressEnv = null,
     string? ApiKeyEnv = null,
-    int? MaxTokens = null,
-    int? RequestTimeoutSeconds = null
+    int? MaxTokens = null
 );
 
 public static class CompletionConnectionConfigLoader {
@@ -53,14 +52,6 @@ public static class CompletionConnectionConfigLoader {
 
             RequireNonBlank(connection.Kind, $"Completion connection '{connection.Id}' must have a non-empty kind.");
             RequireNonBlank(connection.ModelId, $"Completion connection '{connection.Id}' must have a non-empty modelId.");
-            if (connection.RequestTimeoutSeconds is < 1 or > 3600) {
-                throw new InvalidOperationException(
-                    $"Completion connection '{connection.Id}' "
-                    + "requestTimeoutSeconds must be between 1 and "
-                    + "3600."
-                );
-            }
-
             // completionSurfaceId only disambiguates the openai-chat dialect; for single-surface
             // kinds (anthropic, openai-responses) it is redundant, so default it from the kind when
             // omitted instead of forcing every connection to spell it out.
@@ -129,8 +120,6 @@ public interface ICompletionClientFactory {
 }
 
 public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
-    internal const int DefaultRequestTimeoutSeconds = 100;
-
     public ICompletionClient Create(CompletionConnectionConfig connection) {
         ArgumentNullException.ThrowIfNull(connection);
 
@@ -138,13 +127,6 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
             new Uri(connection.BaseAddress, UriKind.Absolute)
         );
         try {
-            TimeSpan effectiveRequestTimeout = TimeSpan.FromSeconds(
-                GetEffectiveRequestTimeoutSeconds(connection)
-            );
-            // Keep HttpClient's own timeout as an early headers fence. The
-            // owned wrapper applies the same timeout to the complete streaming
-            // operation, including content read after ResponseHeadersRead.
-            httpClient.Timeout = effectiveRequestTimeout;
             ICompletionClient client = connection.Kind.Trim().ToLowerInvariant() switch {
                 "openai-chat" => new OpenAIChatClient(
                     apiKey: connection.ApiKey,
@@ -165,22 +147,13 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
 
             return new OwnedHttpCompletionClient(
                 client,
-                httpClient,
-                effectiveRequestTimeout
+                httpClient
             );
         }
         catch {
             httpClient.Dispose();
             throw;
         }
-    }
-
-    internal static int GetEffectiveRequestTimeoutSeconds(
-        CompletionConnectionConfig connection
-    ) {
-        ArgumentNullException.ThrowIfNull(connection);
-        return connection.RequestTimeoutSeconds
-            ?? DefaultRequestTimeoutSeconds;
     }
 
     private static OpenAIChatDialect ResolveOpenAiChatDialect(string completionSurfaceId) {
@@ -196,74 +169,30 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
 internal sealed class OwnedHttpCompletionClient : ICompletionClient, IDisposable {
     private readonly ICompletionClient _inner;
     private readonly HttpClient _httpClient;
-    private readonly TimeSpan _wholeOperationTimeout;
 
     public OwnedHttpCompletionClient(
         ICompletionClient inner,
-        HttpClient httpClient,
-        TimeSpan wholeOperationTimeout
+        HttpClient httpClient
     ) {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        if (wholeOperationTimeout <= TimeSpan.Zero
-            || wholeOperationTimeout == Timeout.InfiniteTimeSpan) {
-            throw new ArgumentOutOfRangeException(
-                nameof(wholeOperationTimeout),
-                "Whole-operation timeout must be finite and positive."
-            );
-        }
-        _wholeOperationTimeout = wholeOperationTimeout;
     }
 
     public string Name => _inner.Name;
 
     public string ApiSpecId => _inner.ApiSpecId;
 
-    internal TimeSpan HttpRequestTimeout => _httpClient.Timeout;
+    internal TimeSpan HttpClientTimeout => _httpClient.Timeout;
 
-    internal TimeSpan WholeOperationTimeout => _wholeOperationTimeout;
-
-    public async Task<CompletionResult> StreamCompletionAsync(
+    public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
-    ) {
-        using var timeoutSource =
-            CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken
-            );
-        timeoutSource.CancelAfter(_wholeOperationTimeout);
-        try {
-            return await _inner.StreamCompletionAsync(
-                    request,
-                    observer,
-                    timeoutSource.Token
-                )
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (
-            cancellationToken.IsCancellationRequested
-        ) {
-            // Preserve caller cancellation authority and token identity even
-            // though the inner client observed the linked token.
-            throw new OperationCanceledException(
-                exception.Message,
-                exception,
-                cancellationToken
-            );
-        }
-        catch (OperationCanceledException exception) when (
-            timeoutSource.IsCancellationRequested
-        ) {
-            throw new TaskCanceledException(
-                "Completion request exceeded its configured whole-operation "
-                + $"timeout of {_wholeOperationTimeout.TotalSeconds:g} "
-                + "seconds.",
-                exception,
-                timeoutSource.Token
-            );
-        }
-    }
+    ) => _inner.StreamCompletionAsync(
+        request,
+        observer,
+        cancellationToken
+    );
 
     public void Dispose() {
         if (_inner is IDisposable disposable) { disposable.Dispose(); }

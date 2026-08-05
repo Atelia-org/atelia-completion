@@ -300,7 +300,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         var exception = Assert.ThrowsAny<ArgumentException>(
             () => new LoggingCompletionClient(
                 new YieldingCompletionClient("contract-test"),
-                CreateConnection(requestTimeoutSeconds: null),
+                CreateConnection(),
                 callLogDirectory!
             )
         );
@@ -355,7 +355,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v1",
+                "atelia.completion.call-log.v2",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(filenameCallId, document.RootElement.GetProperty("callId").GetInt32());
@@ -378,7 +378,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v1",
+            "atelia.completion.call-log.v2",
             root.GetProperty("schema").GetString()
         );
         JsonElement request = root.GetProperty("request");
@@ -390,6 +390,12 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         Assert.Equal("observation", history.GetProperty("kind").GetString());
         Assert.Equal("hello", history.GetProperty("content").GetString());
         Assert.Empty(request.GetProperty("tools").EnumerateArray());
+        Assert.False(
+            root.GetProperty("connection").TryGetProperty(
+                "effectiveRequestTimeoutSeconds",
+                out _
+            )
+        );
 
         JsonElement response = root.GetProperty("response");
         Assert.Equal("done", response.GetProperty("text").GetString());
@@ -417,10 +423,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
 
     [Fact]
     public async Task FailedCompletion_RecordsItsActualPathOnTheOwningClient() {
-        var client = CreateLoggingClient(
-            new ThrowingCompletionClient(),
-            requestTimeoutSeconds: 300
-        );
+        var client = CreateLoggingClient(new ThrowingCompletionClient());
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => client.StreamCompletionAsync(CreateRequest(), observer: null)
@@ -433,7 +436,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v1",
+            "atelia.completion.call-log.v2",
             root.GetProperty("schema").GetString()
         );
         Assert.False(root.TryGetProperty("response", out _));
@@ -445,45 +448,20 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             "scripted completion failure",
             root.GetProperty("exception").GetProperty("message").GetString()
         );
-        Assert.Equal(
-            300,
-            root
-                .GetProperty("connection")
-                .GetProperty("effectiveRequestTimeoutSeconds")
-                .GetInt32()
-        );
-    }
-
-    [Fact]
-    public async Task DefaultTimeoutIsReportedAsEffectiveOneHundredSeconds() {
-        var client = CreateLoggingClient(
-            new YieldingCompletionClient("default-timeout")
-        );
-
-        _ = await client.StreamCompletionAsync(
-            CreateRequest(),
-            observer: null
-        );
-
-        using JsonDocument document = JsonDocument.Parse(
-            File.ReadAllText(Assert.Single(client.WrittenCallLogPaths))
-        );
-        Assert.Equal(
-            100,
-            document.RootElement
-                .GetProperty("connection")
-                .GetProperty("effectiveRequestTimeoutSeconds")
-                .GetInt32()
+        Assert.False(
+            root.GetProperty("connection").TryGetProperty(
+                "effectiveRequestTimeoutSeconds",
+                out _
+            )
         );
     }
 
     private LoggingCompletionClient CreateLoggingClient(
-        ICompletionClient inner,
-        int? requestTimeoutSeconds = null
+        ICompletionClient inner
     )
         => new(
             inner,
-            CreateConnection(requestTimeoutSeconds),
+            CreateConnection(),
             _tempDirectory
         );
 
@@ -494,24 +472,20 @@ public sealed class LoggingCompletionClientTests : IDisposable {
     )
         => new(
             inner,
-            CreateConnection(requestTimeoutSeconds: null),
+            CreateConnection(),
             _tempDirectory,
             context: null,
             () => sink,
             reporter
         );
 
-    private static CompletionConnectionConfig CreateConnection(
-        int? requestTimeoutSeconds
-    )
-        => new(
-            Id: "test",
-            Kind: "scripted",
-            ModelId: "model-a",
-            CompletionSurfaceId: "surface-a",
-            BaseAddress: "http://localhost/",
-            RequestTimeoutSeconds: requestTimeoutSeconds
-        );
+    private static CompletionConnectionConfig CreateConnection() => new(
+        Id: "test",
+        Kind: "scripted",
+        ModelId: "model-a",
+        CompletionSurfaceId: "surface-a",
+        BaseAddress: "http://localhost/"
+    );
 
     private static CompletionRequest CreateRequest()
         => CreateRequest(new ObservationMessage("hello"));

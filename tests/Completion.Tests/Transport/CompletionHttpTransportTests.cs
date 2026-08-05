@@ -20,6 +20,7 @@ public sealed class CompletionHttpTransportTests {
         using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri("http://localhost:8000/provider"));
 
         Assert.Equal(new Uri("http://localhost:8000/provider/"), httpClient.BaseAddress);
+        Assert.Equal(Timeout.InfiniteTimeSpan, httpClient.Timeout);
     }
 
     [Fact]

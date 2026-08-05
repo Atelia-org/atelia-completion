@@ -159,6 +159,25 @@ public sealed class GeminiClientTests {
     }
 
     [Fact]
+    public async Task StreamCompletionAsync_NoArgFunctionCallCanCompleteAtProviderTerminal() {
+        using var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"name\":\"no_args\",\"id\":\"call-1\"}}]},\"finishReason\":\"STOP\"}]}\n\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        var toolCall = Assert.Single(result.Message.ToolCalls);
+        Assert.Equal("call-1", toolCall.ToolCallId);
+        Assert.Equal("no_args", toolCall.ToolName);
+        Assert.Equal("{}", toolCall.RawArgumentsJson);
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_EofBeforeProviderTerminalIsUncertainInterruption() {
         using var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(

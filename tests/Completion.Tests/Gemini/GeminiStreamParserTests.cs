@@ -82,6 +82,27 @@ public sealed class GeminiStreamParserTests {
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ParseEvent_OptionalFunctionCallArgsNormalizesToEmptyObject(bool explicitNull) {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+        var args = explicitNull ? ",\"args\":null" : string.Empty;
+
+        parser.ParseEvent(
+            $"{{\"candidates\":[{{\"content\":{{\"role\":\"model\",\"parts\":[{{\"functionCall\":{{\"name\":\"no_args\"{args}}}}}]}},\"finishReason\":\"STOP\"}}]}}",
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        var toolCall = Assert.Single(result.Message.ToolCalls);
+        Assert.Equal("no_args", toolCall.ToolName);
+        Assert.Equal("{}", toolCall.RawArgumentsJson);
+    }
+
+    [Theory]
     [InlineData("STOP", CompletionTerminationKind.Completed)]
     [InlineData("MAX_TOKENS", CompletionTerminationKind.Incomplete)]
     [InlineData("SAFETY", CompletionTerminationKind.Incomplete)]

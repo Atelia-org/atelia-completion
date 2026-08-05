@@ -185,7 +185,13 @@ internal sealed class GeminiStreamParser {
                 toolCallId = $"gemini-call-{_replayParts.Count}";
             }
 
-            var arguments = GetRequiredObject(functionCall, "args", "functionCall");
+            var arguments = functionCall.TryGetPropertyValue("args", out var argumentsNode)
+                && argumentsNode is not null
+                ? argumentsNode as JsonObject
+                    ?? throw new InvalidDataException(
+                        "Gemini functionCall field 'args' must be an object or null."
+                    )
+                : new JsonObject();
             var rawArgumentsJson = arguments.ToJsonString();
             aggregator.AppendToolCall(
                 StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsJson)

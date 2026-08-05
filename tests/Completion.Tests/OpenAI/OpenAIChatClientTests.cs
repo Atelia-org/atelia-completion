@@ -42,6 +42,7 @@ public sealed class OpenAIChatClientTests {
 
         var requestBody = Assert.Single(handler.RequestBodies);
         Assert.DoesNotContain("\"stream_options\"", requestBody, StringComparison.Ordinal);
+        Assert.Equal("text/event-stream", Assert.Single(handler.RequestAcceptHeaders));
         Assert.Equal("hello", aggregated.Message.GetFlattenedText());
     }
 
@@ -305,6 +306,113 @@ public sealed class OpenAIChatClientTests {
         Assert.Equal("hello", assistantMessage.GetProperty("content").GetString());
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_EofBeforeFinishReasonIsUncertainInterruption() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.Strict);
+
+        var exception = await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Equal("OpenAI chat/completions", exception.StreamDisplayName);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_DoneBeforeFinishReasonIsUncertainInterruption() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}
+
+                data: [DONE]
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.Strict);
+
+        await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_FinishReasonReturnsWithoutReadingLaterFrames() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"content":"done"},"finish_reason":"stop"}]}
+
+                data: {not-json}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.Strict);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal("done", result.Message.GetFlattenedText());
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_InterruptionClosesObserverThinkingLifecycle() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"reasoning_content":"still thinking"},"finish_reason":null}]}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.DeepSeekV4);
+        var observer = new CompletionStreamObserver();
+        var thinkingBeginCount = 0;
+        var thinkingEndCount = 0;
+        observer.ReceivedThinkingBegin += () => thinkingBeginCount++;
+        observer.ReceivedThinkingEnd += () => thinkingEndCount++;
+
+        await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None)
+        );
+
+        Assert.Equal(1, thinkingBeginCount);
+        Assert.Equal(1, thinkingEndCount);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_SuccessWithNonEventStreamMediaTypeIsProtocolError() {
+        var handler = new SequenceHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            }
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.Strict);
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("text/event-stream", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("application/json", exception.Message, StringComparison.Ordinal);
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gpt-4.1",
@@ -312,6 +420,18 @@ public sealed class OpenAIChatClientTests {
             Context: new[] { new ObservationMessage("hello") },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
+    }
+
+    private static HttpClient CreateHttpClient(HttpMessageHandler handler) {
+        return new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+    }
+
+    private static HttpResponseMessage EventStreamResponse(string body) {
+        return new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StringContent(body, Encoding.UTF8, "text/event-stream")
+        };
     }
 
     private sealed class SequenceHttpMessageHandler : HttpMessageHandler {
@@ -323,9 +443,11 @@ public sealed class OpenAIChatClientTests {
 
         public List<string> RequestBodies { get; } = new();
         public List<string?> RequestUris { get; } = new();
+        public List<string> RequestAcceptHeaders { get; } = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             RequestUris.Add(request.RequestUri?.ToString());
+            RequestAcceptHeaders.Add(request.Headers.Accept.ToString());
 
             if (request.Content is not null) {
                 RequestBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));

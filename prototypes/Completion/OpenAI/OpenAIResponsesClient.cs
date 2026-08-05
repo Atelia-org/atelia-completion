@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Transport;
 using Atelia.Diagnostics;
 
 namespace Atelia.Completion.OpenAI;
@@ -60,37 +61,50 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
 
         var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new OpenAIResponsesStreamParser();
-        string? line;
         var stoppedEarly = false;
 
-        while ((line = await reader.ReadLineAsync(cancellationToken)) is not null) {
-            cancellationToken.ThrowIfCancellationRequested();
+        try {
+            await foreach (var frame in CompletionSseEventReader.ReadFramesAsync(stream, cancellationToken)) {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (frame.Data is null) { continue; }
 
-            if (string.IsNullOrWhiteSpace(line)) { continue; }
-            if (!line.StartsWith("data:", StringComparison.Ordinal)) { continue; }
+                if (string.Equals(frame.Data, "[DONE]", StringComparison.Ordinal)) {
+                    CompletionStreamTermination.RequireTerminalEvent(
+                        parser.TerminalEventObserved,
+                        "OpenAI Responses"
+                    );
+                    break;
+                }
 
-            var json = line["data:".Length..].TrimStart();
-            if (json == "[DONE]") { break; }
+                parser.ParseEvent(frame.Data, aggregator, frame.EventType);
+                if (parser.TerminalEventObserved) { break; }
 
-            parser.ParseEvent(json, aggregator);
-            if (aggregator.ShouldStop) {
-                stoppedEarly = true;
-                break;
+                if (aggregator.ShouldStop) {
+                    stoppedEarly = true;
+                    break;
+                }
+            }
+
+            if (stoppedEarly) {
+                parser.DiscardIncompleteStreamingState();
+                aggregator.AbortIncompleteStreamingState();
+                aggregator.MarkIncomplete(detail: "Streaming observer stopped OpenAI Responses completion early.");
+            }
+            else {
+                CompletionStreamTermination.RequireTerminalEvent(
+                    parser.TerminalEventObserved,
+                    "OpenAI Responses"
+                );
             }
         }
-
-        if (stoppedEarly) {
+        catch {
             parser.DiscardIncompleteStreamingState();
             aggregator.AbortIncompleteStreamingState();
-            aggregator.MarkIncomplete(detail: "Streaming observer stopped OpenAI Responses completion early.");
-        }
-        else {
-            parser.Complete(aggregator);
+            throw;
         }
 
         DebugUtil.Trace(DebugCategory, "[OpenAI/Responses] Stream completed");
@@ -117,6 +131,7 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         var request = new HttpRequestMessage(HttpMethod.Post, "v1/responses") {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
         };
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
         if (!string.IsNullOrWhiteSpace(_apiKey)) {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);

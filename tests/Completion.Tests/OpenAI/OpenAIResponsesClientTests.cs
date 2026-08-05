@@ -70,6 +70,7 @@ public sealed class OpenAIResponsesClientTests {
         var result = await client.StreamCompletionAsync(request, null, CancellationToken.None);
 
         Assert.Equal("http://localhost:8000/v1/responses", Assert.Single(handler.RequestUris));
+        Assert.Equal("text/event-stream", Assert.Single(handler.RequestAcceptHeaders));
 
         using var document = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
         var root = document.RootElement;
@@ -241,6 +242,96 @@ public sealed class OpenAIResponsesClientTests {
         );
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_EofBeforeTerminalEventIsUncertainInterruption() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"type":"response.output_text.delta","delta":"partial"}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Equal("OpenAI Responses", exception.StreamDisplayName);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_DoneBeforeTerminalEventIsUncertainInterruption() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"type":"response.output_text.delta","delta":"partial"}
+
+                data: [DONE]
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+
+        await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_ExplicitTerminalReturnsWithoutReadingLaterFrames() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: response.completed
+                data: {"type":"response.completed"}
+
+                data: {not-json}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_InterruptionClosesObserverThinkingLifecycle() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: response.output_item.added
+                data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+        var observer = new CompletionStreamObserver();
+        var thinkingBeginCount = 0;
+        var thinkingEndCount = 0;
+        observer.ReceivedThinkingBegin += () => thinkingBeginCount++;
+        observer.ReceivedThinkingEnd += () => thinkingEndCount++;
+
+        await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None)
+        );
+
+        Assert.Equal(1, thinkingBeginCount);
+        Assert.Equal(1, thinkingEndCount);
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gpt-5",
@@ -248,6 +339,18 @@ public sealed class OpenAIResponsesClientTests {
             Context: new[] { new ObservationMessage("hello") },
             Tools: ImmutableArray<ToolDefinition>.Empty
         );
+    }
+
+    private static HttpClient CreateHttpClient(HttpMessageHandler handler) {
+        return new HttpClient(handler) {
+            BaseAddress = new Uri("http://localhost:8000/")
+        };
+    }
+
+    private static HttpResponseMessage EventStreamResponse(string body) {
+        return new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StringContent(body, Encoding.UTF8, "text/event-stream")
+        };
     }
 
     private sealed class SequenceHttpMessageHandler : HttpMessageHandler {
@@ -259,9 +362,11 @@ public sealed class OpenAIResponsesClientTests {
 
         public List<string> RequestBodies { get; } = new();
         public List<string?> RequestUris { get; } = new();
+        public List<string> RequestAcceptHeaders { get; } = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             RequestUris.Add(request.RequestUri?.ToString());
+            RequestAcceptHeaders.Add(request.Headers.Accept.ToString());
 
             if (request.Content is not null) {
                 RequestBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));

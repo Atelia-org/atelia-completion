@@ -158,4 +158,59 @@ public sealed class OpenAIChatStreamParserTests {
         Assert.Equal("{\"count\": 7}", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.RawArgumentsJson);
         Assert.Equal("call_b", Assert.IsType<ActionBlock.ToolCall>(toolCallBlocks[1]).Call.ToolCallId);
     }
+
+    [Theory]
+    [InlineData("stop", CompletionTerminationKind.Completed)]
+    [InlineData("tool_calls", CompletionTerminationKind.Completed)]
+    [InlineData("function_call", CompletionTerminationKind.Completed)]
+    [InlineData("length", CompletionTerminationKind.Incomplete)]
+    [InlineData("content_filter", CompletionTerminationKind.Incomplete)]
+    public void ParseEvent_FinishReasonIsSemanticTerminal(
+        string finishReason,
+        CompletionTerminationKind expectedKind
+    ) {
+        var parser = new OpenAIChatStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            $$"""
+            {"choices":[{"index":0,"delta":{},"finish_reason":"{{finishReason}}"}]}
+            """,
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(expectedKind, result.Termination.Kind);
+        Assert.Equal(finishReason, result.Termination.ProviderReason);
+    }
+
+    [Fact]
+    public void ParseEvent_TopLevelErrorIsFailedSemanticTerminal() {
+        var parser = new OpenAIChatStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"error":{"message":"provider rejected stream"}}""",
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal(["provider rejected stream"], result.Errors);
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("[]")]
+    [InlineData("{\"choices\":{}}")]
+    [InlineData("{\"choices\":[{\"delta\":7,\"finish_reason\":null}]}")]
+    public void ParseEvent_MalformedProviderShapeThrowsProtocolException(string json) {
+        var parser = new OpenAIChatStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        Assert.Throws<InvalidDataException>(() => parser.ParseEvent(json, aggregator));
+        Assert.False(parser.TerminalEventObserved);
+    }
 }

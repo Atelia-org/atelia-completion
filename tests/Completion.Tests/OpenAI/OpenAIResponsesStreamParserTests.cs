@@ -110,7 +110,7 @@ public sealed class OpenAIResponsesStreamParserTests {
     }
 
     [Fact]
-    public void ParseEvent_FailedAndTopLevelErrorAppendErrors() {
+    public void ParseEvent_FailedIsSemanticTerminalAndAppendsError() {
         var parser = new OpenAIResponsesStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
@@ -120,6 +120,18 @@ public sealed class OpenAIResponsesStreamParserTests {
             """,
             aggregator
         );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal(["stream failed"], result.Errors);
+    }
+
+    [Fact]
+    public void ParseEvent_TopLevelErrorIsSemanticTerminalAndAppendsError() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
         parser.ParseEvent(
             """
             {"error":{"message":"bad input"}}
@@ -127,8 +139,81 @@ public sealed class OpenAIResponsesStreamParserTests {
             aggregator
         );
 
+        Assert.True(parser.TerminalEventObserved);
         var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal(["bad input"], result.Errors);
+    }
 
-        Assert.Equal(["stream failed", "bad input"], result.Errors);
+    [Fact]
+    public void ParseEvent_ResponseIncompletePreservesProviderReason() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}
+            """,
+            aggregator,
+            "response.incomplete"
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
+        Assert.Equal("max_output_tokens", result.Termination.ProviderReason);
+        Assert.Contains("max_output_tokens", result.Termination.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_UnknownWellFormedEventIsForwardCompatible() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"response.future_progress","future_value":42}""",
+            aggregator,
+            "response.future_progress"
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+        parser.ParseEvent(
+            """{"type":"response.completed"}""",
+            aggregator,
+            "response.completed"
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        Assert.Equal(CompletionTerminationKind.Completed, aggregator.Build().Termination.Kind);
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("{\"type\":7}")]
+    public void ParseEvent_MalformedProviderShapeThrowsProtocolException(string json) {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        Assert.Throws<InvalidDataException>(() => parser.ParseEvent(json, aggregator));
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Fact]
+    public void ParseEvent_RejectsSseEventAndDataTypeMismatch() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """{"type":"response.completed"}""",
+                aggregator,
+                "response.output_text.delta"
+            )
+        );
+
+        Assert.Contains("does not match", exception.Message, StringComparison.Ordinal);
+        Assert.False(parser.TerminalEventObserved);
     }
 }

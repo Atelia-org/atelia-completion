@@ -17,8 +17,10 @@ internal sealed class OpenAIChatStreamParser {
     private readonly OpenAIChatReasoningMode _reasoningMode;
     private readonly Dictionary<int, ToolCallState> _toolCalls = new();
     private readonly StringBuilder _reasoningContentBuilder = new();
-    private bool _sawTerminalFinishReason;
+    private bool _terminalEventObserved;
     private bool _reasoningInProgress;
+
+    public bool TerminalEventObserved => _terminalEventObserved;
 
     public OpenAIChatStreamParser(
         OpenAIChatWhitespaceContentMode whitespaceContentMode = OpenAIChatWhitespaceContentMode.Preserve,
@@ -29,39 +31,14 @@ internal sealed class OpenAIChatStreamParser {
     }
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
-        JsonNode? node;
+        if (_terminalEventObserved) { return; }
+
         try {
-            node = JsonNode.Parse(json);
+            ParseEventCore(json, aggregator);
         }
-        catch (JsonException ex) {
-            DebugUtil.Warning(DebugCategory, $"[OpenAI] Failed to parse event: {ex.Message}", ex);
-            return;
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
+            throw new InvalidDataException("OpenAI chat stream contained malformed provider JSON.", ex);
         }
-
-        if (node is not JsonObject obj) { return; }
-
-        if (obj["error"] is JsonObject error) {
-            var errorMessage = error["message"]?.GetValue<string>() ?? "Unknown error";
-            DebugUtil.Warning(DebugCategory, $"[OpenAI] API error: {errorMessage}");
-            aggregator.AppendError(errorMessage);
-            aggregator.MarkFailed("error", errorMessage);
-            return;
-        }
-
-        if (obj["choices"] is not JsonArray choices) { return; }
-
-        foreach (var choiceNode in choices) {
-            if (choiceNode is not JsonObject choice) { continue; }
-            HandleChoice(choice, aggregator);
-        }
-    }
-
-    public void Complete(CompletionAggregator aggregator) {
-        if (!_sawTerminalFinishReason) {
-            aggregator.MarkIncomplete(detail: "OpenAI chat stream ended without finish_reason.");
-        }
-
-        FlushPendingStreamingState(aggregator);
     }
 
     public void DiscardIncompleteStreamingState() {
@@ -70,16 +47,60 @@ internal sealed class OpenAIChatStreamParser {
         _reasoningInProgress = false;
     }
 
+    public void Complete(CompletionAggregator aggregator) {
+        ArgumentNullException.ThrowIfNull(aggregator);
+        if (!_terminalEventObserved) {
+            throw new InvalidDataException(
+                "OpenAI chat stream cannot complete without a terminal error or finish_reason."
+            );
+        }
+    }
+
+    private void ParseEventCore(string json, CompletionAggregator aggregator) {
+        if (JsonNode.Parse(json) is not JsonObject obj) {
+            throw new InvalidDataException("OpenAI chat stream event root must be a JSON object.");
+        }
+
+        if (obj.TryGetPropertyValue("error", out var errorNode) && errorNode is not null) {
+            if (errorNode is not JsonObject error) {
+                throw new InvalidDataException("OpenAI chat stream error must be a JSON object.");
+            }
+
+            var errorMessage = error["message"]?.GetValue<string>() ?? "Unknown error";
+            DebugUtil.Warning(DebugCategory, $"[OpenAI] API error: {errorMessage}");
+            DiscardIncompleteStreamingState();
+            aggregator.AbortIncompleteStreamingState();
+            aggregator.AppendError(errorMessage);
+            aggregator.MarkFailed("error", errorMessage);
+            _terminalEventObserved = true;
+            return;
+        }
+
+        if (obj["choices"] is not JsonArray choices) {
+            throw new InvalidDataException("OpenAI chat stream event must contain a choices array.");
+        }
+
+        foreach (var choiceNode in choices) {
+            if (choiceNode is not JsonObject choice) {
+                throw new InvalidDataException("OpenAI chat stream choice must be a JSON object.");
+            }
+            HandleChoice(choice, aggregator);
+        }
+    }
+
     private void HandleChoice(JsonObject choice, CompletionAggregator aggregator) {
-        if (choice["delta"] is JsonObject delta) {
+        if (choice.TryGetPropertyValue("delta", out var deltaNode) && deltaNode is not null) {
+            if (deltaNode is not JsonObject delta) {
+                throw new InvalidDataException("OpenAI chat stream choice delta must be a JSON object or null.");
+            }
             HandleDelta(delta, aggregator);
         }
 
         var finishReason = choice["finish_reason"]?.GetValue<string>();
         if (!string.IsNullOrWhiteSpace(finishReason)) {
-            _sawTerminalFinishReason = true;
             FlushPendingStreamingState(aggregator);
             RecordTermination(finishReason, aggregator);
+            _terminalEventObserved = true;
         }
     }
 

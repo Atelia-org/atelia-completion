@@ -17,29 +17,65 @@ internal sealed class OpenAIResponsesStreamParser {
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _completedFunctionCallItemIds = new(StringComparer.Ordinal);
     private string? _activeReasoningItemId;
-    private bool _sawCompletedEvent;
+    private bool _terminalEventObserved;
 
-    public void ParseEvent(string json, CompletionAggregator aggregator) {
-        JsonNode? node;
+    public bool TerminalEventObserved => _terminalEventObserved;
+
+    public void ParseEvent(
+        string json,
+        CompletionAggregator aggregator,
+        string? sseEventType = null
+    ) {
+        if (_terminalEventObserved) { return; }
+
         try {
-            node = JsonNode.Parse(json);
+            ParseEventCore(json, aggregator, sseEventType);
         }
-        catch (JsonException ex) {
-            DebugUtil.Warning(DebugCategory, $"[OpenAI/Responses] Failed to parse event: {ex.Message}", ex);
-            return;
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
+            throw new InvalidDataException("OpenAI Responses stream contained malformed provider JSON.", ex);
+        }
+    }
+
+    public void DiscardIncompleteStreamingState() {
+        _functionCalls.Clear();
+        _completedFunctionCallItemIds.Clear();
+        _activeReasoningItemId = null;
+    }
+
+    private void ParseEventCore(
+        string json,
+        CompletionAggregator aggregator,
+        string? sseEventType
+    ) {
+        if (JsonNode.Parse(json) is not JsonObject obj) {
+            throw new InvalidDataException("OpenAI Responses stream event root must be a JSON object.");
         }
 
-        if (node is not JsonObject obj) { return; }
+        if (obj.TryGetPropertyValue("error", out var errorNode) && errorNode is not null) {
+            if (errorNode is not JsonObject inlineError) {
+                throw new InvalidDataException("OpenAI Responses stream error must be a JSON object.");
+            }
 
-        if (obj["error"] is JsonObject inlineError) {
             var errorMessage = ExtractErrorMessage(inlineError, "Unknown error");
+            FinalizeTerminalStreamingState(aggregator);
             aggregator.AppendError(errorMessage);
             aggregator.MarkFailed("error", errorMessage);
+            _terminalEventObserved = true;
             return;
         }
 
         var eventType = obj["type"]?.GetValue<string>();
-        if (string.IsNullOrWhiteSpace(eventType)) { return; }
+        if (string.IsNullOrWhiteSpace(eventType)) {
+            throw new InvalidDataException("OpenAI Responses stream event must contain a non-empty type.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(sseEventType)
+            && !string.Equals(sseEventType, "message", StringComparison.Ordinal)
+            && !string.Equals(sseEventType, eventType, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"OpenAI Responses SSE event type '{sseEventType}' does not match data type '{eventType}'."
+            );
+        }
 
         switch (eventType) {
             case "response.output_text.delta":
@@ -66,46 +102,54 @@ internal sealed class OpenAIResponsesStreamParser {
                 break;
 
             case "response.completed":
-                _sawCompletedEvent = true;
                 aggregator.MarkCompleted("response.completed");
+                FinalizeTerminalStreamingState(aggregator);
+                _terminalEventObserved = true;
+                break;
+
+            case "response.incomplete":
+                var incompleteReason = ExtractIncompleteReason(obj);
+                aggregator.MarkIncomplete(
+                    incompleteReason ?? "response.incomplete",
+                    incompleteReason is null
+                        ? "OpenAI Responses returned response.incomplete."
+                        : $"OpenAI Responses returned response.incomplete: {incompleteReason}."
+                );
+                FinalizeTerminalStreamingState(aggregator);
+                _terminalEventObserved = true;
                 break;
 
             case "response.failed":
             case "error":
                 var errorMessage = ExtractErrorMessage(obj, "OpenAI Responses stream failed.");
+                FinalizeTerminalStreamingState(aggregator);
                 aggregator.AppendError(errorMessage);
                 aggregator.MarkFailed(eventType, errorMessage);
+                _terminalEventObserved = true;
                 break;
         }
     }
 
-    public void Complete(CompletionAggregator aggregator) {
-        if (!_sawCompletedEvent) {
-            aggregator.MarkIncomplete(detail: "OpenAI Responses stream ended without response.completed.");
-        }
-
+    private void FinalizeTerminalStreamingState(CompletionAggregator aggregator) {
         if (_activeReasoningItemId is not null) {
             DebugUtil.Warning(
                 DebugCategory,
-                $"[OpenAI/Responses] Stream completed with unfinished reasoning item_id={_activeReasoningItemId}."
+                $"[OpenAI/Responses] Terminal event arrived with unfinished reasoning item_id={_activeReasoningItemId}."
             );
-            aggregator.MarkIncomplete(detail: "OpenAI Responses stream ended with unfinished reasoning.");
+            aggregator.MarkIncomplete(detail: "OpenAI Responses terminal event arrived with unfinished reasoning.");
         }
 
         if (_functionCalls.Count > 0) {
             var pendingIds = string.Join(", ", _functionCalls.Keys.OrderBy(static id => id));
             DebugUtil.Warning(
                 DebugCategory,
-                $"[OpenAI/Responses] Stream completed with unfinished function calls item_ids=[{pendingIds}]."
+                $"[OpenAI/Responses] Terminal event arrived with unfinished function calls item_ids=[{pendingIds}]."
             );
-            aggregator.MarkIncomplete(detail: $"OpenAI Responses stream ended with unfinished function calls [{pendingIds}].");
+            aggregator.MarkIncomplete(detail: $"OpenAI Responses terminal event arrived with unfinished function calls [{pendingIds}].");
         }
-    }
 
-    public void DiscardIncompleteStreamingState() {
-        _functionCalls.Clear();
-        _completedFunctionCallItemIds.Clear();
-        _activeReasoningItemId = null;
+        DiscardIncompleteStreamingState();
+        aggregator.AbortIncompleteStreamingState();
     }
 
     private void HandleOutputItemAdded(JsonObject obj, CompletionAggregator aggregator) {
@@ -305,6 +349,12 @@ internal sealed class OpenAIResponsesStreamParser {
         if (obj["response"] is JsonObject response) { return ExtractErrorMessage(response, fallbackMessage); }
 
         return fallbackMessage;
+    }
+
+    private static string? ExtractIncompleteReason(JsonObject obj) {
+        if (obj["response"] is not JsonObject response) { return null; }
+        if (response["incomplete_details"] is not JsonObject details) { return null; }
+        return details["reason"]?.GetValue<string>();
     }
 
     private sealed class FunctionCallState {

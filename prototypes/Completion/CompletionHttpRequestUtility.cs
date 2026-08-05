@@ -54,7 +54,18 @@ internal static class CompletionHttpRequestUtility {
 
         using (httpRequest) {
             var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            if (response.IsSuccessStatusCode) { return response; }
+            if (response.IsSuccessStatusCode) {
+                var mediaType = response.Content.Headers.ContentType?.MediaType;
+                if (string.Equals(mediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase)) {
+                    return response;
+                }
+
+                response.Dispose();
+                throw new InvalidDataException(
+                    $"{requestDisplayName} expected Content-Type 'text/event-stream' "
+                    + $"but received '{mediaType ?? "<missing>"}'."
+                );
+            }
 
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
             var statusCode = response.StatusCode;

@@ -18,6 +18,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
     private static readonly HashSet<string> ReservedRequestFieldNames = new(StringComparer.Ordinal) {
         "model",
         "messages",
+        "n",
         "stream",
         "tools"
     };
@@ -102,9 +103,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
                 );
             }
         }
-        catch {
-            parser.DiscardIncompleteStreamingState();
-            aggregator.AbortIncompleteStreamingState();
+        catch (Exception exception) {
+            CleanupAfterFailure(parser, aggregator, exception);
             throw;
         }
 
@@ -156,5 +156,33 @@ public sealed class OpenAIChatClient : ICompletionClient {
         }
 
         return extensionData;
+    }
+
+    private static void CleanupAfterFailure(
+        OpenAIChatStreamParser parser,
+        CompletionAggregator aggregator,
+        Exception originalException
+    ) {
+        try {
+            parser.DiscardIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[OpenAI] Parser cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
+
+        try {
+            aggregator.AbortIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[OpenAI] Observer cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
     }
 }

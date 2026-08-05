@@ -152,6 +152,18 @@ public sealed class OpenAIResponsesStreamParserTests {
 
         parser.ParseEvent(
             """
+            {"type":"response.output_item.added","item":{"id":"rs_pending","type":"reasoning"}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.function_call_arguments.delta","item_id":"fc_pending","delta":"{\"city\":"}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
             {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}
             """,
             aggregator,
@@ -214,6 +226,23 @@ public sealed class OpenAIResponsesStreamParserTests {
         );
 
         Assert.Contains("does not match", exception.Message, StringComparison.Ordinal);
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Theory]
+    [InlineData("{\"type\":\"response.output_text.delta\"}")]
+    [InlineData("{\"type\":\"response.output_item.added\"}")]
+    [InlineData("{\"type\":\"response.output_item.added\",\"item\":{\"type\":\"reasoning\"}}")]
+    [InlineData("{\"type\":\"response.function_call_arguments.delta\",\"delta\":\"{}\"}")]
+    [InlineData("{\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\"}")]
+    [InlineData("{\"type\":\"response.function_call_arguments.done\",\"arguments\":\"{}\"}")]
+    [InlineData("{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\"}")]
+    [InlineData("{\"type\":\"response.output_item.done\"}")]
+    public void ParseEvent_KnownEventMissingRequiredShapeFailsClosed(string json) {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        Assert.Throws<InvalidDataException>(() => parser.ParseEvent(json, aggregator));
         Assert.False(parser.TerminalEventObserved);
     }
 }

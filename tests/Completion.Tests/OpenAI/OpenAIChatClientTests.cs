@@ -121,6 +121,38 @@ public sealed class OpenAIChatClientTests {
         Assert.Empty(handler.RequestBodies);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task StreamCompletionAsync_RejectsExtraBodyChoiceCount(int choiceCount) {
+        using var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(
+            apiKey: null,
+            httpClient,
+            OpenAIChatDialects.Strict,
+            new OpenAIChatClientOptions {
+                ExtraBody = new JsonObject {
+                    ["n"] = choiceCount
+                }
+            }
+        );
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("'n'", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.RequestBodies);
+    }
+
     [Fact]
     public void Constructor_RequiresPreconfiguredHttpClientBaseAddress() {
         using var handler = new SequenceHttpMessageHandler();
@@ -393,6 +425,31 @@ public sealed class OpenAIChatClientTests {
 
         Assert.Equal(1, thinkingBeginCount);
         Assert.Equal(1, thinkingEndCount);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_CleanupFailureDoesNotMaskInterruption() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"reasoning_content":"still thinking"},"finish_reason":null}]}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.DeepSeekV4);
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedThinkingEnd += () => throw new InvalidOperationException(
+            "scripted observer cleanup failure"
+        );
+
+        var exception = await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None)
+        );
+
+        Assert.Equal("OpenAI chat/completions", exception.StreamDisplayName);
     }
 
     [Fact]

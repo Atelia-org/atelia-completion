@@ -101,9 +101,8 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
                 );
             }
         }
-        catch {
-            parser.DiscardIncompleteStreamingState();
-            aggregator.AbortIncompleteStreamingState();
+        catch (Exception exception) {
+            CleanupAfterFailure(parser, aggregator, exception);
             throw;
         }
 
@@ -157,5 +156,33 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         }
 
         return extensionData;
+    }
+
+    private static void CleanupAfterFailure(
+        OpenAIResponsesStreamParser parser,
+        CompletionAggregator aggregator,
+        Exception originalException
+    ) {
+        try {
+            parser.DiscardIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[OpenAI/Responses] Parser cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
+
+        try {
+            aggregator.AbortIncompleteStreamingState();
+        }
+        catch (Exception cleanupException) {
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[OpenAI/Responses] Observer cleanup failed while preserving {originalException.GetType().Name}.",
+                cleanupException
+            );
+        }
     }
 }

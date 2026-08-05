@@ -213,4 +213,60 @@ public sealed class OpenAIChatStreamParserTests {
         Assert.Throws<InvalidDataException>(() => parser.ParseEvent(json, aggregator));
         Assert.False(parser.TerminalEventObserved);
     }
+
+    [Fact]
+    public void ParseEvent_RejectsMultipleChoices() {
+        var parser = new OpenAIChatStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """
+                {"choices":[{"index":0,"delta":{},"finish_reason":"stop"},{"index":1,"delta":{},"finish_reason":"stop"}]}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.Contains("n=1", exception.Message, StringComparison.Ordinal);
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Fact]
+    public void ParseEvent_RejectsNonDefaultChoiceIndex() {
+        var parser = new OpenAIChatStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """{"choices":[{"index":1,"delta":{},"finish_reason":"stop"}]}""",
+                aggregator
+            )
+        );
+
+        Assert.Contains("choice index 0", exception.Message, StringComparison.Ordinal);
+        Assert.False(parser.TerminalEventObserved);
+    }
+
+    [Fact]
+    public void ParseEvent_ObserverInvalidOperationExceptionPreservesIdentity() {
+        var parser = new OpenAIChatStreamParser(
+            reasoningMode: OpenAIChatReasoningMode.ReplayCompatible
+        );
+        var observer = new CompletionStreamObserver();
+        var expected = new InvalidOperationException("scripted observer failure");
+        observer.ReceivedThinkingBegin += () => throw expected;
+        var aggregator = new CompletionAggregator(DummyInvocation, observer);
+
+        var actual = Assert.Throws<InvalidOperationException>(
+            () => parser.ParseEvent(
+                """
+                {"choices":[{"index":0,"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.Same(expected, actual);
+    }
 }

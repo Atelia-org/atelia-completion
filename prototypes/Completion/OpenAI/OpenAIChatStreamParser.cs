@@ -33,12 +33,15 @@ internal sealed class OpenAIChatStreamParser {
     public void ParseEvent(string json, CompletionAggregator aggregator) {
         if (_terminalEventObserved) { return; }
 
+        JsonNode? node;
         try {
-            ParseEventCore(json, aggregator);
+            node = JsonNode.Parse(json);
         }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
+        catch (JsonException ex) {
             throw new InvalidDataException("OpenAI chat stream contained malformed provider JSON.", ex);
         }
+
+        ParseEventCore(node, aggregator);
     }
 
     public void DiscardIncompleteStreamingState() {
@@ -56,8 +59,8 @@ internal sealed class OpenAIChatStreamParser {
         }
     }
 
-    private void ParseEventCore(string json, CompletionAggregator aggregator) {
-        if (JsonNode.Parse(json) is not JsonObject obj) {
+    private void ParseEventCore(JsonNode? node, CompletionAggregator aggregator) {
+        if (node is not JsonObject obj) {
             throw new InvalidDataException("OpenAI chat stream event root must be a JSON object.");
         }
 
@@ -79,10 +82,21 @@ internal sealed class OpenAIChatStreamParser {
         if (obj["choices"] is not JsonArray choices) {
             throw new InvalidDataException("OpenAI chat stream event must contain a choices array.");
         }
+        if (choices.Count > 1) {
+            throw new InvalidDataException(
+                "OpenAI chat client supports only the default n=1 response shape."
+            );
+        }
 
         foreach (var choiceNode in choices) {
             if (choiceNode is not JsonObject choice) {
                 throw new InvalidDataException("OpenAI chat stream choice must be a JSON object.");
+            }
+            var choiceIndex = GetRequiredInt(choice, "index", "chat choice");
+            if (choiceIndex != 0) {
+                throw new InvalidDataException(
+                    $"OpenAI chat client supports only choice index 0, but received {choiceIndex}."
+                );
             }
             HandleChoice(choice, aggregator);
         }
@@ -217,6 +231,21 @@ internal sealed class OpenAIChatStreamParser {
 
     private static RawToolCall BuildToolCallWithoutSchema(string toolName, string toolCallId, string rawArgumentsText)
         => StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText);
+
+    private static int GetRequiredInt(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (obj[propertyName] is JsonValue value
+            && value.TryGetValue<int>(out var result)) {
+            return result;
+        }
+
+        throw new InvalidDataException(
+            $"OpenAI {context} requires integer field '{propertyName}'."
+        );
+    }
 
     private static void RecordTermination(string finishReason, CompletionAggregator aggregator) {
         switch (finishReason) {

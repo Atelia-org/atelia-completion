@@ -332,6 +332,30 @@ public sealed class OpenAIResponsesClientTests {
         Assert.Equal(1, thinkingEndCount);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_MalformedKnownEventFailsBeforeLaterTerminal() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: response.function_call_arguments.done
+                data: {"type":"response.function_call_arguments.done","arguments":"{}"}
+
+                event: response.completed
+                data: {"type":"response.completed"}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("item_id", exception.Message, StringComparison.Ordinal);
+    }
+
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
             ModelId: "gpt-5",

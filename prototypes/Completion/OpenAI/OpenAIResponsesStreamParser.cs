@@ -28,12 +28,15 @@ internal sealed class OpenAIResponsesStreamParser {
     ) {
         if (_terminalEventObserved) { return; }
 
+        JsonNode? node;
         try {
-            ParseEventCore(json, aggregator, sseEventType);
+            node = JsonNode.Parse(json);
         }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException) {
+        catch (JsonException ex) {
             throw new InvalidDataException("OpenAI Responses stream contained malformed provider JSON.", ex);
         }
+
+        ParseEventCore(node, aggregator, sseEventType);
     }
 
     public void DiscardIncompleteStreamingState() {
@@ -43,11 +46,11 @@ internal sealed class OpenAIResponsesStreamParser {
     }
 
     private void ParseEventCore(
-        string json,
+        JsonNode? node,
         CompletionAggregator aggregator,
         string? sseEventType
     ) {
-        if (JsonNode.Parse(json) is not JsonObject obj) {
+        if (node is not JsonObject obj) {
             throw new InvalidDataException("OpenAI Responses stream event root must be a JSON object.");
         }
 
@@ -64,10 +67,7 @@ internal sealed class OpenAIResponsesStreamParser {
             return;
         }
 
-        var eventType = obj["type"]?.GetValue<string>();
-        if (string.IsNullOrWhiteSpace(eventType)) {
-            throw new InvalidDataException("OpenAI Responses stream event must contain a non-empty type.");
-        }
+        var eventType = GetRequiredString(obj, "type", "stream event");
 
         if (!string.IsNullOrWhiteSpace(sseEventType)
             && !string.Equals(sseEventType, "message", StringComparison.Ordinal)
@@ -79,8 +79,8 @@ internal sealed class OpenAIResponsesStreamParser {
 
         switch (eventType) {
             case "response.output_text.delta":
-                var delta = obj["delta"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(delta)) {
+                var delta = GetRequiredString(obj, "delta", eventType, allowEmpty: true);
+                if (delta.Length > 0) {
                     aggregator.AppendContent(delta);
                 }
                 break;
@@ -109,13 +109,13 @@ internal sealed class OpenAIResponsesStreamParser {
 
             case "response.incomplete":
                 var incompleteReason = ExtractIncompleteReason(obj);
+                FinalizeTerminalStreamingState(aggregator);
                 aggregator.MarkIncomplete(
                     incompleteReason ?? "response.incomplete",
                     incompleteReason is null
                         ? "OpenAI Responses returned response.incomplete."
                         : $"OpenAI Responses returned response.incomplete: {incompleteReason}."
                 );
-                FinalizeTerminalStreamingState(aggregator);
                 _terminalEventObserved = true;
                 break;
 
@@ -153,9 +153,9 @@ internal sealed class OpenAIResponsesStreamParser {
     }
 
     private void HandleOutputItemAdded(JsonObject obj, CompletionAggregator aggregator) {
-        if (obj["item"] is not JsonObject item) { return; }
+        var item = GetRequiredObject(obj, "item", "response.output_item.added");
 
-        var itemType = item["type"]?.GetValue<string>();
+        var itemType = GetRequiredString(item, "type", "response.output_item.added item");
         switch (itemType) {
             case FunctionCallItemType:
                 GetOrCreateFunctionCallState(obj, item);
@@ -171,20 +171,26 @@ internal sealed class OpenAIResponsesStreamParser {
         var state = GetOrCreateFunctionCallState(obj, obj["item"] as JsonObject);
         if (state is null) { return; }
 
-        var delta = obj["delta"]?.GetValue<string>();
-        if (delta is not null) {
-            state.ArgumentsBuilder.Append(delta);
-        }
+        var delta = GetRequiredString(
+            obj,
+            "delta",
+            "response.function_call_arguments.delta",
+            allowEmpty: true
+        );
+        state.ArgumentsBuilder.Append(delta);
     }
 
     private void HandleFunctionCallArgumentsDone(JsonObject obj, CompletionAggregator aggregator) {
         var state = GetOrCreateFunctionCallState(obj, obj["item"] as JsonObject);
         if (state is null) { return; }
 
-        var arguments = obj["arguments"]?.GetValue<string>();
-        if (arguments is not null) {
-            state.SetArguments(arguments);
-        }
+        var arguments = GetRequiredString(
+            obj,
+            "arguments",
+            "response.function_call_arguments.done",
+            allowEmpty: true
+        );
+        state.SetArguments(arguments);
 
         if (obj["item"] is JsonObject item) {
             UpdateFunctionCallMetadata(state, obj, item);
@@ -194,9 +200,9 @@ internal sealed class OpenAIResponsesStreamParser {
     }
 
     private void HandleOutputItemDone(JsonObject obj, CompletionAggregator aggregator) {
-        if (obj["item"] is not JsonObject item) { return; }
+        var item = GetRequiredObject(obj, "item", "response.output_item.done");
 
-        var itemType = item["type"]?.GetValue<string>();
+        var itemType = GetRequiredString(item, "type", "response.output_item.done item");
         switch (itemType) {
             case FunctionCallItemType:
                 var itemId = GetItemId(obj, item);
@@ -216,7 +222,11 @@ internal sealed class OpenAIResponsesStreamParser {
 
     private void BeginReasoningIfNeeded(JsonObject obj, JsonObject item, CompletionAggregator aggregator) {
         var itemId = GetItemId(obj, item);
-        if (string.IsNullOrWhiteSpace(itemId)) { return; }
+        if (string.IsNullOrWhiteSpace(itemId)) {
+            throw new InvalidDataException(
+                "OpenAI response.output_item.added reasoning item requires an id."
+            );
+        }
         if (_activeReasoningItemId == itemId) { return; }
 
         if (_activeReasoningItemId is not null) {
@@ -231,7 +241,7 @@ internal sealed class OpenAIResponsesStreamParser {
     }
 
     private void FinalizeReasoningItem(JsonObject item, CompletionAggregator aggregator) {
-        var itemId = item["id"]?.GetValue<string>();
+        var itemId = GetRequiredString(item, "id", "reasoning output item");
         var block = new OpenAIResponsesReasoningBlock(
             item.ToJsonString(),
             aggregator.Invocation,
@@ -260,8 +270,9 @@ internal sealed class OpenAIResponsesStreamParser {
     private FunctionCallState? GetOrCreateFunctionCallState(JsonObject envelope, JsonObject? item) {
         var itemId = GetItemId(envelope, item);
         if (string.IsNullOrWhiteSpace(itemId)) {
-            DebugUtil.Warning(DebugCategory, "[OpenAI/Responses] function_call event missing item_id.");
-            return null;
+            throw new InvalidDataException(
+                "OpenAI Responses function_call event requires item_id or item.id."
+            );
         }
 
         if (_completedFunctionCallItemIds.Contains(itemId)) { return null; }
@@ -355,6 +366,35 @@ internal sealed class OpenAIResponsesStreamParser {
         if (obj["response"] is not JsonObject response) { return null; }
         if (response["incomplete_details"] is not JsonObject details) { return null; }
         return details["reason"]?.GetValue<string>();
+    }
+
+    private static JsonObject GetRequiredObject(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (obj[propertyName] is JsonObject value) { return value; }
+
+        throw new InvalidDataException(
+            $"OpenAI {context} requires object field '{propertyName}'."
+        );
+    }
+
+    private static string GetRequiredString(
+        JsonObject obj,
+        string propertyName,
+        string context,
+        bool allowEmpty = false
+    ) {
+        if (obj[propertyName] is JsonValue value
+            && value.TryGetValue<string>(out var result)
+            && (allowEmpty || !string.IsNullOrWhiteSpace(result))) {
+            return result;
+        }
+
+        throw new InvalidDataException(
+            $"OpenAI {context} requires string field '{propertyName}'."
+        );
     }
 
     private sealed class FunctionCallState {

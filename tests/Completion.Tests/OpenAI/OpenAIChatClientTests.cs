@@ -453,6 +453,34 @@ public sealed class OpenAIChatClientTests {
     }
 
     [Fact]
+    public async Task StreamCompletionAsync_CleanupFailureDoesNotMaskCallerCancellationToken() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"reasoning_content":"still thinking"},"finish_reason":null}]}
+
+                data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.DeepSeekV4);
+        using var caller = new CancellationTokenSource();
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedReasoningDelta += _ => caller.Cancel();
+        observer.ReceivedThinkingEnd += () => throw new InvalidOperationException(
+            "scripted observer cleanup failure"
+        );
+
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.StreamCompletionAsync(CreateRequest(), observer, caller.Token)
+        );
+
+        Assert.Equal(caller.Token, exception.CancellationToken);
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_SuccessWithNonEventStreamMediaTypeIsProtocolError() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {

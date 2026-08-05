@@ -3,7 +3,7 @@
 > **读者**：要在自己的代码里通过 `Atelia.Completion[.Abstractions]` 调用 LLM 的高级 LLM Agent / 上层应用作者。
 > **不读这份**：要给 Completion 层加新 provider、改 SSE 解析的人——请去 [memory-notebook.md](./memory-notebook.md) 与 [openai-compatible-evolution.md](./openai-compatible-evolution.md)。
 > **配套环境**：本机 `http://localhost:8888/` 上有 unsloth 服务，同时暴露 Anthropic Messages (`/v1/messages`) 与 OpenAI Chat (`/v1/chat/completions`) 两类端点。
-> **最后更新**：2026-05-21
+> **最后更新**：2026-08-05
 
 ---
 
@@ -475,12 +475,16 @@ Gemini 路径的特殊点是：
 
 ### 4.5 取消与异常
 
-- `CancellationToken` 会被传到 HTTP 流；及时取消能立即关闭连接。流式调用持有持续打开的 HTTP 连接，**不取消会一直挂着**。
-- HTTP 4xx/5xx 行为按 provider 略不同：
-  - **OpenAI**：抛 `HttpRequestException`，`Message` 含状态码与最多 512 字符的 response body。
-  - **Anthropic**：抛 `HttpRequestException`，但 **不附带 body**（仅 `EnsureSuccessStatusCode()`）；调试时可临时在外层抓包。
+- runtime不设置elapsed-operation timeout或stream-idle timeout。不可见reasoning、排队或长时间无SSE frame
+  都不会被推断为LLM failure；调用会耐心等待，直到provider terminal、明确transport/protocol错误或caller cancellation。
+- `CancellationToken`原样传入HTTP流；caller cancellation会关闭连接并保留原token identity。
+- 四个provider共享HTTP status与成功响应`text/event-stream`校验。HTTP 4xx/5xx抛`HttpRequestException`，
+  message包含状态码与有界response body；建连/读取错误保持原transport exception。
 - 历史构造不合法 → `OpenAIChatMessageConverter` / `AnthropicMessageConverter` 在序列化阶段就抛 `InvalidOperationException`，**不会** 走到 HTTP（最常见：tool_call_id 错位、Anthropic 首条非 user）。
-- SSE 中途的 JSON 解析错误不会 throw；provider 错误事件会收集进 `CompletionResult.Errors`。
+- SSE malformed JSON、known event shape错误和event/data type冲突会fail closed；provider明确的失败事件形成
+  `Failed` termination。terminal前EOF抛`CompletionStreamInterruptedException`，表示远端结果不确定，
+  不会伪装成普通`Incomplete`或自动重试。完整矩阵见
+  [`prototypes/Completion/README.md`](../../prototypes/Completion/README.md)。
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **用途**：供 AI Agent 在新会话中快速重建对 `prototypes/Completion*` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-05-21
+> **最后更新**：2026-08-05
 
 ---
 
@@ -10,7 +10,8 @@
 
 **Completion.Abstractions** = 上层不可变契约：`ICompletionClient` + 请求/响应/工具/历史消息的 DTO。
 
-**Completion** = provider 实现层：当前包含 Anthropic Messages、OpenAI Chat Completions 与 Google Gemini generateContent 三套原生 client，加上若干通用工具类（JSON 参数解析、JsonSchema 生成）。
+**Completion** = provider实现层：当前包含OpenAI Chat Completions、OpenAI Responses、Anthropic Messages
+与Google Gemini generateContent四套原生client，加上共享HTTP/SSE transport和通用工具类。
 
 拆两层的目的：让 Agent.Core 等上层只依赖稳定的 Abstractions，新增 provider 时只动 Completion 层不破坏上层。
 
@@ -85,16 +86,22 @@
 - `ToolParamSpec` / `ToolDefinition.CreateFlat(...)` / `ToolDefinition.Parameters` 已完成清退；若在文档中看到这些名字，应视为历史阶段记录
 - `ArtifactToolWrapper<T>` 已落地为当前主线能力：它与 `MethodToolWrapper` 一样采用 `ITool.ExecuteAsync(ToolExecutionContext, ...)` 协议，但执行链是“schema 校验 -> 反序列化 -> DataAnnotations/model validation -> handler validation”
 
-### 6. 当前有三套 provider：Anthropic Messages + OpenAI Chat Completions + Google Gemini generateContent
+### 6. 当前有四套provider client
 
 - `LiveContextProto/Program.cs` 当前实验入口默认走 `OpenAIChatClient(OpenAIChatDialects.SgLangCompatible)`，并使用 `http://localhost:8000/`
 - 同一台本地 sglang 服务也暴露了 OpenAI-compatible `POST /v1/chat/completions`
-- `Completion` 现已包含原生 `OpenAIChatClient`，面向 chat/completions 流式工具调用（不是 Responses API）
+- `Completion` 现已包含原生 `OpenAIChatClient` 与 `OpenAIResponsesClient`，分别面向
+  chat/completions 与 Responses API 流式工具调用
 - `Completion` 现已包含原生 `GeminiClient`，面向 Gemini Developer API 的 `generateContent/streamGenerateContent`
 - OpenAI-compatible 的长期演进遵循 “Strict Core + Quirk Modules”，细则见 `docs/Completion/openai-compatible-evolution.md`
 - Gemini 路径的最大特殊点是 `thoughtSignature`：tool continuation 不能只靠通用 `ToolCall` / `Text` 回灌，必须保留 provider-native replay payload
 
-### 7. SSE 解析是手写状态机，不依赖通用 SSE 库
+### 7. SSE framing共享，provider lifecycle各自fail closed
+
+四个client共享`CompletionSseEventReader`处理CR/LF/CRLF、空行提交、多行`data:`、注释、BOM与
+UTF-8 replacement decoding；provider parser只负责各自的JSON shape与terminal lifecycle。当前
+transport-liveness权威契约及四Provider terminal matrix见
+[`prototypes/Completion/README.md`](../../prototypes/Completion/README.md)。
 
 `AnthropicStreamParser` 直接处理 8 种事件：
 
@@ -104,12 +111,13 @@
 | `content_block_start` | 创建 ContentBlockState（区分 text / tool_use / thinking） | — |
 | `content_block_delta` | 累积文本片段、input_json 片段、或 thinking/signature 片段 | `AppendContent(...)`（仅 text 时） |
 | `content_block_stop` | tool_use 块完成 → 产出原始 arguments JSON；thinking 块完成 → 序列化为 `{type:thinking,thinking,signature}` JSON 字节 | `AppendToolCall(...)` 或 `AppendThinking(...)` |
-| `message_delta` | 消息级增量（当前不向抽象层暴露额外元数据） | — |
-| `message_stop` / `[DONE]` | 流结束 | — |
-| `error` | 记录错误 | `AppendError(...)` |
-| `ping` | 保活信号 | — |
+| `message_delta` | 捕获权威`stop_reason`，要求所有content block已关闭 | — |
+| `message_stop` | 校验完整message lifecycle并立即结束 | `Completed`或`Incomplete` termination |
+| `error` | 立即结束为provider failure | `AppendError(...)` |
+| `ping` | 非terminal frame | — |
 
-JSON 解析失败会记 warning 但不中断流。
+Anthropic没有`[DONE]`。Malformed JSON、named SSE event与JSON `type`冲突、known event shape缺失或
+lifecycle乱序都会抛`InvalidDataException`，不会被降级成warning或成功。
 
 `OpenAIChatStreamParser` 则直接消费 chat/completions 的 `data: {...}` chunk：
 
@@ -119,7 +127,7 @@ JSON 解析失败会记 warning 但不中断流。
 | `choices[].delta.tool_calls[]` | 按 `tool_calls[i].index` 聚合 id/name/arguments 片段 | — |
 | `choices[].finish_reason = "tool_calls"` | 将已聚合完成的调用一次性封装为 `RawToolCall` | `AppendToolCall(...)` |
 | `reasoning_content` | `Strict` / `SgLangCompatible` 忽略；`DeepSeekV4` 捕获为 `OpenAIChatReasoningBlock`，并在 replay-compatible assistant history 中写回 | `OpenAIChatReasoningBlock` |
-| `[DONE]` | 流结束；若仍有未刷出的工具调用则补刷 | — |
+| `[DONE]` | 仅为传输哨兵；若先于`finish_reason`到达则远端结果不确定 | — |
 
 strict 路径默认保留所有 `delta.content`；只有特定 dialect（当前是 `SgLangCompatible`）才会忽略“工具调用已开始后夹带的纯空白 content noise”。
 
@@ -129,8 +137,10 @@ strict 路径默认保留所有 `delta.content`；只有特定 dialect（当前�
 |---|---|---|
 | `candidates[].content.parts[].text` | 追加正文增量 | `AppendContent(...)` |
 | `candidates[].content.parts[].functionCall` | 立即转成完整 `RawToolCall` | `AppendToolCall(...)` |
-| `parts[].thoughtSignature` | 不向 observer 暴露明文 reasoning，但写入 provider-native replay payload | `AppendReplayBlock(...)`（流结束时一次性产出 `GeminiReplayBlock`） |
-| `finishReason` / 流结束 | flush 文本 replay part，并封装整轮 provider-native `parts[]` | `GeminiReplayBlock` |
+| `parts[].thoughtSignature` | 不向 observer 暴露明文 reasoning，但写入 provider-native replay payload | `AppendReplayBlock(...)`（provider terminal时一次性产出 `GeminiReplayBlock`） |
+| `finishReason` | flush 文本 replay part，封装整轮provider-native `parts[]`并立即结束 | `GeminiReplayBlock` |
+| 无candidate的`promptFeedback.blockReason` | 立即结束为Incomplete | — |
+| 顶层`error` | 立即结束为provider failure | `AppendError(...)` |
 
 Gemini 的关键不是“有 thinking token”，而是 `thoughtSignature` 会绑定在 text / functionCall part 上，并参与下一轮 tool continuation 的合法性校验。因此 Gemini 需要额外的 provider-native replay block，而不能只靠通用 `Text` / `ToolCall` 重新拼装历史。
 
@@ -155,23 +165,24 @@ Gemini 的关键不是“有 thinking token”，而是 `thoughtSignature` 会�
    { ModelId, SystemPrompt, Context: IHistoryMessage[], Tools: ToolDefinition[] }
 
 2. `await ICompletionClient.StreamCompletionAsync(request, null, ct)`
-   → Provider 实现（AnthropicClient / OpenAIChatClient）：
+   → Provider 实现（AnthropicClient / OpenAIChatClient / OpenAIResponsesClient / GeminiClient）：
       a. Provider-specific MessageConverter 把 IHistoryMessage[] → API messages
       b. JsonToolSchemaBuilder 把 ToolDefinition[] → provider tools (含 JsonSchema)
-      c. 序列化后 POST 对应 endpoint（Anthropic: `v1/messages`; OpenAI Chat: `v1/chat/completions`; Gemini: `v1beta/models/*:streamGenerateContent?alt=sse`）
+      c. 序列化后POST对应endpoint（Anthropic: `v1/messages`; OpenAI Chat: `v1/chat/completions`;
+         OpenAI Responses: `v1/responses`; Gemini: `v1beta/models/*:streamGenerateContent?alt=sse`）
 
 3. HTTP 流接收
    ├─ ResponseHeadersRead 模式拿到持续开放的 Stream
-   ├─ StreamReader 逐行读 SSE
-   └─ "data: " 前缀过滤 → 抽出 JSON 行
+   └─ CompletionSseEventReader按SSE规范提交完整frame
 
-4. 逐行 JsonNode.Parse → 分发到对应 provider 的 StreamParser
+4. frame分发到对应provider StreamParser
    ├─ text delta → `CompletionAggregator.AppendContent(...)`
    ├─ tool delta 聚合完成 → 形成 `RawToolCall` → `AppendToolCall(...)`
    ├─ thinking 块完成 → `AppendThinking(...)`
 
 
-5. client 返回 `CompletionResult`；`Agent.Core` 再取 `result.Message` 包装成 `ActionEntry`
+5. provider terminal到达后client立即返回`CompletionResult`；terminal前EOF抛
+   `CompletionStreamInterruptedException`，不得透明重试
 ```
 
 ---
@@ -233,7 +244,8 @@ prototypes/Completion.Tools/
 
 ### Provider 差异仍然明显
 
-- 目前已有 Anthropic Messages、OpenAI Chat Completions 与 Google Gemini generateContent 三套原生实现
+- 目前已有OpenAI Chat Completions、OpenAI Responses、Anthropic Messages与Google Gemini
+  generateContent四套原生实现
 - OpenAI 侧只覆盖 chat/completions，不含 Responses API
 - 对于更广义的 OpenAI-compatible 服务，`finish_reason` 与 tool call 片段顺序仍可能存在方言差异
 - 请求侧会严格校验 `assistant.tool_calls -> tool` 的相邻关系；`ToolResultsMessage.Results` 必须与 pending `tool_call_id` / `tool_use_id` / Gemini functionCall id 1:1 对齐，缺失或错位都会在投影阶段直接失败

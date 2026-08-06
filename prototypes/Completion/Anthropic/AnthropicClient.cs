@@ -25,11 +25,19 @@ public sealed class AnthropicClient : ICompletionClient {
     private readonly string _apiVersion;
     private readonly int? _defaultMaxTokens;
     private readonly bool _enablePromptCaching;
+    private readonly CompletionReasoningEffort _reasoningEffort;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "anthropic";
     public string ApiSpecId => "messages-v1";
 
-    public AnthropicClient(string? apiKey, HttpClient httpClient, string? apiVersion = null, int? defaultMaxTokens = null, bool enablePromptCaching = true) {
+    public AnthropicClient(
+        string? apiKey,
+        HttpClient httpClient,
+        string? apiVersion = null,
+        int? defaultMaxTokens = null,
+        bool enablePromptCaching = true,
+        CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault
+    ) {
         Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
 
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
@@ -39,8 +47,11 @@ public sealed class AnthropicClient : ICompletionClient {
         _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
         _defaultMaxTokens = defaultMaxTokens;
         _enablePromptCaching = enablePromptCaching;
+        _reasoningEffort = Enum.IsDefined(reasoningEffort)
+            ? reasoningEffort
+            : throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.");
 
-        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, defaultMaxTokens={_defaultMaxTokens?.ToString() ?? "(none)"}, promptCaching={_enablePromptCaching}");
+        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, defaultMaxTokens={_defaultMaxTokens?.ToString() ?? "(none)"}, promptCaching={_enablePromptCaching}, reasoningEffort={_reasoningEffort}");
     }
 
     public async Task<CompletionResult> StreamCompletionAsync(
@@ -50,12 +61,18 @@ public sealed class AnthropicClient : ICompletionClient {
     ) {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, _defaultMaxTokens, _enablePromptCaching);
+        var invocation = CompletionDescriptor.From(this, request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
+            request,
+            _defaultMaxTokens,
+            _enablePromptCaching,
+            _reasoningEffort,
+            invocation
+        );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
-        var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new AnthropicStreamParser();
         var stoppedEarly = false;

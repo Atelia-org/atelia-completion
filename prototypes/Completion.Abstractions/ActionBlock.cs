@@ -38,14 +38,17 @@ public abstract record ActionBlock {
     /// 无需将异构格式强行归一化为单一 <c>OpaquePayload</c>。
     /// </para>
     /// <para>
-    /// <see cref="PlainTextForDebug"/> 仅供日志/UI/调试展示，<b>不参与回灌</b>。
+    /// <see cref="PlainText"/> 是统一的明文视图，供 UI 展示 / 日志 / 审计使用，<b>不参与回灌</b>；
+    /// 当 provider 只给出加密或其他不可读负载时为 <see langword="null"/>。
+    /// provider-native payload 始终是 replay authority；当明文可从 payload 确定性派生时，
+    /// provider codec 必须验证该视图与 payload 一致。
     /// </para>
     /// </summary>
     /// <param name="Origin">产生该 reasoning 的调用来源描述符。</param>
-    /// <param name="PlainTextForDebug">可选明文，仅供日志/UI/调试使用。</param>
+    /// <param name="PlainText">可选明文推理内容，供展示/日志/审计使用。</param>
     public abstract record ReasoningBlock(
         CompletionDescriptor Origin,
-        string? PlainTextForDebug = null
+        string? PlainText = null
     ) : ActionBlock {
         /// <inheritdoc />
         public override ActionBlockKind Kind => ActionBlockKind.Thinking;
@@ -61,12 +64,12 @@ public abstract record ActionBlock {
     /// </summary>
     /// <param name="Content">明文推理文本。</param>
     /// <param name="Origin">产生该 reasoning 的调用来源描述符。</param>
-    /// <param name="PlainTextForDebug">可选调试文本；默认与 <paramref name="Content"/> 相同。</param>
+    /// <param name="PlainText">可选明文展示文本；默认与 <paramref name="Content"/> 相同。</param>
     public sealed record TextReasoningBlock(
         string Content,
         CompletionDescriptor Origin,
-        string? PlainTextForDebug = null
-    ) : ReasoningBlock(Origin, PlainTextForDebug ?? Content);
+        string? PlainText = null
+    ) : ReasoningBlock(Origin, PlainText ?? Content);
 }
 
 /// <summary>

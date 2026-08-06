@@ -147,7 +147,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v2",
+                Schema: "atelia.completion.call-log.v3",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -321,6 +321,8 @@ public sealed record CompletionCallLogConnectionSnapshot(
     string? BaseAddressEnv,
     string? ApiKeyEnv,
     bool HasApiKey,
+    int? MaxTokens,
+    CompletionReasoningEffort ReasoningEffort,
     string ProviderId,
     string ApiSpecId
 ) {
@@ -337,6 +339,8 @@ public sealed record CompletionCallLogConnectionSnapshot(
             connection.BaseAddressEnv,
             connection.ApiKeyEnv,
             !string.IsNullOrWhiteSpace(connection.ApiKey),
+            connection.MaxTokens,
+            connection.ReasoningEffort,
             client.Name,
             client.ApiSpecId
         );

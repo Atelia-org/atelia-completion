@@ -482,7 +482,11 @@ public sealed class AnthropicMessageConverterTests {
         var action = new ActionMessage(
             new ActionBlock[] {
                 new ActionBlock.Text("alpha"),
-                new AnthropicReasoningBlock(payload, new CompletionDescriptor("provider", "spec", "model"), "debug"),
+                new AnthropicReasoningBlock(
+                    payload,
+                    new CompletionDescriptor("provider", "spec", "model"),
+                    "Let me reason about the tool result."
+                ),
                 new ActionBlock.Text("omega")
         }
         );
@@ -533,6 +537,34 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         Assert.Contains("Failed to deserialize Anthropic thinking block payload", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ThinkingOriginMustMatchTargetInvocation() {
+        var payload = AnthropicThinkingPayloadCodec.Encode("reason", "sig");
+        var source = new CompletionDescriptor("old-host", "anthropic-messages-v1", "claude-old");
+        var target = new CompletionDescriptor("new-host", "anthropic-messages-v1", "claude-new");
+        var request = new CompletionRequest(
+            ModelId: target.Model,
+            SystemPrompt: string.Empty,
+            Context: [
+                new ObservationMessage("hi"),
+                new ActionMessage([
+                    new AnthropicReasoningBlock(payload, source, "reason")
+                ])
+            ],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(
+                request,
+                targetInvocation: target
+            )
+        );
+
+        Assert.Contains("requires Origin", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("old-host", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -638,6 +670,98 @@ public sealed class AnthropicMessageConverterTests {
         Assert.Null(apiRequest.Tools);
         var lastMessage = apiRequest.Messages[^1];
         Assert.NotNull(lastMessage.Content[^1].CacheControl);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ReasoningDisabledSendsExplicitDisabledThinking() {
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
+            Tools: ImmutableArray<ToolDefinition>.Empty,
+            MaxTokens: 8000
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
+            request,
+            reasoningEffort: CompletionReasoningEffort.Disabled
+        );
+
+        Assert.NotNull(apiRequest.Thinking);
+        Assert.Equal("disabled", apiRequest.Thinking.Type);
+        Assert.Null(apiRequest.Thinking.Display);
+        Assert.Null(apiRequest.OutputConfig);
+        Assert.Null(apiRequest.Temperature);
+        Assert.Null(apiRequest.TopP);
+    }
+
+    [Theory]
+    [InlineData(CompletionReasoningEffort.Low, "low")]
+    [InlineData(CompletionReasoningEffort.Medium, "medium")]
+    [InlineData(CompletionReasoningEffort.High, "high")]
+    [InlineData(CompletionReasoningEffort.Max, "max")]
+    public void ConvertToApiRequest_ReasoningEffortUsesAdaptiveThinking(
+        CompletionReasoningEffort reasoningEffort,
+        string expectedEffort
+    ) {
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
+            request,
+            reasoningEffort: reasoningEffort
+        );
+
+        Assert.Equal("adaptive", Assert.IsType<AnthropicThinkingConfig>(apiRequest.Thinking).Type);
+        Assert.Equal("summarized", apiRequest.Thinking.Display);
+        Assert.Equal(expectedEffort, Assert.IsType<AnthropicOutputConfig>(apiRequest.OutputConfig).Effort);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ProviderDefaultOmitsReasoningControls() {
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        Assert.Null(apiRequest.Thinking);
+        Assert.Null(apiRequest.OutputConfig);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ReplaysRedactedThinkingBlock() {
+        var payload = AnthropicThinkingPayloadCodec.EncodeRedacted("EmwKAhgBEgy3va3p");
+
+        var action = new ActionMessage(
+            new ActionBlock[] {
+                new AnthropicReasoningBlock(payload, new CompletionDescriptor("provider", "spec", "model")),
+                new ActionBlock.Text("omega")
+            }
+        );
+
+        var request = new CompletionRequest(
+            ModelId: "claude-3",
+            SystemPrompt: string.Empty,
+            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var assistant = apiRequest.Messages.Single(message => message.Role == "assistant");
+
+        Assert.Collection(
+            assistant.Content,
+            block => Assert.Equal("EmwKAhgBEgy3va3p", Assert.IsType<AnthropicRedactedThinkingBlock>(block).Data),
+            block => Assert.Equal("omega", Assert.IsType<AnthropicTextBlock>(block).Text)
+        );
     }
 
     private static CompletionRequest BuildToolLoopRequest() {

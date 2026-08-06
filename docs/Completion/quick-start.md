@@ -28,7 +28,7 @@
 | 程序集 | 命名空间 | 你需要的核心符号 |
 |---|---|---|
 | `Atelia.Completion.Abstractions` | `Atelia.Completion.Abstractions` | `ICompletionClient`、`CompletionRequest`、`IHistoryMessage` 家族（含 `ActionMessage` / `ActionBlock`）、`ToolDefinition` / `ToolSchema`、`CompletionDescriptor`、`CompletionResult`、`ThinkingChunk` |
-| `Atelia.Completion` | `Atelia.Completion.Anthropic`、`Atelia.Completion.OpenAI`、`Atelia.Completion.Gemini` | `AnthropicClient`、`OpenAIChatClient`、`OpenAIChatDialects`（静态访问点：`.Strict` / `.SgLangCompatible`）、`GeminiClient` |
+| `Atelia.Completion` | `Atelia.Completion.Anthropic`、`Atelia.Completion.OpenAI`、`Atelia.Completion.Gemini` | `AnthropicClient`、`OpenAIChatClient`、`OpenAIChatDialects`（静态访问点：`.Strict` / `.SgLangCompatible` / `.QwenSgLang` / `.DeepSeekV4`）、`GeminiClient` |
 
 **只引 Abstractions** 用来定义请求/历史/工具——provider-neutral，不会拉出 HttpClient。
 **再引 Completion** 才能拿到具体 client 实现。
@@ -60,7 +60,7 @@ Task<CompletionResult> StreamCompletionAsync(
 - 项目引用：`Atelia.Completion.Abstractions` + `Atelia.Completion`
 - 必备 using：见示例顶部
 - 本地 sglang 已经监听 8000，模型名按本机加载情况替换 `ModelId`
-- 本地 sglang 必须用 `OpenAIChatDialects.SgLangCompatible`（详见 §5.1）
+- 本地 Qwen + sglang 使用 `OpenAIChatDialects.QwenSgLang`；其他 sglang-compatible 模型使用 `SgLangCompatible`（详见 §5.1）
 
 ```csharp
 using System.Collections.Immutable;
@@ -76,7 +76,7 @@ using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
 var client = new OpenAIChatClient(
     apiKey: null,                                // 本地服务通常无需 key
     httpClient: httpClient,
-    dialect: OpenAIChatDialects.SgLangCompatible // 本地 sglang 必须选这个
+    dialect: OpenAIChatDialects.QwenSgLang // Qwen + sglang：捕获 reasoning_content，并支持 enable_thinking
 );
 
 var request = new CompletionRequest(
@@ -154,7 +154,7 @@ using var httpClient = transport.HttpClient;
 var client = new OpenAIChatClient(
     apiKey: null,
     httpClient: httpClient,
-    dialect: OpenAIChatDialects.SgLangCompatible
+    dialect: OpenAIChatDialects.QwenSgLang
 );
 
 var request = new CompletionRequest(
@@ -192,7 +192,7 @@ using var httpClient = CompletionHttpTransportFactory.CreateJsonLinesReplayClien
 var client = new OpenAIChatClient(
     apiKey: null,
     httpClient: httpClient,
-    dialect: OpenAIChatDialects.SgLangCompatible
+    dialect: OpenAIChatDialects.QwenSgLang
 );
 ```
 
@@ -463,9 +463,9 @@ provider-specific `ActionBlock.ReasoningBlock`（例如 `AnthropicReasoningBlock
 - 回灌时 `Origin` 必须是 **当时产生它的那次调用** 的 `CompletionDescriptor`，否则 converter 会拒绝 replay（Anthropic 的 thinking 签名、Gemini 的 `thoughtSignature` 都与调用源绑定）；
 - 如果你修改了同一条 `ActionMessage` 里的可见 `Text` / `ToolCall`，也必须同步更新对应 provider replay block；Gemini 路径会对这两份信息做一致性校验，避免出现双真源漂移。
 
-`PlainTextForDebug` 仅供日志/UI——**永远不要** 把它当成可回灌的 provider-native 内容。
+`PlainText` 是统一的明文视图，供 UI 展示 / 日志 / 审计使用——**永远不要** 把它当成可回灌的 provider-native authority。provider 只给出加密负载时（如 Anthropic 的 `redacted_thinking`）它为 `null`；同时存在明文视图与原生 payload 时，provider codec 会校验两者一致。
 
-OpenAI Chat 路径的默认 `Strict` / `SgLangCompatible` dialect 仍然**不回灌** `reasoning_content`；但 `OpenAIChatDialects.DeepSeekV4` 与 `DeepSeekV4ChatClient` 现在会把 `reasoning_content` 产出为 `OpenAIChatReasoningBlock`，并在下一轮 assistant 历史中回灌回 `reasoning_content`。如果你只走真·OpenAI 或 sglang，本段仍可忽略；如果你要接 DeepSeek V4 tool calling continuity，就应保留这个 block。
+OpenAI Chat 路径的 `Strict` / `QwenSgLang` 会把 `reasoning_content` 捕获为 `OpenAIChatReasoningBlock`，但不把它当作可回灌 authority；通用 `SgLangCompatible` 忽略该扩展字段。`OpenAIChatDialects.DeepSeekV4` 与 `DeepSeekV4ChatClient` 则会同时捕获并在下一轮 assistant 历史中回灌 `reasoning_content`，以维持 DeepSeek V4 tool calling continuity。
 
 Gemini 路径的特殊点是：
 
@@ -502,12 +502,14 @@ using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
 new OpenAIChatClient(
     apiKey: null,
     httpClient: httpClient,
-    dialect: OpenAIChatDialects.SgLangCompatible,
-    options: OpenAIChatClientOptions.QwenThinkingDisabled()
+    dialect: OpenAIChatDialects.QwenSgLang,
+    options: new OpenAIChatClientOptions {
+        ReasoningEffort = CompletionReasoningEffort.Disabled
+    }
 );
 ```
 
-`options.ExtraBody` 表示把额外字段直接并到请求 JSON 根对象；它对应 SDK 语义里的 `extra_body`，不是线上的 `"extra_body"` 字段。当前本地 Qwen3.5 推荐用 `OpenAIChatClientOptions.QwenThinkingDisabled()` 注入：
+`CompletionReasoningEffort` 提供 `ProviderDefault`、`Disabled`、`Low`、`Medium`、`High`、`Max` 六档。`ProviderDefault` 不发送显式控制；其余档位由所选 provider surface 映射为厂商 wire 值。Qwen surface 将 `Disabled` 映射为：
 
 ```json
 {
@@ -517,7 +519,7 @@ new OpenAIChatClient(
 }
 ```
 
-**Dialect 二选一**：
+**Dialect 选择**：
 
 如果目标就是 DeepSeek V4，通常不需要自己选 dialect，直接用 `DeepSeekV4ChatClient` 更省心：
 
@@ -540,9 +542,10 @@ new DeepSeekV4ChatClient(
 |---|---|---|
 | `OpenAIChatDialects.Strict` | 真·OpenAI、严格按规范的兼容端点 | 保留所有 `delta.content`（含空白） |
 | `OpenAIChatDialects.SgLangCompatible` | **本地 sglang** 与一些松散兼容端点 | **仅在工具调用累积期间** 忽略夹带的纯空白 `delta.content` |
+| `OpenAIChatDialects.QwenSgLang` | **Qwen + sglang** | 继承 sglang 空白处理；捕获明文 `reasoning_content`；将统一档位映射为 `chat_template_kwargs.enable_thinking` |
 | `OpenAIChatDialects.DeepSeekV4` | **DeepSeek V4** 等要求 assistant tool replay 保留 `reasoning_content` 的端点 | 捕获 `delta.reasoning_content` 为 `OpenAIChatReasoningBlock`，并在回灌 assistant 历史时写回 `reasoning_content` |
 
-**打到本地 8000 端口通常应优先用 `SgLangCompatible`**：sglang 的工具调用流里常会夹带空白噪声，`SgLangCompatible` 会在工具调用累积期间忽略这些无意义空白。`ApiSpecId == "openai-chat-v1"`。
+本地 Qwen 应优先用 `QwenSgLang`；只有无法确认模型族、或端点不支持 Qwen `enable_thinking` 扩展时才用通用 `SgLangCompatible`。后者没有统一 reasoning 档位映射，若配置非 `ProviderDefault` 会 fail fast。`ApiSpecId == "openai-chat-v1"`。
 
 ### 5.2 `AnthropicClient`
 
@@ -556,11 +559,21 @@ using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
 new AnthropicClient(
     apiKey: null,
     httpClient: httpClient,
-    apiVersion: null // 默认 "2023-06-01"
+    apiVersion: null, // 默认 "2023-06-01"
+    reasoningEffort: CompletionReasoningEffort.High
 );
 ```
 
 走真·Anthropic 时，用 `CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://api.anthropic.com/"))` 创建 `HttpClient`，再把真 key 给 `apiKey`。`ApiSpecId == "messages-v1"`。
+
+**Adaptive thinking**：`ProviderDefault` 不发送显式控制，`Disabled` 发送 `thinking.type=disabled`，`Low`～`Max` 发送 `thinking.type=adaptive`、`display=summarized` 与对应的 `output_config.effort`。开启后：
+
+- 明文 thinking 通过 `CompletionStreamObserver.ReceivedReasoningDelta` 流式推送，并在 `AnthropicReasoningBlock.PlainText` 上留存完整快照；
+- 被安全系统加密的 `redacted_thinking` 块仍会产出 `AnthropicReasoningBlock`（`PlainText == null`），以便原样回灌。
+
+配置驱动的调用方在 `CompletionConnectionConfig.ReasoningEffort`（JSON: `reasoningEffort`）上使用同一组稳定字符串档位。该值会进入 connection fingerprint；provider 映射版本会进入 request-adapter fingerprint，恢复时不会静默沿用不同 reasoning 语义。
+
+当前映射摘要：OpenAI Chat / Responses 使用 `none|low|medium|high|xhigh`；OpenAI Responses 在启用档位下同时请求 `summary=auto`；Qwen 映射为 `enable_thinking` 布尔开关；DeepSeek V4 的 `Disabled` 映射为 `thinking.type=disabled`，启用档位显式发送 `thinking.type=enabled`，并将 `Low|Medium|High` 收敛到 `reasoning_effort=high`、`Max` 映射为 `max`；Anthropic 使用 adaptive thinking 与同名 effort。
 
 ### 5.3 `GeminiClient`
 

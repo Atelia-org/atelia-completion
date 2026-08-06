@@ -301,17 +301,12 @@ internal sealed class GeminiStreamParser {
         if (_replayParts.Count == 0) { return; }
 
         var payload = GeminiReplayPayloadCodec.Encode("model", _replayParts);
-        var plainText = string.Concat(
-            _replayParts
-                .Where(static part => !string.IsNullOrEmpty(part.Text))
-                .Select(static part => part.Text)
-        );
 
         aggregator.AppendReplayBlock(
             new GeminiReplayBlock(
                 payload,
                 aggregator.Invocation,
-                string.IsNullOrEmpty(plainText) ? null : plainText
+                PlainText: null
             )
         );
 

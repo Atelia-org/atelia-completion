@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Transport;
@@ -22,7 +23,8 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         "stream",
         "store",
         "include",
-        "parallel_tool_calls"
+        "parallel_tool_calls",
+        "reasoning"
     };
 
     private readonly HttpClient _httpClient;
@@ -42,11 +44,27 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(OpenAIResponsesClient));
-        _options = options ?? new OpenAIResponsesClientOptions();
+        options ??= new OpenAIResponsesClientOptions();
+        _options = new OpenAIResponsesClientOptions {
+            ReasoningEffort = options.ReasoningEffort,
+            Store = options.Store,
+            IncludeEncryptedReasoning = options.IncludeEncryptedReasoning,
+            ParallelToolCalls = options.ParallelToolCalls,
+            ExtraBody = options.ExtraBody is null
+                ? null
+                : (JsonObject)options.ExtraBody.DeepClone()
+        };
+        if (!Enum.IsDefined(_options.ReasoningEffort)) {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                _options.ReasoningEffort,
+                "Unknown reasoning effort."
+            );
+        }
 
         DebugUtil.Info(
             DebugCategory,
-            $"[OpenAI/Responses] Client initialized base={_httpClient.BaseAddress}, extraBodyKeys={_options.ExtraBody?.Count ?? 0}"
+            $"[OpenAI/Responses] Client initialized base={_httpClient.BaseAddress}, extraBodyKeys={_options.ExtraBody?.Count ?? 0}, reasoningEffort={_options.ReasoningEffort}"
         );
     }
 
@@ -57,12 +75,16 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
     ) {
         DebugUtil.Info(DebugCategory, $"[OpenAI/Responses] Starting call model={request.ModelId}");
 
-        var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(request, _options);
+        var invocation = CompletionDescriptor.From(this, request);
+        var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(
+            request,
+            _options,
+            invocation
+        );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
-        var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new OpenAIResponsesStreamParser();
         var stoppedEarly = false;

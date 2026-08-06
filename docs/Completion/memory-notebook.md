@@ -126,10 +126,10 @@ lifecycle乱序都会抛`InvalidDataException`，不会被降级成warning或成
 | `choices[].delta.content` | 追加正文增量 | `AppendContent(...)` |
 | `choices[].delta.tool_calls[]` | 按 `tool_calls[i].index` 聚合 id/name/arguments 片段 | — |
 | `choices[].finish_reason = "tool_calls"` | 将已聚合完成的调用一次性封装为 `RawToolCall` | `AppendToolCall(...)` |
-| `reasoning_content` | `Strict` / `SgLangCompatible` 忽略；`DeepSeekV4` 捕获为 `OpenAIChatReasoningBlock`，并在 replay-compatible assistant history 中写回 | `OpenAIChatReasoningBlock` |
+| `reasoning_content` | `Strict` / `QwenSgLang` 捕获为只展示的 `OpenAIChatReasoningBlock`；`SgLangCompatible` 忽略；`DeepSeekV4` 捕获并在 replay-compatible assistant history 中写回 | `OpenAIChatReasoningBlock` |
 | `[DONE]` | 仅为传输哨兵；若先于`finish_reason`到达则远端结果不确定 | — |
 
-strict 路径默认保留所有 `delta.content`；只有特定 dialect（当前是 `SgLangCompatible`）才会忽略“工具调用已开始后夹带的纯空白 content noise”。
+strict 路径默认保留所有 `delta.content`；`SgLangCompatible` 与 `QwenSgLang` 会忽略“工具调用已开始后夹带的纯空白 content noise”。
 
 `GeminiStreamParser` 则直接消费 `streamGenerateContent?alt=sse` 的 `data: {GenerateContentResponse}`：
 

@@ -1,16 +1,11 @@
 using System.Text.Json.Nodes;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Completion.OpenAI;
 
 public sealed class OpenAIChatClientOptions {
-    public JsonObject? ExtraBody { get; init; }
+    public CompletionReasoningEffort ReasoningEffort { get; init; } =
+        CompletionReasoningEffort.ProviderDefault;
 
-    public static OpenAIChatClientOptions QwenThinkingDisabled()
-        => new() {
-            ExtraBody = new JsonObject {
-                ["chat_template_kwargs"] = new JsonObject {
-                    ["enable_thinking"] = false
-                }
-            }
-        };
+    public JsonObject? ExtraBody { get; init; }
 }

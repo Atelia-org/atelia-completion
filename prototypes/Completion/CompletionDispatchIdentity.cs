@@ -53,7 +53,8 @@ public static class CompletionDispatchIdentityFactory {
                 connection.ModelId,
                 connection.CompletionSurfaceId,
                 connection.BaseAddress,
-                connection.MaxTokens
+                connection.MaxTokens,
+                connection.ReasoningEffort
             )
         );
     }
@@ -69,7 +70,8 @@ public static class CompletionDispatchIdentityFactory {
                 client.Name,
                 client.ApiSpecId,
                 connection.Kind,
-                connection.CompletionSurfaceId
+                connection.CompletionSurfaceId,
+                ResolveReasoningMappingId(connection)
             )
         );
     }
@@ -84,20 +86,36 @@ public static class CompletionDispatchIdentityFactory {
         )}";
     }
 
+    private static string ResolveReasoningMappingId(
+        CompletionConnectionConfig connection
+    ) => connection.Kind.Trim().ToLowerInvariant() switch {
+        "anthropic" => "anthropic-adaptive-effort-v1",
+        "openai-responses" => "openai-responses-effort-v1",
+        "openai-chat" => connection.CompletionSurfaceId switch {
+            "openai-chat/strict" => "openai-chat-effort-v1",
+            "openai-chat/qwen-sglang" => "qwen-thinking-switch-v1",
+            "openai-chat/deepseek-v4" => "deepseek-v4-effort-v1",
+            _ => "reasoning-control-unsupported-v1"
+        },
+        _ => "reasoning-control-unsupported-v1"
+    };
+
     private sealed record ConnectionFingerprintDto(
         string ConnectionId,
         string Kind,
         string ModelId,
         string CompletionSurfaceId,
         string BaseAddress,
-        int? MaxTokens
+        int? MaxTokens,
+        CompletionReasoningEffort ReasoningEffort
     );
 
     private sealed record RequestAdapterFingerprintDto(
         string ClientName,
         string ClientApiSpecId,
         string ConnectionKind,
-        string CompletionSurfaceId
+        string CompletionSurfaceId,
+        string ReasoningMappingId
     );
 }
 

@@ -144,13 +144,82 @@ public sealed class AnthropicStreamParserTests {
         var thinkingBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.Thinking);
         var thinking = Assert.IsType<AnthropicReasoningBlock>(thinkingBlock);
 
-        Assert.Equal("Let me consider this carefully.", thinking.PlainTextForDebug);
+        Assert.Equal("Let me consider this carefully.", thinking.PlainText);
 
         // OpaquePayload 应当是完整的 Anthropic-native thinking content block JSON 字节
         using var doc = JsonDocument.Parse(thinking.OpaquePayload);
         Assert.Equal("thinking", doc.RootElement.GetProperty("type").GetString());
         Assert.Equal("Let me consider this carefully.", doc.RootElement.GetProperty("thinking").GetString());
         Assert.Equal("sig-abc-xyz", doc.RootElement.GetProperty("signature").GetString());
+    }
+
+    [Fact]
+    public void ParseEvent_ThinkingWithoutSignatureFailsAtBlockBoundary() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        ParseNamedEvent(
+            parser,
+            """{"type":"message_start","message":{}}""",
+            aggregator
+        );
+        ParseNamedEvent(
+            parser,
+            """{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}""",
+            aggregator
+        );
+        ParseNamedEvent(
+            parser,
+            """{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reason"}}""",
+            aggregator
+        );
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => ParseNamedEvent(
+                parser,
+                """{"type":"content_block_stop","index":0}""",
+                aggregator
+            )
+        );
+
+        Assert.Contains("signature", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParseEvent_PreservesRedactedThinkingForReplay() {
+        var parser = new AnthropicStreamParser();
+        var observer = new CompletionStreamObserver();
+        var thinkingBeginCount = 0;
+        observer.ReceivedThinkingBegin += () => thinkingBeginCount++;
+        var aggregator = new CompletionAggregator(DummyInvocation, observer);
+
+        var events = new[] {
+            """
+            {"type":"message_start","message":{}}
+            """,
+            """
+            {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"EmwKAhgBEgy3va3p"}}
+            """,
+            """
+            {"type":"content_block_stop","index":0}
+            """
+        };
+
+        foreach (var e in events) {
+            ParseNamedEvent(parser, e, aggregator);
+        }
+
+        var result = aggregator.Build();
+
+        var thinkingBlock = Assert.Single(result.Message.Blocks, b => b.Kind == ActionBlockKind.Thinking);
+        var thinking = Assert.IsType<AnthropicReasoningBlock>(thinkingBlock);
+
+        Assert.Null(thinking.PlainText);
+        Assert.Equal(1, thinkingBeginCount);
+
+        using var doc = JsonDocument.Parse(thinking.OpaquePayload);
+        Assert.Equal("redacted_thinking", doc.RootElement.GetProperty("type").GetString());
+        Assert.Equal("EmwKAhgBEgy3va3p", doc.RootElement.GetProperty("data").GetString());
     }
 
     [Fact]

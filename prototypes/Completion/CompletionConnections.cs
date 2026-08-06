@@ -22,7 +22,12 @@ public sealed record CompletionConnectionConfig(
     string? ApiKey = null,
     string? BaseAddressEnv = null,
     string? ApiKeyEnv = null,
-    int? MaxTokens = null
+    int? MaxTokens = null,
+    /// <summary>
+    /// Provider-neutral reasoning preset. <see cref="CompletionReasoningEffort.ProviderDefault"/>
+    /// preserves the selected provider/model default.
+    /// </summary>
+    CompletionReasoningEffort ReasoningEffort = CompletionReasoningEffort.ProviderDefault
 );
 
 public static class CompletionConnectionConfigLoader {
@@ -83,6 +88,11 @@ public static class CompletionConnectionConfigLoader {
             }
 
             RequireNonBlank(baseAddress, $"Completion connection '{connection.Id}' must have a non-empty baseAddress.");
+            if (!Enum.IsDefined(connection.ReasoningEffort)) {
+                throw new InvalidOperationException(
+                    $"Completion connection '{connection.Id}' has unsupported reasoningEffort value '{connection.ReasoningEffort}'."
+                );
+            }
 
             resolvedConnections.Add(connection with { CompletionSurfaceId = completionSurfaceId, BaseAddress = baseAddress, ApiKey = apiKey });
         }
@@ -122,6 +132,7 @@ public interface ICompletionClientFactory {
 public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
     public ICompletionClient Create(CompletionConnectionConfig connection) {
         ArgumentNullException.ThrowIfNull(connection);
+        ValidateReasoningConfiguration(connection);
 
         var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
             new Uri(connection.BaseAddress, UriKind.Absolute)
@@ -131,16 +142,23 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
                 "openai-chat" => new OpenAIChatClient(
                     apiKey: connection.ApiKey,
                     httpClient: httpClient,
-                    dialect: ResolveOpenAiChatDialect(connection.CompletionSurfaceId)
+                    dialect: ResolveOpenAiChatDialect(connection.CompletionSurfaceId),
+                    options: new OpenAIChatClientOptions {
+                        ReasoningEffort = connection.ReasoningEffort
+                    }
                 ),
                 "openai-responses" => new OpenAIResponsesClient(
                     apiKey: connection.ApiKey,
-                    httpClient: httpClient
+                    httpClient: httpClient,
+                    options: new OpenAIResponsesClientOptions {
+                        ReasoningEffort = connection.ReasoningEffort
+                    }
                 ),
                 "anthropic" => new AnthropicClient(
                     apiKey: connection.ApiKey,
                     httpClient: httpClient,
-                    defaultMaxTokens: connection.MaxTokens
+                    defaultMaxTokens: connection.MaxTokens,
+                    reasoningEffort: connection.ReasoningEffort
                 ),
                 _ => throw new InvalidOperationException($"Unsupported completion connection kind '{connection.Kind}'.")
             };
@@ -160,9 +178,35 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
         return completionSurfaceId switch {
             "openai-chat/strict" => OpenAIChatDialects.Strict,
             "openai-chat/sglang-compatible" => OpenAIChatDialects.SgLangCompatible,
+            "openai-chat/qwen-sglang" => OpenAIChatDialects.QwenSgLang,
             "openai-chat/deepseek-v4" => OpenAIChatDialects.DeepSeekV4,
-            _ => OpenAIChatDialects.Strict
+            _ => throw new InvalidOperationException(
+                $"Unsupported openai-chat completion surface '{completionSurfaceId}'."
+            )
         };
+    }
+
+    private static void ValidateReasoningConfiguration(
+        CompletionConnectionConfig connection
+    ) {
+        if (!Enum.IsDefined(connection.ReasoningEffort)) {
+            throw new InvalidOperationException(
+                $"Completion connection '{connection.Id}' has unsupported reasoningEffort value '{connection.ReasoningEffort}'."
+            );
+        }
+        if (connection.ReasoningEffort is CompletionReasoningEffort.ProviderDefault) { return; }
+
+        if (string.Equals(connection.Kind, "openai-chat", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(
+                connection.CompletionSurfaceId,
+                "openai-chat/sglang-compatible",
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidOperationException(
+                "The generic openai-chat/sglang-compatible surface has no provider-neutral reasoning mapping. "
+                + "Use openai-chat/qwen-sglang for Qwen's enable_thinking control."
+            );
+        }
     }
 }
 
@@ -248,9 +292,9 @@ public sealed class CompletionConnectionRegistry : IDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(required);
         if (!_byId.TryGetValue(
-                required.ConnectionId,
-                out CompletionConnectionConfig? connection
-            )) {
+            required.ConnectionId,
+            out CompletionConnectionConfig? connection
+        )) {
             return Unavailable(
                 CompletionDispatchBindingUnavailableReason
                     .ConnectionMissing,
@@ -259,10 +303,10 @@ public sealed class CompletionConnectionRegistry : IDisposable {
             );
         }
         if (!string.Equals(
-                connection.Kind,
-                required.Kind,
-                StringComparison.Ordinal
-            )) {
+            connection.Kind,
+            required.Kind,
+            StringComparison.Ordinal
+        )) {
             return Unavailable(
                 CompletionDispatchBindingUnavailableReason
                     .ConnectionKindMismatch,
@@ -274,10 +318,10 @@ public sealed class CompletionConnectionRegistry : IDisposable {
             CompletionDispatchIdentityFactory
                 .ComputeConnectionFingerprint(connection);
         if (!string.Equals(
-                connectionFingerprint,
-                required.ConnectionFingerprint,
-                StringComparison.Ordinal
-            )) {
+            connectionFingerprint,
+            required.ConnectionFingerprint,
+            StringComparison.Ordinal
+        )) {
             return Unavailable(
                 CompletionDispatchBindingUnavailableReason
                     .ConnectionFingerprintMismatch,
@@ -288,10 +332,10 @@ public sealed class CompletionConnectionRegistry : IDisposable {
 
         ICompletionClient client = GetClient(connection.Id);
         if (!string.Equals(
-                client.Name,
-                required.ClientName,
-                StringComparison.Ordinal
-            )) {
+            client.Name,
+            required.ClientName,
+            StringComparison.Ordinal
+        )) {
             return Unavailable(
                 CompletionDispatchBindingUnavailableReason
                     .ClientNameMismatch,
@@ -300,10 +344,10 @@ public sealed class CompletionConnectionRegistry : IDisposable {
             );
         }
         if (!string.Equals(
-                client.ApiSpecId,
-                required.ApiSpecId,
-                StringComparison.Ordinal
-            )) {
+            client.ApiSpecId,
+            required.ApiSpecId,
+            StringComparison.Ordinal
+        )) {
             return Unavailable(
                 CompletionDispatchBindingUnavailableReason
                     .ClientApiSpecIdMismatch,
@@ -316,10 +360,10 @@ public sealed class CompletionConnectionRegistry : IDisposable {
             CompletionDispatchIdentityFactory
                 .ComputeRequestAdapterFingerprint(client, connection);
         if (!string.Equals(
-                adapterFingerprint,
-                required.RequestAdapterFingerprint,
-                StringComparison.Ordinal
-            )) {
+            adapterFingerprint,
+            required.RequestAdapterFingerprint,
+            StringComparison.Ordinal
+        )) {
             return Unavailable(
                 CompletionDispatchBindingUnavailableReason
                     .RequestAdapterFingerprintMismatch,

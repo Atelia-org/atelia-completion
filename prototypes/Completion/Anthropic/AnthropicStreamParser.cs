@@ -162,6 +162,11 @@ internal sealed class AnthropicStreamParser {
             var initialSignature = GetOptionalString(contentBlock, "signature", "thinking content block");
             if (!string.IsNullOrEmpty(initialSignature)) { state.ThinkingSignatureBuilder.Append(initialSignature); }
         }
+        else if (blockType == "redacted_thinking") {
+            // 安全系统加密的 thinking：无明文可展示，但必须原样保留以便回灌。
+            aggregator.BeginThinking();
+            state.RedactedData = GetRequiredString(contentBlock, "data", "redacted_thinking content block");
+        }
 
         _contentBlocks[index] = state;
     }
@@ -235,13 +240,27 @@ internal sealed class AnthropicStreamParser {
         else if (state.Type == "thinking") {
             var thinkingText = state.ThinkingTextBuilder.ToString();
             var signature = state.ThinkingSignatureBuilder.ToString();
-            var payloadBytes = AnthropicThinkingPayloadCodec.Encode(thinkingText, string.IsNullOrEmpty(signature) ? null : signature);
+            if (string.IsNullOrWhiteSpace(signature)) {
+                throw new InvalidDataException(
+                    "Anthropic thinking content block stopped without a non-empty signature."
+                );
+            }
+            var payloadBytes = AnthropicThinkingPayloadCodec.Encode(thinkingText, signature);
 
             aggregator.EndThinking(
                 new AnthropicReasoningBlock(
                     OpaquePayload: payloadBytes,
                     Origin: aggregator.Invocation,
-                    PlainTextForDebug: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
+                    PlainText: string.IsNullOrEmpty(thinkingText) ? null : thinkingText
+                )
+            );
+        }
+        else if (state.Type == "redacted_thinking") {
+            aggregator.EndThinking(
+                new AnthropicReasoningBlock(
+                    OpaquePayload: AnthropicThinkingPayloadCodec.EncodeRedacted(state.RedactedData),
+                    Origin: aggregator.Invocation,
+                    PlainText: null
                 )
             );
         }
@@ -371,9 +390,7 @@ internal sealed class AnthropicStreamParser {
     ) {
         if (obj[propertyName] is JsonValue value
             && value.TryGetValue<string>(out var result)
-            && (allowEmpty || !string.IsNullOrWhiteSpace(result))) {
-            return result;
-        }
+            && (allowEmpty || !string.IsNullOrWhiteSpace(result))) { return result; }
 
         throw new InvalidDataException(
             $"Anthropic {context} requires string field '{propertyName}'."
@@ -385,12 +402,8 @@ internal sealed class AnthropicStreamParser {
         string propertyName,
         string context
     ) {
-        if (!obj.TryGetPropertyValue(propertyName, out var node) || node is null) {
-            return null;
-        }
-        if (node is JsonValue value && value.TryGetValue<string>(out var result)) {
-            return result;
-        }
+        if (!obj.TryGetPropertyValue(propertyName, out var node) || node is null) { return null; }
+        if (node is JsonValue value && value.TryGetValue<string>(out var result)) { return result; }
 
         throw new InvalidDataException(
             $"Anthropic {context} field '{propertyName}' must be a string or null."
@@ -404,9 +417,7 @@ internal sealed class AnthropicStreamParser {
     ) {
         if (obj[propertyName] is JsonValue value
             && value.TryGetValue<int>(out var result)
-            && result >= 0) {
-            return result;
-        }
+            && result >= 0) { return result; }
 
         throw new InvalidDataException(
             $"Anthropic {context} requires non-negative integer field '{propertyName}'."
@@ -434,5 +445,6 @@ internal sealed class AnthropicStreamParser {
         public StringBuilder ToolInputJsonBuilder { get; } = new();
         public StringBuilder ThinkingTextBuilder { get; } = new();
         public StringBuilder ThinkingSignatureBuilder { get; } = new();
+        public string RedactedData { get; set; } = string.Empty;
     }
 }

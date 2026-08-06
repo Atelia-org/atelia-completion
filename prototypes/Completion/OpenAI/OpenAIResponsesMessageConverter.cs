@@ -14,11 +14,19 @@ internal static class OpenAIResponsesMessageConverter {
 
     public static OpenAIResponsesApiRequest ConvertToApiRequest(
         CompletionRequest request,
-        OpenAIResponsesClientOptions? options = null
+        OpenAIResponsesClientOptions? options = null,
+        CompletionDescriptor? targetInvocation = null
     ) {
         ArgumentNullException.ThrowIfNull(request);
 
         options ??= new OpenAIResponsesClientOptions();
+        if (!Enum.IsDefined(options.ReasoningEffort)) {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.ReasoningEffort,
+                "Unknown reasoning effort."
+            );
+        }
 
         var inputItems = new List<OpenAIResponsesInputItem>();
         var state = new ProjectionState();
@@ -34,7 +42,12 @@ internal static class OpenAIResponsesMessageConverter {
                     break;
 
                 case ActionMessage action:
-                    BuildActionItems(action, inputItems, state);
+                    BuildActionItems(
+                        action,
+                        inputItems,
+                        state,
+                        targetInvocation
+                    );
                     break;
 
                 default:
@@ -54,16 +67,37 @@ internal static class OpenAIResponsesMessageConverter {
             Stream = true,
             Store = options.Store,
             Include = options.IncludeEncryptedReasoning ? [EncryptedReasoningInclude] : null,
-            ParallelToolCalls = options.ParallelToolCalls
+            ParallelToolCalls = options.ParallelToolCalls,
+            Reasoning = BuildReasoningConfig(options.ReasoningEffort)
         };
 
         DebugUtil.Info(
             DebugCategory,
-            $"[OpenAIResponses] Converted {request.Context.Count} context messages to {inputItems.Count} input items, tools={apiRequest.Tools?.Count ?? 0}"
+            $"[OpenAIResponses] Converted {request.Context.Count} context messages to {inputItems.Count} input items, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={options.ReasoningEffort}"
         );
 
         return apiRequest;
     }
+
+    private static OpenAIResponsesReasoningConfig? BuildReasoningConfig(
+        CompletionReasoningEffort reasoningEffort
+    ) => reasoningEffort switch {
+        CompletionReasoningEffort.ProviderDefault => null,
+        CompletionReasoningEffort.Disabled => new OpenAIResponsesReasoningConfig {
+            Effort = "none"
+        },
+        CompletionReasoningEffort.Low => EnabledReasoning("low"),
+        CompletionReasoningEffort.Medium => EnabledReasoning("medium"),
+        CompletionReasoningEffort.High => EnabledReasoning("high"),
+        CompletionReasoningEffort.Max => EnabledReasoning("xhigh"),
+        _ => throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.")
+    };
+
+    private static OpenAIResponsesReasoningConfig EnabledReasoning(string effort)
+        => new() {
+            Effort = effort,
+            Summary = "auto"
+        };
 
     private static void BuildObservationItem(
         ObservationMessage observation,
@@ -123,7 +157,8 @@ internal static class OpenAIResponsesMessageConverter {
     private static void BuildActionItems(
         ActionMessage action,
         List<OpenAIResponsesInputItem> inputItems,
-        ProjectionState state
+        ProjectionState state,
+        CompletionDescriptor? targetInvocation
     ) {
         EnsureNoPendingToolCalls(state, $"assistant action before tool results blockCount={action.Blocks.Count}");
 
@@ -169,7 +204,10 @@ internal static class OpenAIResponsesMessageConverter {
 
                 case OpenAIResponsesReasoningBlock reasoningBlock:
                     FlushAssistantText();
-                    inputItems.Add(ConvertReasoningBlock(reasoningBlock));
+                    inputItems.Add(ConvertReasoningBlock(
+                        reasoningBlock,
+                        targetInvocation
+                    ));
                     emittedItemCount++;
                     break;
 
@@ -221,12 +259,22 @@ internal static class OpenAIResponsesMessageConverter {
         };
     }
 
-    private static OpenAIResponsesReasoningItem ConvertReasoningBlock(OpenAIResponsesReasoningBlock reasoningBlock) {
+    private static OpenAIResponsesReasoningItem ConvertReasoningBlock(
+        OpenAIResponsesReasoningBlock reasoningBlock,
+        CompletionDescriptor? targetInvocation
+    ) {
         if (!string.Equals(reasoningBlock.Origin.ApiSpecId, ResponsesApiSpecId, StringComparison.Ordinal)) {
             throw new InvalidOperationException(
                 $"OpenAI Responses reasoning replay requires Origin.ApiSpecId='{ResponsesApiSpecId}', got '{reasoningBlock.Origin.ApiSpecId}'."
             );
         }
+        if (targetInvocation is not null
+            && !Equals(reasoningBlock.Origin, targetInvocation)) {
+            throw new InvalidOperationException(
+                $"OpenAI Responses reasoning replay requires Origin '{targetInvocation}', got '{reasoningBlock.Origin}'."
+            );
+        }
+        reasoningBlock.ValidatePlainText();
 
         try {
             using var document = JsonDocument.Parse(reasoningBlock.RawItemJson);

@@ -38,7 +38,7 @@ public sealed class OpenAIResponsesStreamParserTests {
             result.Message.Blocks,
             block => {
                 var reasoning = Assert.IsType<OpenAIResponsesReasoningBlock>(block);
-                Assert.Equal("Need tool.", reasoning.PlainTextForDebug);
+                Assert.Equal("Need tool.", reasoning.PlainText);
                 Assert.Contains("\"encrypted_content\":\"abc\"", reasoning.RawItemJson, StringComparison.Ordinal);
             },
             block => {
@@ -49,6 +49,95 @@ public sealed class OpenAIResponsesStreamParserTests {
             },
             block => Assert.Equal("Sunny.", Assert.IsType<ActionBlock.Text>(block).Content)
         );
+    }
+
+    [Fact]
+    public void ParseEvent_ForwardsReasoningSummaryDeltasAsPlaintext() {
+        var parser = new OpenAIResponsesStreamParser();
+        var observer = new CompletionStreamObserver();
+        var deltas = new List<string>();
+        observer.ReceivedReasoningDelta += deltas.Add;
+        var aggregator = new CompletionAggregator(DummyInvocation, observer);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning","summary":[]}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Need "}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"tool."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Need tool."}],"encrypted_content":"abc"}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent("""{"type":"response.completed"}""", aggregator);
+
+        Assert.Equal(["Need ", "tool."], deltas);
+        var reasoning = Assert.IsType<OpenAIResponsesReasoningBlock>(
+            Assert.Single(aggregator.Build().Message.Blocks)
+        );
+        Assert.Equal("Need tool.", reasoning.PlainText);
+    }
+
+    [Fact]
+    public void ParseEvent_RejectsReasoningSummaryDeltaThatDiffersFromCompletedItem() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning","summary":[]}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"streamed"}
+            """,
+            aggregator
+        );
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """
+                {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"different"}]}}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.Contains("do not match", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_ReasoningWithoutReadableSummaryUsesNullPlainText() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"abc"}}
+            """,
+            aggregator
+        );
+
+        var reasoning = Assert.IsType<OpenAIResponsesReasoningBlock>(
+            Assert.Single(aggregator.Build().Message.Blocks)
+        );
+        Assert.Null(reasoning.PlainText);
     }
 
     [Fact]

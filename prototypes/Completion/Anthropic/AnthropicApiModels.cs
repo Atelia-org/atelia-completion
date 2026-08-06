@@ -34,6 +34,31 @@ internal sealed class AnthropicApiRequest {
 
     [JsonPropertyName("tools")]
     public List<AnthropicTool>? Tools { get; set; }
+
+    /// <summary>
+    /// Extended thinking 配置。非 null 时响应会包含 thinking / redacted_thinking 内容块。
+    /// </summary>
+    [JsonPropertyName("thinking")]
+    public AnthropicThinkingConfig? Thinking { get; set; }
+
+    [JsonPropertyName("output_config")]
+    public AnthropicOutputConfig? OutputConfig { get; set; }
+}
+
+/// <summary>
+/// Anthropic adaptive thinking configuration.
+/// </summary>
+internal sealed class AnthropicThinkingConfig {
+    [JsonPropertyName("type")]
+    public required string Type { get; set; }
+
+    [JsonPropertyName("display")]
+    public string? Display { get; set; }
+}
+
+internal sealed class AnthropicOutputConfig {
+    [JsonPropertyName("effort")]
+    public required string Effort { get; set; }
 }
 
 /// <summary>
@@ -53,6 +78,7 @@ internal sealed class AnthropicMessage {
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(AnthropicTextBlock), "text")]
 [JsonDerivedType(typeof(AnthropicThinkingBlock), "thinking")]
+[JsonDerivedType(typeof(AnthropicRedactedThinkingBlock), "redacted_thinking")]
 [JsonDerivedType(typeof(AnthropicToolUseBlock), "tool_use")]
 [JsonDerivedType(typeof(AnthropicToolResultBlock), "tool_result")]
 internal abstract class AnthropicContentBlock {
@@ -111,7 +137,15 @@ internal sealed class AnthropicThinkingBlock : AnthropicContentBlock {
     public required string Thinking { get; set; }
 
     [JsonPropertyName("signature")]
-    public string? Signature { get; set; }
+    public required string Signature { get; set; }
+}
+
+/// <summary>
+/// 被安全系统加密的 thinking 内容块。内容不可读，但回灌时必须原样送回。
+/// </summary>
+internal sealed class AnthropicRedactedThinkingBlock : AnthropicContentBlock {
+    [JsonPropertyName("data")]
+    public required string Data { get; set; }
 }
 
 /// <summary>

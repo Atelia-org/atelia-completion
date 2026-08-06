@@ -9,9 +9,9 @@ namespace Atelia.Completion.OpenAI;
 /// </summary>
 /// <param name="Content">上游返回的 reasoning_content 原样文本。</param>
 /// <param name="Origin">产生该 reasoning 的调用来源描述符。</param>
-/// <param name="PlainTextForDebug">可选调试文本；默认与 <paramref name="Content"/> 相同。</param>
+/// <param name="PlainText">可选明文；默认与 <paramref name="Content"/> 相同。</param>
 public sealed record OpenAIChatReasoningBlock(
     string Content,
     CompletionDescriptor Origin,
-    string? PlainTextForDebug = null
-) : ActionBlock.ReasoningBlock(Origin, PlainTextForDebug ?? Content);
+    string? PlainText = null
+) : ActionBlock.ReasoningBlock(Origin, PlainText ?? Content);

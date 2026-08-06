@@ -239,6 +239,55 @@ public sealed class OpenAIChatMessageConverterTests {
     }
 
     [Fact]
+    public void ConvertToApiRequest_DeepSeekReasoningOriginMustMatchTargetInvocation() {
+        var source = new CompletionDescriptor(
+            DummyInvocation.ProviderId,
+            DummyInvocation.ApiSpecId,
+            "deepseek-other"
+        );
+        var request = new CompletionRequest(
+            ModelId: DummyInvocation.Model,
+            SystemPrompt: string.Empty,
+            Context: [new ActionMessage([
+                new OpenAIChatReasoningBlock("reason", source)
+            ])],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OpenAIChatMessageConverter.ConvertToApiRequest(
+                request,
+                OpenAIChatDialects.DeepSeekV4,
+                DummyInvocation
+            )
+        );
+
+        Assert.Contains("requires Origin", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_DeepSeekRejectsGenericTextReasoningReplay() {
+        var request = new CompletionRequest(
+            ModelId: DummyInvocation.Model,
+            SystemPrompt: string.Empty,
+            Context: [new ActionMessage([
+                new ActionBlock.TextReasoningBlock("reason", DummyInvocation)
+            ])],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OpenAIChatMessageConverter.ConvertToApiRequest(
+                request,
+                OpenAIChatDialects.DeepSeekV4,
+                DummyInvocation
+            )
+        );
+
+        Assert.Contains(nameof(OpenAIChatReasoningBlock), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ConvertToApiRequest_StrictDialectStillIgnoresReasoningContent() {
         var request = new CompletionRequest(
             ModelId: "gpt-4.1",

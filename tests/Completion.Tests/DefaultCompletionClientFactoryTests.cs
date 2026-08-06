@@ -40,6 +40,21 @@ public sealed class DefaultCompletionClientFactoryTests {
         Assert.Equal(caller.Token, inner.ObservedToken);
     }
 
+    [Fact]
+    public void CreateRejectsExplicitReasoningOnGenericSgLangSurface() {
+        var factory = new DefaultCompletionClientFactory();
+        var connection = Connection("local") with {
+            CompletionSurfaceId = "openai-chat/sglang-compatible",
+            ReasoningEffort = CompletionReasoningEffort.High
+        };
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => factory.Create(connection)
+        );
+
+        Assert.Contains("openai-chat/qwen-sglang", exception.Message, StringComparison.Ordinal);
+    }
+
     private static CompletionConnectionConfig Connection(string id) => new(
         id,
         "openai-chat",

@@ -33,14 +33,14 @@ public sealed class CompletionDispatchIdentityTests {
         Assert.Equal("api-a", identity.ApiSpecId);
         Assert.Equal(
             "sha256:"
-            + "209495f1b83d253c60d6c52865485bba"
-            + "0851b295f5710f6547050a7ed250244e",
+            + "f4172cc5b7775416319274be9ad6c55c"
+            + "96c32bbdf03359bf5f4d69a0b1bea513",
             identity.ConnectionFingerprint
         );
         Assert.Equal(
             "sha256:"
-            + "02cf26e32afe666f0d3f112b7f896b5f"
-            + "aac856cf25439d903ecc80c1c923937e",
+            + "7dd61e0ffc56fddba9b55da90909c93e"
+            + "6b4add16176f8dcf70aa67afd65aa7e5",
             identity.RequestAdapterFingerprint
         );
         Assert.Equal(identity, changedSecrets);
@@ -90,6 +90,12 @@ public sealed class CompletionDispatchIdentityTests {
             CompletionDispatchIdentityFactory
                 .ComputeConnectionFingerprint(
                     connection with { MaxTokens = 8192 }
+                ),
+            CompletionDispatchIdentityFactory
+                .ComputeConnectionFingerprint(
+                    connection with {
+                        ReasoningEffort = CompletionReasoningEffort.High
+                    }
                 )
         ];
         string[] adapterVariants = [

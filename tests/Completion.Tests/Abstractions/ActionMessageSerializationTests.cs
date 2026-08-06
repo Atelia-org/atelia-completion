@@ -28,12 +28,14 @@ public sealed class ActionMessageSerializationTests {
         var json = ActionMessageSerialization.Serialize(message);
         var restored = ActionMessageSerialization.Deserialize(json);
 
+        Assert.Contains("\"plainTextForDebug\":\"debug\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"plainText\":", json, StringComparison.Ordinal);
         Assert.Equal(3, restored.Blocks.Count);
         Assert.Equal("visible", Assert.IsType<ActionBlock.Text>(restored.Blocks[0]).Content);
 
         var reasoning = Assert.IsType<ActionBlock.TextReasoningBlock>(restored.Blocks[1]);
         Assert.Equal("think", reasoning.Content);
-        Assert.Equal("debug", reasoning.PlainTextForDebug);
+        Assert.Equal("debug", reasoning.PlainText);
         Assert.Equal(Invocation, reasoning.Origin);
 
         var toolCall = Assert.IsType<ActionBlock.ToolCall>(restored.Blocks[2]).Call;
@@ -49,13 +51,13 @@ public sealed class ActionMessageSerializationTests {
 
         var anthropicPayload = Encoding.UTF8.GetBytes("{\"type\":\"thinking\",\"thinking\":\"a\",\"signature\":\"sig\"}");
         var geminiPayload = Encoding.UTF8.GetBytes("{\"role\":\"model\",\"parts\":[{\"text\":\"hello\",\"thoughtSignature\":\"sig\"}]}");
-        const string openAiResponsesJson = "{\"type\":\"reasoning\",\"id\":\"rs_1\"}";
+        const string openAiResponsesJson = "{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"responses-debug\"}]}";
 
         var message = new ActionMessage(
             new ActionBlock[] {
-                new AnthropicReasoningBlock(anthropicPayload, Invocation, "anthropic-debug"),
-                new GeminiReplayBlock(geminiPayload, Invocation, "gemini-debug"),
-                new OpenAIChatReasoningBlock("chat-reasoning", Invocation, "chat-debug"),
+                new AnthropicReasoningBlock(anthropicPayload, Invocation, "a"),
+                new GeminiReplayBlock(geminiPayload, Invocation),
+                new OpenAIChatReasoningBlock("chat-reasoning", Invocation),
                 new OpenAIResponsesReasoningBlock(openAiResponsesJson, Invocation, "responses-debug")
             }
         );
@@ -65,22 +67,22 @@ public sealed class ActionMessageSerializationTests {
 
         var anthropic = Assert.IsType<AnthropicReasoningBlock>(restored.Blocks[0]);
         Assert.Equal(anthropicPayload, anthropic.OpaquePayload.ToArray());
-        Assert.Equal("anthropic-debug", anthropic.PlainTextForDebug);
+        Assert.Equal("a", anthropic.PlainText);
         Assert.Equal(Invocation, anthropic.Origin);
 
         var gemini = Assert.IsType<GeminiReplayBlock>(restored.Blocks[1]);
         Assert.Equal(geminiPayload, gemini.OpaquePayload.ToArray());
-        Assert.Equal("gemini-debug", gemini.PlainTextForDebug);
+        Assert.Null(gemini.PlainText);
         Assert.Equal(Invocation, gemini.Origin);
 
         var chat = Assert.IsType<OpenAIChatReasoningBlock>(restored.Blocks[2]);
         Assert.Equal("chat-reasoning", chat.Content);
-        Assert.Equal("chat-debug", chat.PlainTextForDebug);
+        Assert.Equal("chat-reasoning", chat.PlainText);
         Assert.Equal(Invocation, chat.Origin);
 
         var responses = Assert.IsType<OpenAIResponsesReasoningBlock>(restored.Blocks[3]);
         Assert.Equal(openAiResponsesJson, responses.RawItemJson);
-        Assert.Equal("responses-debug", responses.PlainTextForDebug);
+        Assert.Equal("responses-debug", responses.PlainText);
         Assert.Equal(Invocation, responses.Origin);
     }
 
@@ -106,7 +108,26 @@ public sealed class ActionMessageSerializationTests {
 
         var reasoning = Assert.IsType<ActionBlock.TextReasoningBlock>(Assert.Single(restored));
         Assert.Equal("fallback text", reasoning.Content);
-        Assert.Equal("fallback text", reasoning.PlainTextForDebug);
+        Assert.Equal("fallback text", reasoning.PlainText);
         Assert.Equal(Invocation, reasoning.Origin);
+    }
+
+    [Fact]
+    public void ProviderReasoningCodec_RejectsForgedPlainTextView() {
+        var registry = ReasoningBlockCodecRegistry.CreateDefault();
+        ReasoningBlockCodecs.RegisterAll(registry);
+        var message = new ActionMessage([
+            new OpenAIChatReasoningBlock(
+                "authoritative",
+                Invocation,
+                "forged"
+            )
+        ]);
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => ActionMessageSerialization.Serialize(message, registry)
+        );
+
+        Assert.Contains("PlainText", exception.Message, StringComparison.Ordinal);
     }
 }

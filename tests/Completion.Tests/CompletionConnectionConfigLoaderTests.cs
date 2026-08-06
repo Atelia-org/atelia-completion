@@ -1,3 +1,4 @@
+using Atelia.Completion.Abstractions;
 using Xunit;
 
 namespace Atelia.Completion.Tests;
@@ -78,6 +79,70 @@ public sealed class CompletionConnectionConfigLoaderTests {
         }
         finally {
             Environment.SetEnvironmentVariable(baseAddressEnv, null);
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LoadFile_ParsesReasoningEffortByStableStringName() {
+        string tempDirectory = CreateTempDirectory();
+        try {
+            string path = Path.Combine(tempDirectory, "connections.json");
+            File.WriteAllText(
+                path,
+                """
+                {
+                  "connections": [{
+                    "id": "openai",
+                    "kind": "openai-responses",
+                    "modelId": "gpt-5",
+                    "completionSurfaceId": "openai-responses",
+                    "baseAddress": "https://api.openai.com/",
+                    "reasoningEffort": "high"
+                  }]
+                }
+                """
+            );
+
+            var connection = Assert.Single(
+                CompletionConnectionConfigLoader.LoadFile(path).Connections
+            );
+
+            Assert.Equal(CompletionReasoningEffort.High, connection.ReasoningEffort);
+        }
+        finally {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("\"turbo\"")]
+    public void LoadFile_RejectsNumericOrUnknownReasoningEffort(string jsonValue) {
+        string tempDirectory = CreateTempDirectory();
+        try {
+            string path = Path.Combine(tempDirectory, "connections.json");
+            File.WriteAllText(
+                path,
+                $$"""
+                {
+                  "connections": [{
+                    "id": "openai",
+                    "kind": "openai-responses",
+                    "modelId": "gpt-5",
+                    "completionSurfaceId": "openai-responses",
+                    "baseAddress": "https://api.openai.com/",
+                    "reasoningEffort": {{jsonValue}}
+                  }]
+                }
+                """
+            );
+
+            Assert.Throws<System.Text.Json.JsonException>(
+                () => CompletionConnectionConfigLoader.LoadFile(path)
+            );
+        }
+        finally {
             Directory.Delete(tempDirectory, recursive: true);
         }
     }

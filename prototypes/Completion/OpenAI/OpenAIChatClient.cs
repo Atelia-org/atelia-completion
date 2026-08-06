@@ -20,13 +20,15 @@ public sealed class OpenAIChatClient : ICompletionClient {
         "messages",
         "n",
         "stream",
-        "tools"
+        "tools",
+        "reasoning_effort",
+        "thinking"
     };
 
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
     private readonly OpenAIChatDialect _dialect;
-    private readonly JsonObject? _extraBody;
+    private readonly OpenAIChatClientOptions _options;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "openai";
     public string ApiSpecId => "openai-chat-v1";
@@ -44,11 +46,24 @@ public sealed class OpenAIChatClient : ICompletionClient {
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(OpenAIChatClient));
 
         _dialect = dialect ?? OpenAIChatDialects.Strict;
-        _extraBody = options?.ExtraBody is null ? null : (JsonObject)options.ExtraBody.DeepClone();
+        options ??= new OpenAIChatClientOptions();
+        if (!Enum.IsDefined(options.ReasoningEffort)) {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.ReasoningEffort,
+                "Unknown reasoning effort."
+            );
+        }
+        _options = new OpenAIChatClientOptions {
+            ReasoningEffort = options.ReasoningEffort,
+            ExtraBody = options.ExtraBody is null
+                ? null
+                : (JsonObject)options.ExtraBody.DeepClone()
+        };
 
         DebugUtil.Info(
             DebugCategory,
-            $"[OpenAI] Client initialized base={_httpClient.BaseAddress}, dialect={_dialect.Name}, extraBodyKeys={_extraBody?.Count ?? 0}"
+            $"[OpenAI] Client initialized base={_httpClient.BaseAddress}, dialect={_dialect.Name}, extraBodyKeys={_options.ExtraBody?.Count ?? 0}, reasoningEffort={_options.ReasoningEffort}"
         );
     }
 
@@ -59,12 +74,16 @@ public sealed class OpenAIChatClient : ICompletionClient {
     ) {
         DebugUtil.Info(DebugCategory, $"[OpenAI] Starting call model={request.ModelId}");
 
-        var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, _dialect);
+        var invocation = CompletionDescriptor.From(this, request);
+        var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(
+            request,
+            _dialect,
+            invocation
+        );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
-        var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new OpenAIChatStreamParser(_dialect.WhitespaceContentMode, _dialect.ReasoningMode);
         var stoppedEarly = false;
@@ -122,7 +141,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
     }
 
     private HttpRequestMessage CreateHttpRequest(OpenAIChatApiRequest apiRequest) {
-        apiRequest.ExtensionData = BuildExtraBodyExtensionData();
+        apiRequest.ExtensionData = BuildRequestExtensionData(apiRequest);
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
         DebugUtil.Trace(DebugCategory, $"[OpenAI] Request payload length={json.Length}, dialect={_dialect.Name}");
 
@@ -138,12 +157,20 @@ public sealed class OpenAIChatClient : ICompletionClient {
         return request;
     }
 
+    private Dictionary<string, JsonElement>? BuildRequestExtensionData(
+        OpenAIChatApiRequest apiRequest
+    ) {
+        Dictionary<string, JsonElement>? extensionData = BuildExtraBodyExtensionData();
+        ApplyReasoningControl(apiRequest, ref extensionData);
+        return extensionData;
+    }
+
     private Dictionary<string, JsonElement>? BuildExtraBodyExtensionData() {
-        if (_extraBody is null || _extraBody.Count == 0) { return null; }
+        if (_options.ExtraBody is null || _options.ExtraBody.Count == 0) { return null; }
 
-        var extensionData = new Dictionary<string, JsonElement>(_extraBody.Count, StringComparer.Ordinal);
+        var extensionData = new Dictionary<string, JsonElement>(_options.ExtraBody.Count, StringComparer.Ordinal);
 
-        foreach (var (propertyName, propertyValue) in _extraBody) {
+        foreach (var (propertyName, propertyValue) in _options.ExtraBody) {
             if (ReservedRequestFieldNames.Contains(propertyName)) {
                 throw new InvalidOperationException(
                     $"OpenAI extra body field '{propertyName}' collides with a reserved request property."
@@ -157,6 +184,81 @@ public sealed class OpenAIChatClient : ICompletionClient {
 
         return extensionData;
     }
+
+    private void ApplyReasoningControl(
+        OpenAIChatApiRequest apiRequest,
+        ref Dictionary<string, JsonElement>? extensionData
+    ) {
+        CompletionReasoningEffort effort = _options.ReasoningEffort;
+        if (effort is CompletionReasoningEffort.ProviderDefault) { return; }
+
+        switch (_dialect.ReasoningControlMode) {
+            case OpenAIChatReasoningControlMode.OpenAIReasoningEffort:
+                apiRequest.ReasoningEffort = MapOpenAIReasoningEffort(effort);
+                return;
+
+            case OpenAIChatReasoningControlMode.DeepSeekV4ReasoningEffort:
+                extensionData ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                if (extensionData.ContainsKey("thinking")) {
+                    throw new InvalidOperationException(
+                        "OpenAI extra body field 'thinking' conflicts with the configured reasoning effort."
+                    );
+                }
+                extensionData["thinking"] = JsonSerializer.SerializeToElement(
+                    new Dictionary<string, string> {
+                        ["type"] = effort is CompletionReasoningEffort.Disabled
+                            ? "disabled"
+                            : "enabled"
+                    },
+                    SerializerOptions
+                );
+                if (effort is not CompletionReasoningEffort.Disabled) {
+                    apiRequest.ReasoningEffort = effort switch {
+                        CompletionReasoningEffort.Max => "max",
+                        CompletionReasoningEffort.Low or
+                        CompletionReasoningEffort.Medium or
+                        CompletionReasoningEffort.High => "high",
+                        _ => throw UnknownReasoningEffort(effort)
+                    };
+                }
+                return;
+
+            case OpenAIChatReasoningControlMode.QwenThinkingSwitch:
+                extensionData ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                if (extensionData.ContainsKey("chat_template_kwargs")) {
+                    throw new InvalidOperationException(
+                        "OpenAI extra body field 'chat_template_kwargs' conflicts with the configured reasoning effort."
+                    );
+                }
+                extensionData["chat_template_kwargs"] = JsonSerializer.SerializeToElement(
+                    new Dictionary<string, bool> {
+                        ["enable_thinking"] = effort is not CompletionReasoningEffort.Disabled
+                    },
+                    SerializerOptions
+                );
+                return;
+
+            case OpenAIChatReasoningControlMode.Unsupported:
+            default:
+                throw new InvalidOperationException(
+                    $"OpenAI chat dialect '{_dialect.Name}' does not define an explicit reasoning control mapping."
+                );
+        }
+    }
+
+    private static string MapOpenAIReasoningEffort(CompletionReasoningEffort effort)
+        => effort switch {
+            CompletionReasoningEffort.Disabled => "none",
+            CompletionReasoningEffort.Low => "low",
+            CompletionReasoningEffort.Medium => "medium",
+            CompletionReasoningEffort.High => "high",
+            CompletionReasoningEffort.Max => "xhigh",
+            _ => throw UnknownReasoningEffort(effort)
+        };
+
+    private static ArgumentOutOfRangeException UnknownReasoningEffort(
+        CompletionReasoningEffort effort
+    ) => new(nameof(effort), effort, "Unknown reasoning effort.");
 
     private static void CleanupAfterFailure(
         OpenAIChatStreamParser parser,

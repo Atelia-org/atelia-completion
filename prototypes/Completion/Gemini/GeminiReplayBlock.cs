@@ -9,9 +9,9 @@ namespace Atelia.Completion.Gemini;
 /// </summary>
 /// <param name="OpaquePayload">Gemini-native 序列化字节。</param>
 /// <param name="Origin">产生该 replay payload 的调用来源描述符。</param>
-/// <param name="PlainTextForDebug">可选调试文本；通常为该 turn 中所有文本 part 的拼接。</param>
+/// <param name="PlainText">可选的真实明文 reasoning。当前 Gemini parser 只保存 replay metadata，因此为 <see langword="null"/>。</param>
 public sealed record GeminiReplayBlock(
     ReadOnlyMemory<byte> OpaquePayload,
     CompletionDescriptor Origin,
-    string? PlainTextForDebug = null
-) : ActionBlock.ReasoningBlock(Origin, PlainTextForDebug);
+    string? PlainText = null
+) : ActionBlock.ReasoningBlock(Origin, PlainText);

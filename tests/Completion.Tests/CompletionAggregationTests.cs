@@ -43,7 +43,7 @@ public sealed class CompletionAggregationTests {
             block => {
                 var thinking = Assert.IsType<AnthropicReasoningBlock>(block);
                 Assert.Same(Descriptor, thinking.Origin);
-                Assert.Equal("deliberation", thinking.PlainTextForDebug);
+                Assert.Equal("deliberation", thinking.PlainText);
                 using var doc = JsonDocument.Parse(thinking.OpaquePayload);
                 Assert.Equal("thinking", doc.RootElement.GetProperty("type").GetString());
             },

@@ -11,7 +11,8 @@ public sealed record SerializedReasoningBlock(
     string OriginApiSpecId,
     string OriginModel,
     byte[] Payload,
-    string? PlainTextForDebug
+    [property: System.Text.Json.Serialization.JsonPropertyName("plainTextForDebug")]
+    string? PlainText
 ) {
     public CompletionDescriptor ToOrigin()
         => new(OriginProviderId, OriginApiSpecId, OriginModel);
@@ -20,7 +21,7 @@ public sealed record SerializedReasoningBlock(
         string codecId,
         CompletionDescriptor origin,
         byte[] payload,
-        string? plainTextForDebug
+        string? plainText
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(codecId);
         ArgumentNullException.ThrowIfNull(origin);
@@ -32,12 +33,12 @@ public sealed record SerializedReasoningBlock(
             origin.ApiSpecId,
             origin.Model,
             payload.ToArray(),
-            plainTextForDebug
+            plainText
         );
     }
 
     internal ActionBlock.TextReasoningBlock ToFallbackTextReasoningBlock()
-        => new(PlainTextForDebug ?? string.Empty, ToOrigin(), PlainTextForDebug);
+        => new(PlainText ?? string.Empty, ToOrigin(), PlainText);
 }
 
 /// <summary>
@@ -141,7 +142,7 @@ public sealed class ReasoningBlockCodecRegistry {
                 CodecId,
                 textBlock.Origin,
                 Encoding.UTF8.GetBytes(textBlock.Content),
-                textBlock.PlainTextForDebug
+                textBlock.PlainText
             );
         }
 
@@ -151,7 +152,7 @@ public sealed class ReasoningBlockCodecRegistry {
             return new ActionBlock.TextReasoningBlock(
                 content,
                 serialized.ToOrigin(),
-                serialized.PlainTextForDebug ?? content
+                serialized.PlainText ?? content
             );
         }
     }

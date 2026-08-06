@@ -9,9 +9,9 @@ namespace Atelia.Completion.Anthropic;
 /// </summary>
 /// <param name="OpaquePayload">Anthropic-native 序列化字节（JSON: type/thinking/signature）。</param>
 /// <param name="Origin">产生该 reasoning 的调用来源描述符。</param>
-/// <param name="PlainTextForDebug">可选明文，仅供日志/UI/调试使用。</param>
+/// <param name="PlainText">可选明文 thinking 文本，供展示/日志/审计使用。</param>
 public sealed record AnthropicReasoningBlock(
     System.ReadOnlyMemory<byte> OpaquePayload,
     CompletionDescriptor Origin,
-    string? PlainTextForDebug = null
-) : ActionBlock.ReasoningBlock(Origin, PlainTextForDebug);
+    string? PlainText = null
+) : ActionBlock.ReasoningBlock(Origin, PlainText);

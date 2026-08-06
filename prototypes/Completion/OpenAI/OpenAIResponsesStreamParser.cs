@@ -17,6 +17,7 @@ internal sealed class OpenAIResponsesStreamParser {
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _completedFunctionCallItemIds = new(StringComparer.Ordinal);
     private string? _activeReasoningItemId;
+    private StringBuilder? _activeReasoningSummary;
     private bool _terminalEventObserved;
 
     public bool TerminalEventObserved => _terminalEventObserved;
@@ -43,6 +44,7 @@ internal sealed class OpenAIResponsesStreamParser {
         _functionCalls.Clear();
         _completedFunctionCallItemIds.Clear();
         _activeReasoningItemId = null;
+        _activeReasoningSummary = null;
     }
 
     private void ParseEventCore(
@@ -100,6 +102,10 @@ internal sealed class OpenAIResponsesStreamParser {
 
             case "response.output_item.done":
                 HandleOutputItemDone(obj, aggregator);
+                break;
+
+            case "response.reasoning_summary_text.delta":
+                HandleReasoningSummaryDelta(obj, aggregator);
                 break;
 
             case "response.completed":
@@ -221,6 +227,33 @@ internal sealed class OpenAIResponsesStreamParser {
         }
     }
 
+    private void HandleReasoningSummaryDelta(
+        JsonObject obj,
+        CompletionAggregator aggregator
+    ) {
+        var itemId = GetRequiredString(
+            obj,
+            "item_id",
+            "response.reasoning_summary_text.delta"
+        );
+        if (!string.Equals(_activeReasoningItemId, itemId, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "OpenAI reasoning summary delta does not match the active reasoning item."
+            );
+        }
+        var delta = GetRequiredString(
+            obj,
+            "delta",
+            "response.reasoning_summary_text.delta",
+            allowEmpty: true
+        );
+        if (delta.Length > 0) {
+            _activeReasoningSummary ??= new StringBuilder();
+            _activeReasoningSummary.Append(delta);
+            aggregator.AppendReasoningDelta(delta);
+        }
+    }
+
     private void BeginReasoningIfNeeded(JsonObject obj, JsonObject item, CompletionAggregator aggregator) {
         var itemId = GetItemId(obj, item);
         if (string.IsNullOrWhiteSpace(itemId)) {
@@ -239,19 +272,32 @@ internal sealed class OpenAIResponsesStreamParser {
 
         aggregator.BeginThinking();
         _activeReasoningItemId = itemId;
+        _activeReasoningSummary = new StringBuilder();
     }
 
     private void FinalizeReasoningItem(JsonObject item, CompletionAggregator aggregator) {
         var itemId = GetRequiredString(item, "id", "reasoning output item");
+        string rawItemJson = item.ToJsonString();
+        string? plainText = OpenAIResponsesReasoningBlock.ExtractPlainText(rawItemJson);
         var block = new OpenAIResponsesReasoningBlock(
-            item.ToJsonString(),
+            rawItemJson,
             aggregator.Invocation,
-            ExtractReasoningSummaryText(item)
+            plainText
         );
 
         if (!string.IsNullOrWhiteSpace(itemId) && string.Equals(_activeReasoningItemId, itemId, StringComparison.Ordinal)) {
+            string? streamedPlainText = _activeReasoningSummary is { Length: > 0 }
+                ? _activeReasoningSummary.ToString()
+                : null;
+            if (streamedPlainText is not null
+                && !string.Equals(streamedPlainText, plainText, StringComparison.Ordinal)) {
+                throw new InvalidDataException(
+                    "OpenAI reasoning summary deltas do not match the completed reasoning item."
+                );
+            }
             aggregator.EndThinking(block);
             _activeReasoningItemId = null;
+            _activeReasoningSummary = null;
             return;
         }
 
@@ -266,6 +312,7 @@ internal sealed class OpenAIResponsesStreamParser {
         );
         aggregator.EndThinking(block);
         _activeReasoningItemId = null;
+        _activeReasoningSummary = null;
     }
 
     private FunctionCallState? GetOrCreateFunctionCallState(JsonObject envelope, JsonObject? item) {
@@ -328,28 +375,6 @@ internal sealed class OpenAIResponsesStreamParser {
         aggregator.AppendToolCall(
             StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsText)
         );
-    }
-
-    private static string ExtractReasoningSummaryText(JsonObject item) {
-        if (item["summary"] is not JsonArray summary) { return string.Empty; }
-
-        var builder = new StringBuilder();
-        foreach (var summaryNode in summary) {
-            switch (summaryNode) {
-                case JsonValue value when value.TryGetValue<string>(out var text):
-                    builder.Append(text);
-                    break;
-
-                case JsonObject summaryObject:
-                    var summaryText = summaryObject["text"]?.GetValue<string>();
-                    if (!string.IsNullOrEmpty(summaryText)) {
-                        builder.Append(summaryText);
-                    }
-                    break;
-            }
-        }
-
-        return builder.ToString();
     }
 
     private static string ExtractErrorMessage(JsonObject obj, string fallbackMessage) {

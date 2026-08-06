@@ -11,17 +11,27 @@ public enum OpenAIChatReasoningMode {
     ReplayCompatible
 }
 
+public enum OpenAIChatReasoningControlMode {
+    Unsupported,
+    OpenAIReasoningEffort,
+    QwenThinkingSwitch,
+    DeepSeekV4ReasoningEffort,
+}
+
 public sealed record OpenAIChatDialect(
     string Name,
     OpenAIChatWhitespaceContentMode WhitespaceContentMode,
-    OpenAIChatReasoningMode ReasoningMode = OpenAIChatReasoningMode.Ignore
+    OpenAIChatReasoningMode ReasoningMode = OpenAIChatReasoningMode.Ignore,
+    OpenAIChatReasoningControlMode ReasoningControlMode =
+        OpenAIChatReasoningControlMode.Unsupported
 );
 
 public static class OpenAIChatDialects {
     public static OpenAIChatDialect Strict { get; } = new(
         Name: "strict",
         WhitespaceContentMode: OpenAIChatWhitespaceContentMode.Preserve,
-        ReasoningMode: OpenAIChatReasoningMode.Ignore
+        ReasoningMode: OpenAIChatReasoningMode.CaptureOnly,
+        ReasoningControlMode: OpenAIChatReasoningControlMode.OpenAIReasoningEffort
     );
 
     public static OpenAIChatDialect SgLangCompatible { get; } = new(
@@ -30,9 +40,17 @@ public static class OpenAIChatDialects {
         ReasoningMode: OpenAIChatReasoningMode.Ignore
     );
 
+    public static OpenAIChatDialect QwenSgLang { get; } = new(
+        Name: "qwen-sglang",
+        WhitespaceContentMode: OpenAIChatWhitespaceContentMode.IgnoreWhitespaceDuringToolCalls,
+        ReasoningMode: OpenAIChatReasoningMode.CaptureOnly,
+        ReasoningControlMode: OpenAIChatReasoningControlMode.QwenThinkingSwitch
+    );
+
     public static OpenAIChatDialect DeepSeekV4 { get; } = new(
         Name: "deepseek-v4",
         WhitespaceContentMode: OpenAIChatWhitespaceContentMode.Preserve,
-        ReasoningMode: OpenAIChatReasoningMode.ReplayCompatible
+        ReasoningMode: OpenAIChatReasoningMode.ReplayCompatible,
+        ReasoningControlMode: OpenAIChatReasoningControlMode.DeepSeekV4ReasoningEffort
     );
 }

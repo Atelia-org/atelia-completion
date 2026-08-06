@@ -355,7 +355,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v2",
+                "atelia.completion.call-log.v3",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(filenameCallId, document.RootElement.GetProperty("callId").GetInt32());
@@ -378,7 +378,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v2",
+            "atelia.completion.call-log.v3",
             root.GetProperty("schema").GetString()
         );
         JsonElement request = root.GetProperty("request");
@@ -390,8 +390,14 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         Assert.Equal("observation", history.GetProperty("kind").GetString());
         Assert.Equal("hello", history.GetProperty("content").GetString());
         Assert.Empty(request.GetProperty("tools").EnumerateArray());
+        JsonElement connection = root.GetProperty("connection");
+        Assert.Equal(4096, connection.GetProperty("maxTokens").GetInt32());
+        Assert.Equal(
+            "high",
+            connection.GetProperty("reasoningEffort").GetString()
+        );
         Assert.False(
-            root.GetProperty("connection").TryGetProperty(
+            connection.TryGetProperty(
                 "effectiveRequestTimeoutSeconds",
                 out _
             )
@@ -436,7 +442,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v2",
+            "atelia.completion.call-log.v3",
             root.GetProperty("schema").GetString()
         );
         Assert.False(root.TryGetProperty("response", out _));
@@ -484,7 +490,9 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         Kind: "scripted",
         ModelId: "model-a",
         CompletionSurfaceId: "surface-a",
-        BaseAddress: "http://localhost/"
+        BaseAddress: "http://localhost/",
+        MaxTokens: 4096,
+        ReasoningEffort: CompletionReasoningEffort.High
     );
 
     private static CompletionRequest CreateRequest()

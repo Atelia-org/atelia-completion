@@ -33,6 +33,7 @@ public sealed class GeminiStreamParserTests {
             result.Blocks,
             block => Assert.Equal("1\n2\n3\n4\n5", Assert.IsType<ActionBlock.Text>(block).Content),
             block => {
+                Assert.Null(Assert.IsAssignableFrom<ActionBlock.ReasoningBlock>(block).PlainText);
                 using var payload = ParseReplayPayload(block);
 
                 Assert.Equal("model", payload.RootElement.GetProperty("role").GetString());

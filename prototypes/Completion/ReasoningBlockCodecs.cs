@@ -31,21 +31,30 @@ public static class ReasoningBlockCodecs {
 
         public SerializedReasoningBlock Encode(ActionBlock.ReasoningBlock block) {
             if (block is not AnthropicReasoningBlock anthropicBlock) { throw new ArgumentException("Codec can only encode AnthropicReasoningBlock.", nameof(block)); }
+            _ = AnthropicThinkingPayloadCodec.DecodeAndValidatePlainText(
+                anthropicBlock.OpaquePayload,
+                anthropicBlock.PlainText
+            );
 
             return SerializedReasoningBlock.Create(
                 CodecId,
                 anthropicBlock.Origin,
                 anthropicBlock.OpaquePayload.ToArray(),
-                anthropicBlock.PlainTextForDebug
+                anthropicBlock.PlainText
             );
         }
 
-        public ActionBlock.ReasoningBlock Decode(SerializedReasoningBlock serialized)
-            => new AnthropicReasoningBlock(
+        public ActionBlock.ReasoningBlock Decode(SerializedReasoningBlock serialized) {
+            _ = AnthropicThinkingPayloadCodec.DecodeAndValidatePlainText(
+                serialized.Payload,
+                serialized.PlainText
+            );
+            return new AnthropicReasoningBlock(
                 serialized.Payload.ToArray(),
                 serialized.ToOrigin(),
-                serialized.PlainTextForDebug
+                serialized.PlainText
             );
+        }
     }
 
     private sealed class GeminiReplayBlockCodec : IReasoningBlockCodec {
@@ -61,7 +70,7 @@ public static class ReasoningBlockCodecs {
                 CodecId,
                 geminiBlock.Origin,
                 geminiBlock.OpaquePayload.ToArray(),
-                geminiBlock.PlainTextForDebug
+                geminiBlock.PlainText
             );
         }
 
@@ -69,7 +78,7 @@ public static class ReasoningBlockCodecs {
             => new GeminiReplayBlock(
                 serialized.Payload.ToArray(),
                 serialized.ToOrigin(),
-                serialized.PlainTextForDebug
+                serialized.PlainText
             );
     }
 
@@ -81,21 +90,32 @@ public static class ReasoningBlockCodecs {
 
         public SerializedReasoningBlock Encode(ActionBlock.ReasoningBlock block) {
             if (block is not OpenAIChatReasoningBlock openAiBlock) { throw new ArgumentException("Codec can only encode OpenAIChatReasoningBlock.", nameof(block)); }
+            if (!string.Equals(openAiBlock.Content, openAiBlock.PlainText, StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    "OpenAI chat reasoning PlainText does not match its authoritative reasoning_content payload."
+                );
+            }
 
             return SerializedReasoningBlock.Create(
                 CodecId,
                 openAiBlock.Origin,
                 Encoding.UTF8.GetBytes(openAiBlock.Content),
-                openAiBlock.PlainTextForDebug
+                openAiBlock.PlainText
             );
         }
 
         public ActionBlock.ReasoningBlock Decode(SerializedReasoningBlock serialized) {
             var content = Encoding.UTF8.GetString(serialized.Payload);
+            if (serialized.PlainText is not null
+                && !string.Equals(content, serialized.PlainText, StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    "OpenAI chat reasoning PlainText does not match its authoritative reasoning_content payload."
+                );
+            }
             return new OpenAIChatReasoningBlock(
                 content,
                 serialized.ToOrigin(),
-                serialized.PlainTextForDebug ?? content
+                serialized.PlainText ?? content
             );
         }
     }
@@ -108,22 +128,25 @@ public static class ReasoningBlockCodecs {
 
         public SerializedReasoningBlock Encode(ActionBlock.ReasoningBlock block) {
             if (block is not OpenAIResponsesReasoningBlock responsesBlock) { throw new ArgumentException("Codec can only encode OpenAIResponsesReasoningBlock.", nameof(block)); }
+            responsesBlock.ValidatePlainText();
 
             return SerializedReasoningBlock.Create(
                 CodecId,
                 responsesBlock.Origin,
                 Encoding.UTF8.GetBytes(responsesBlock.RawItemJson),
-                responsesBlock.PlainTextForDebug
+                responsesBlock.PlainText
             );
         }
 
         public ActionBlock.ReasoningBlock Decode(SerializedReasoningBlock serialized) {
             var rawItemJson = Encoding.UTF8.GetString(serialized.Payload);
-            return new OpenAIResponsesReasoningBlock(
+            var block = new OpenAIResponsesReasoningBlock(
                 rawItemJson,
                 serialized.ToOrigin(),
-                serialized.PlainTextForDebug
+                serialized.PlainText
             );
+            block.ValidatePlainText();
+            return block;
         }
     }
 }

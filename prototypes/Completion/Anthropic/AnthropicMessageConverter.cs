@@ -15,7 +15,13 @@ internal static class AnthropicMessageConverter {
     private const string DebugCategory = "Provider";
     private const string EmptyLeadingUserPlaceholder = "<empty>";
 
-    public static AnthropicApiRequest ConvertToApiRequest(CompletionRequest request, int? defaultMaxTokens = null, bool enablePromptCaching = false) {
+    public static AnthropicApiRequest ConvertToApiRequest(
+        CompletionRequest request,
+        int? defaultMaxTokens = null,
+        bool enablePromptCaching = false,
+        CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
+        CompletionDescriptor? targetInvocation = null
+    ) {
         var messages = new List<AnthropicMessage>();
         var pendingToolCalls = new List<PendingToolCall>();
 
@@ -30,7 +36,12 @@ internal static class AnthropicMessageConverter {
                     break;
 
                 case ActionMessage output:
-                    BuildActionMessage(output, messages, pendingToolCalls);
+                    BuildActionMessage(
+                        output,
+                        messages,
+                        pendingToolCalls,
+                        targetInvocation
+                    );
                     break;
 
                 default:
@@ -66,15 +77,48 @@ internal static class AnthropicMessageConverter {
             Tools = BuildToolDefinitions(request.Tools)
         };
 
+        ApplyReasoningConfig(apiRequest, reasoningEffort);
+
         if (enablePromptCaching) {
             ApplyPromptCaching(apiRequest);
         }
 
         DebugUtil.Info(
             DebugCategory,
-            $"[Anthropic] Converted {request.Context.Count} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}"
+            $"[Anthropic] Converted {request.Context.Count} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={reasoningEffort}"
         );
         return apiRequest;
+    }
+
+    /// <summary>
+    /// Maps the provider-neutral preset to Anthropic adaptive thinking and output effort.
+    /// </summary>
+    private static void ApplyReasoningConfig(
+        AnthropicApiRequest apiRequest,
+        CompletionReasoningEffort reasoningEffort
+    ) {
+        if (!Enum.IsDefined(reasoningEffort)) {
+            throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.");
+        }
+        if (reasoningEffort is CompletionReasoningEffort.ProviderDefault) { return; }
+        if (reasoningEffort is CompletionReasoningEffort.Disabled) {
+            apiRequest.Thinking = new AnthropicThinkingConfig { Type = "disabled" };
+            return;
+        }
+
+        apiRequest.Thinking = new AnthropicThinkingConfig {
+            Type = "adaptive",
+            Display = "summarized"
+        };
+        apiRequest.OutputConfig = new AnthropicOutputConfig {
+            Effort = reasoningEffort switch {
+                CompletionReasoningEffort.Low => "low",
+                CompletionReasoningEffort.Medium => "medium",
+                CompletionReasoningEffort.High => "high",
+                CompletionReasoningEffort.Max => "max",
+                _ => throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.")
+            }
+        };
     }
 
     /// <summary>
@@ -211,7 +255,12 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static void BuildActionMessage(ActionMessage output, List<AnthropicMessage> messages, List<PendingToolCall> pendingToolCalls) {
+    private static void BuildActionMessage(
+        ActionMessage output,
+        List<AnthropicMessage> messages,
+        List<PendingToolCall> pendingToolCalls,
+        CompletionDescriptor? targetInvocation
+    ) {
         EnsureNoPendingToolCalls(pendingToolCalls, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
         var blocks = new List<AnthropicContentBlock>(output.Blocks.Count);
@@ -234,7 +283,7 @@ internal static class AnthropicMessageConverter {
                     break;
 
                 case ActionBlock.ReasoningBlock reasoningBlock:
-                    blocks.Add(BuildThinkingBlock(reasoningBlock));
+                    blocks.Add(BuildThinkingBlock(reasoningBlock, targetInvocation));
                     break;
 
                 case ActionBlock.Text:
@@ -287,7 +336,10 @@ internal static class AnthropicMessageConverter {
         return JsonSerializer.SerializeToElement(new JsonObject());
     }
 
-    private static AnthropicThinkingBlock BuildThinkingBlock(ActionBlock.ReasoningBlock reasoningBlock) {
+    private static AnthropicContentBlock BuildThinkingBlock(
+        ActionBlock.ReasoningBlock reasoningBlock,
+        CompletionDescriptor? targetInvocation
+    ) {
         if (reasoningBlock is not AnthropicReasoningBlock anthropicBlock) {
             throw new InvalidOperationException(
                 $"Cannot replay non-Anthropic reasoning block of type '{reasoningBlock.GetType().Name}' "
@@ -295,7 +347,16 @@ internal static class AnthropicMessageConverter {
             );
         }
 
-        return AnthropicThinkingPayloadCodec.Decode(anthropicBlock.OpaquePayload);
+        if (targetInvocation is not null && !Equals(anthropicBlock.Origin, targetInvocation)) {
+            throw new InvalidOperationException(
+                $"Anthropic reasoning replay requires Origin '{targetInvocation}', got '{anthropicBlock.Origin}'."
+            );
+        }
+
+        return AnthropicThinkingPayloadCodec.DecodeAndValidatePlainText(
+            anthropicBlock.OpaquePayload,
+            anthropicBlock.PlainText
+        );
     }
 
     /// <summary>

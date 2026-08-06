@@ -28,8 +28,19 @@ internal sealed class OpenAIResponsesApiRequest {
     [JsonPropertyName("parallel_tool_calls")]
     public bool ParallelToolCalls { get; set; } = true;
 
+    [JsonPropertyName("reasoning")]
+    public OpenAIResponsesReasoningConfig? Reasoning { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+}
+
+internal sealed class OpenAIResponsesReasoningConfig {
+    [JsonPropertyName("effort")]
+    public required string Effort { get; set; }
+
+    [JsonPropertyName("summary")]
+    public string? Summary { get; set; }
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]

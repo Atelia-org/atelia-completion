@@ -68,6 +68,46 @@ public sealed class OpenAIResponsesMessageConverterTests {
         );
     }
 
+    [Theory]
+    [InlineData(CompletionReasoningEffort.Disabled, "none", null)]
+    [InlineData(CompletionReasoningEffort.Low, "low", "auto")]
+    [InlineData(CompletionReasoningEffort.Medium, "medium", "auto")]
+    [InlineData(CompletionReasoningEffort.High, "high", "auto")]
+    [InlineData(CompletionReasoningEffort.Max, "xhigh", "auto")]
+    public void ConvertToApiRequest_MapsReasoningEffortAndRequestsReadableSummary(
+        CompletionReasoningEffort effort,
+        string expectedEffort,
+        string? expectedSummary
+    ) {
+        var request = new CompletionRequest(
+            ModelId: "gpt-5",
+            SystemPrompt: string.Empty,
+            Context: [new ObservationMessage("hi")],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(
+            request,
+            new OpenAIResponsesClientOptions { ReasoningEffort = effort }
+        );
+
+        var reasoning = Assert.IsType<OpenAIResponsesReasoningConfig>(apiRequest.Reasoning);
+        Assert.Equal(expectedEffort, reasoning.Effort);
+        Assert.Equal(expectedSummary, reasoning.Summary);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ProviderDefaultOmitsReasoningControl() {
+        var request = new CompletionRequest(
+            ModelId: "gpt-5",
+            SystemPrompt: string.Empty,
+            Context: [new ObservationMessage("hi")],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        Assert.Null(OpenAIResponsesMessageConverter.ConvertToApiRequest(request).Reasoning);
+    }
+
     [Fact]
     public void ConvertToApiRequest_MissingPendingToolResultsThrow() {
         var request = new CompletionRequest(
@@ -228,6 +268,68 @@ public sealed class OpenAIResponsesMessageConverterTests {
 
         Assert.Contains("Origin.ApiSpecId", exception.Message, StringComparison.Ordinal);
         Assert.Contains("openai-responses-v1", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ReasoningOriginMustMatchFullTargetInvocation() {
+        var source = new CompletionDescriptor(
+            "old-host",
+            "openai-responses-v1",
+            "gpt-5"
+        );
+        var target = new CompletionDescriptor(
+            "new-host",
+            "openai-responses-v1",
+            "gpt-5"
+        );
+        var request = new CompletionRequest(
+            ModelId: target.Model,
+            SystemPrompt: string.Empty,
+            Context: [new ActionMessage([
+                new OpenAIResponsesReasoningBlock(
+                    """{"type":"reasoning","id":"rs_1","encrypted_content":"enc_123"}""",
+                    source
+                )
+            ])],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OpenAIResponsesMessageConverter.ConvertToApiRequest(
+                request,
+                targetInvocation: target
+            )
+        );
+
+        Assert.Contains("requires Origin", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("old-host", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_RejectsPlainTextThatDivergesFromReasoningItem() {
+        var origin = new CompletionDescriptor(
+            "openai",
+            "openai-responses-v1",
+            "gpt-5"
+        );
+        var request = new CompletionRequest(
+            ModelId: origin.Model,
+            SystemPrompt: string.Empty,
+            Context: [new ActionMessage([
+                new OpenAIResponsesReasoningBlock(
+                    """{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"authoritative"}]}""",
+                    origin,
+                    "forged"
+                )
+            ])],
+            Tools: ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OpenAIResponsesMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains("PlainText", exception.Message, StringComparison.Ordinal);
     }
 
     private static void AssertUserMessage(OpenAIResponsesInputItem item, string expectedText) {

@@ -10,7 +10,11 @@ namespace Atelia.Completion.OpenAI;
 internal static class OpenAIChatMessageConverter {
     private const string DebugCategory = "Provider";
 
-    public static OpenAIChatApiRequest ConvertToApiRequest(CompletionRequest request, OpenAIChatDialect dialect) {
+    public static OpenAIChatApiRequest ConvertToApiRequest(
+        CompletionRequest request,
+        OpenAIChatDialect dialect,
+        CompletionDescriptor? targetInvocation = null
+    ) {
         var messages = new List<OpenAIChatMessage>();
         var state = new ProjectionState();
 
@@ -34,7 +38,13 @@ internal static class OpenAIChatMessageConverter {
                     break;
 
                 case ActionMessage output:
-                    BuildActionMessage(output, messages, state, dialect);
+                    BuildActionMessage(
+                        output,
+                        messages,
+                        state,
+                        dialect,
+                        targetInvocation
+                    );
                     break;
 
                 default:
@@ -174,7 +184,8 @@ internal static class OpenAIChatMessageConverter {
         ActionMessage output,
         List<OpenAIChatMessage> messages,
         ProjectionState state,
-        OpenAIChatDialect dialect
+        OpenAIChatDialect dialect,
+        CompletionDescriptor? targetInvocation
     ) {
         EnsureNoPendingToolCalls(state, $"assistant action before tool results blockCount={output.Blocks.Count}");
 
@@ -193,11 +204,14 @@ internal static class OpenAIChatMessageConverter {
                     toolCallList.Add(toolCallBlock.Call);
                     break;
                 case OpenAIChatReasoningBlock openAiReasoningBlock when dialect.ReasoningMode is OpenAIChatReasoningMode.ReplayCompatible:
+                    ValidateReasoningReplay(openAiReasoningBlock, targetInvocation);
                     reasoningBuilder.Append(openAiReasoningBlock.Content);
                     break;
-                case ActionBlock.TextReasoningBlock textReasoningBlock when dialect.ReasoningMode is OpenAIChatReasoningMode.ReplayCompatible:
-                    reasoningBuilder.Append(textReasoningBlock.Content);
-                    break;
+                case ActionBlock.ReasoningBlock reasoningBlock when dialect.ReasoningMode is OpenAIChatReasoningMode.ReplayCompatible:
+                    throw new InvalidOperationException(
+                        $"OpenAI chat replay-compatible dialect '{dialect.Name}' only accepts "
+                        + $"{nameof(OpenAIChatReasoningBlock)}; got '{reasoningBlock.GetType().Name}'."
+                    );
                 case ActionBlock.ReasoningBlock:
                     // 默认 strict/capture-only 路径不回灌 reasoning_content，保持最保守的 OpenAI 语义。
                     break;
@@ -229,6 +243,27 @@ internal static class OpenAIChatMessageConverter {
         );
 
         state.SetPendingToolCalls(toolCalls is { Count: > 0 } ? toolCalls : null);
+    }
+
+    private static void ValidateReasoningReplay(
+        OpenAIChatReasoningBlock reasoningBlock,
+        CompletionDescriptor? targetInvocation
+    ) {
+        if (!string.Equals(
+            reasoningBlock.Content,
+            reasoningBlock.PlainText,
+            StringComparison.Ordinal
+        )) {
+            throw new InvalidOperationException(
+                "OpenAI chat reasoning PlainText does not match its authoritative reasoning_content payload."
+            );
+        }
+        if (targetInvocation is not null
+            && !Equals(reasoningBlock.Origin, targetInvocation)) {
+            throw new InvalidOperationException(
+                $"OpenAI chat reasoning replay requires Origin '{targetInvocation}', got '{reasoningBlock.Origin}'."
+            );
+        }
     }
 
     private static string DescribeHistoryMessage(IHistoryMessage? message)

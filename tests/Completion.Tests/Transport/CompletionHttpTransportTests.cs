@@ -542,8 +542,10 @@ public sealed class CompletionHttpTransportTests {
             var openAiClient = new OpenAIChatClient(
                 apiKey: "ignored-local-api-key",
                 httpClient: recordClient,
-                dialect: OpenAIChatDialects.SgLangCompatible,
-                options: OpenAIChatClientOptions.QwenThinkingDisabled()
+                dialect: OpenAIChatDialects.QwenSgLang,
+                options: new OpenAIChatClientOptions {
+                    ReasoningEffort = CompletionReasoningEffort.Disabled
+                }
             );
 
             var live = await openAiClient.StreamCompletionAsync(CreateRequest(modelId), null, CancellationToken.None);
@@ -555,8 +557,10 @@ public sealed class CompletionHttpTransportTests {
             var replayOpenAiClient = new OpenAIChatClient(
                 apiKey: "ignored-local-api-key",
                 httpClient: replayClient,
-                dialect: OpenAIChatDialects.SgLangCompatible,
-                options: OpenAIChatClientOptions.QwenThinkingDisabled()
+                dialect: OpenAIChatDialects.QwenSgLang,
+                options: new OpenAIChatClientOptions {
+                    ReasoningEffort = CompletionReasoningEffort.Disabled
+                }
             );
 
             var replayed = await replayOpenAiClient.StreamCompletionAsync(CreateRequest(modelId), null, CancellationToken.None);

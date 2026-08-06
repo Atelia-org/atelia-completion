@@ -218,6 +218,36 @@ public sealed class AnthropicClientTests {
     }
 
     [Fact]
+    public async Task StreamCompletionAsync_ErrorAfterStopReasonOverridesCleanEofCandidate() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+                event: error
+                data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+
+                event: message_start
+                data: {not-json}
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal("overloaded_error", result.Termination.ProviderReason);
+        Assert.Equal("Overloaded", result.Termination.Detail);
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_EofBeforeTerminalEventIsUncertainInterruption() {
         var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(
@@ -237,6 +267,198 @@ public sealed class AnthropicClientTests {
         );
 
         Assert.Equal("Anthropic Messages", exception.StreamDisplayName);
+        Assert.NotNull(exception.DiagnosticContext);
+        Assert.Contains("lastEvent=ping", exception.DiagnosticContext, StringComparison.Ordinal);
+        Assert.Contains("stopReason=none", exception.DiagnosticContext, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("end_turn", CompletionTerminationKind.Completed)]
+    [InlineData("tool_use", CompletionTerminationKind.Completed)]
+    [InlineData("max_tokens", CompletionTerminationKind.Incomplete)]
+    [InlineData("future_stop_reason", CompletionTerminationKind.Incomplete)]
+    public async Task StreamCompletionAsync_CleanEofAfterStopReasonFinalizesWithoutMessageStop(
+        string stopReason,
+        CompletionTerminationKind expectedKind
+    ) {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}
+
+                event: content_block_stop
+                data: {"type":"content_block_stop","index":0}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"STOP_REASON"}}
+
+                """
+                .Replace("STOP_REASON", stopReason, StringComparison.Ordinal)
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        Assert.Equal("done", result.Message.GetFlattenedText());
+        Assert.Equal(expectedKind, result.Termination.Kind);
+        Assert.Equal(stopReason, result.Termination.ProviderReason);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_CleanEofFallbackPreservesCompletedToolUse() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_123","name":"get_weather","input":{}}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Par"}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"is\"}"}}
+
+                event: content_block_stop
+                data: {"type":"content_block_stop","index":0}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
+
+        var toolCall = Assert.IsType<ActionBlock.ToolCall>(Assert.Single(result.Message.Blocks)).Call;
+        Assert.Equal("toolu_123", toolCall.ToolCallId);
+        Assert.Equal("get_weather", toolCall.ToolName);
+        Assert.Equal("{\"city\":\"Paris\"}", toolCall.RawArgumentsJson);
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        Assert.Equal("tool_use", result.Termination.ProviderReason);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_CleanEofFallbackPreservesSignedThinkingLifecycle() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reason"}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-123"}}
+
+                event: content_block_stop
+                data: {"type":"content_block_stop","index":0}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+        var observer = new CompletionStreamObserver();
+        var thinkingBeginCount = 0;
+        var thinkingEndCount = 0;
+        observer.ReceivedThinkingBegin += () => thinkingBeginCount++;
+        observer.ReceivedThinkingEnd += () => thinkingEndCount++;
+
+        var result = await client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None);
+
+        var thinking = Assert.IsType<AnthropicReasoningBlock>(Assert.Single(result.Message.Blocks));
+        var replay = Assert.IsType<AnthropicThinkingBlock>(
+            AnthropicThinkingPayloadCodec.Decode(thinking.OpaquePayload)
+        );
+        Assert.Equal("reason", thinking.PlainText);
+        Assert.Equal("reason", replay.Thinking);
+        Assert.Equal("sig-123", replay.Signature);
+        Assert.Equal(1, thinkingBeginCount);
+        Assert.Equal(1, thinkingEndCount);
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_ReadExceptionAfterStopReasonIsNeverSalvaged() {
+        var expected = new IOException("scripted read failure after stop reason");
+        var response = new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StreamContent(new ThrowAfterPayloadStream(
+                """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+                """u8.ToArray(),
+                expected
+            ))
+        };
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+            "text/event-stream"
+        );
+        var handler = new SequenceHttpMessageHandler(response);
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        var actual = await Assert.ThrowsAsync<IOException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_PendingFrameAfterStopReasonIsNeverSalvaged() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+                event: error
+                data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
+        );
+
+        Assert.Contains("stopReason=end_turn", exception.DiagnosticContext, StringComparison.Ordinal);
+        Assert.Contains("pendingFrame=true", exception.DiagnosticContext, StringComparison.Ordinal);
+        Assert.Contains("pendingEvent=error", exception.DiagnosticContext, StringComparison.Ordinal);
     }
 
     [Fact]

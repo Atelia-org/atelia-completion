@@ -111,13 +111,16 @@ transport-liveness权威契约及四Provider terminal matrix见
 | `content_block_start` | 创建 ContentBlockState（区分 text / tool_use / thinking） | — |
 | `content_block_delta` | 累积文本片段、input_json 片段、或 thinking/signature 片段 | `AppendContent(...)`（仅 text 时） |
 | `content_block_stop` | tool_use 块完成 → 产出原始 arguments JSON；thinking 块完成 → 序列化为 `{type:thinking,thinking,signature}` JSON 字节 | `AppendToolCall(...)` 或 `AppendThinking(...)` |
-| `message_delta` | 捕获权威`stop_reason`，要求所有content block已关闭 | — |
+| `message_delta` | 捕获权威`stop_reason`，要求所有content block已关闭 | clean EOF缺少`message_stop`时作为降级terminal evidence |
 | `message_stop` | 校验完整message lifecycle并立即结束 | `Completed`或`Incomplete` termination |
 | `error` | 立即结束为provider failure | `AppendError(...)` |
 | `ping` | 非terminal frame | — |
 
 Anthropic没有`[DONE]`。Malformed JSON、named SSE event与JSON `type`冲突、known event shape缺失或
-lifecycle乱序都会抛`InvalidDataException`，不会被降级成warning或成功。
+lifecycle乱序都会抛`InvalidDataException`，不会被降级成warning或成功。针对部分Anthropic-compatible
+relay遗漏data-free `message_stop`的行为，只有在所有block已关闭且已收到非空`message_delta.stop_reason`
+之后发生无pending frame的clean EOF时才按既有映射结束；read exception、cancellation、pending frame或
+active block绝不被salvage。
 
 `OpenAIChatStreamParser` 则直接消费 chat/completions 的 `data: {...}` chunk：
 
@@ -181,8 +184,8 @@ Gemini 的关键不是“有 thinking token”，而是 `thoughtSignature` 会�
    ├─ thinking 块完成 → `AppendThinking(...)`
 
 
-5. provider terminal到达后client立即返回`CompletionResult`；terminal前EOF抛
-   `CompletionStreamInterruptedException`，不得透明重试
+5. provider terminal evidence到达后client立即返回`CompletionResult`；evidence前EOF抛
+   `CompletionStreamInterruptedException`，不得透明重试。Anthropic另有上文所述的clean-EOF窄兼容
 ```
 
 ---

@@ -482,8 +482,10 @@ Gemini 路径的特殊点是：
   message包含状态码与有界response body；建连/读取错误保持原transport exception。
 - 历史构造不合法 → `OpenAIChatMessageConverter` / `AnthropicMessageConverter` 在序列化阶段就抛 `InvalidOperationException`，**不会** 走到 HTTP（最常见：tool_call_id 错位、Anthropic 首条非 user）。
 - SSE malformed JSON、known event shape错误和event/data type冲突会fail closed；provider明确的失败事件形成
-  `Failed` termination。terminal前EOF抛`CompletionStreamInterruptedException`，表示远端结果不确定，
-  不会伪装成普通`Incomplete`或自动重试。完整矩阵见
+  `Failed` termination。terminal evidence前EOF抛`CompletionStreamInterruptedException`，表示远端结果不确定，
+  不会伪装成普通`Incomplete`或自动重试。Anthropic的唯一窄兼容是：blocks全关、已收到非空
+  `message_delta.stop_reason`后的无pending-frame clean EOF可按该reason结束；read exception、取消、pending frame
+  和active block均不适用。完整矩阵见
   [`prototypes/Completion/README.md`](../../prototypes/Completion/README.md)。
 
 ---

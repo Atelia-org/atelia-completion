@@ -75,12 +75,23 @@ public sealed class AnthropicClient : ICompletionClient {
 
         var aggregator = new CompletionAggregator(invocation, observer);
         var parser = new AnthropicStreamParser();
+        var eofDiagnostics = new CompletionSseEofDiagnostics();
+        var committedFrameCount = 0;
+        string? lastCommittedEventType = null;
         var stoppedEarly = false;
+        var awaitingSseFrame = true;
 
         try {
-            await foreach (var frame in CompletionSseEventReader.ReadFramesAsync(stream, cancellationToken)) {
+            await foreach (var frame in CompletionSseEventReader.ReadFramesAsync(
+                stream,
+                cancellationToken,
+                eofDiagnostics
+            )) {
+                awaitingSseFrame = false;
                 cancellationToken.ThrowIfCancellationRequested();
 
+                committedFrameCount++;
+                lastCommittedEventType = frame.EventType;
                 parser.ParseEvent(frame.Data, aggregator, frame.EventType);
                 if (parser.TerminalEventObserved) { break; }
 
@@ -88,27 +99,146 @@ public sealed class AnthropicClient : ICompletionClient {
                     stoppedEarly = true;
                     break;
                 }
+
+                awaitingSseFrame = true;
             }
+            awaitingSseFrame = false;
 
             if (stoppedEarly) {
                 parser.DiscardIncompleteStreamingState();
                 aggregator.AbortIncompleteStreamingState();
                 aggregator.MarkIncomplete(detail: "Streaming observer stopped Anthropic completion early.");
             }
+            else if (!parser.TerminalEventObserved
+                && eofDiagnostics.CleanEofObserved
+                && !eofDiagnostics.HasPendingFrame
+                && parser.TryFinalizeAtCleanEndOfStream(aggregator)) {
+                DebugUtil.Warning(
+                    DebugCategory,
+                    "[Anthropic] Clean EOF omitted message_stop after an authoritative "
+                        + "message_delta stop_reason; accepting the completed lifecycle. "
+                        + BuildStreamDiagnosticContext(
+                            response,
+                            committedFrameCount,
+                            lastCommittedEventType,
+                            eofDiagnostics,
+                            parser,
+                            terminalSource: "clean-eof-stop-reason"
+                        )
+                );
+            }
             else {
                 CompletionStreamTermination.RequireTerminalEvent(
                     parser.TerminalEventObserved,
-                    "Anthropic Messages"
+                    "Anthropic Messages",
+                    BuildStreamDiagnosticContext(
+                        response,
+                        committedFrameCount,
+                        lastCommittedEventType,
+                        eofDiagnostics,
+                        parser,
+                        terminalSource: "none"
+                    )
                 );
             }
         }
         catch (Exception exception) {
+            if (awaitingSseFrame
+                && exception is IOException
+                && exception is not CompletionStreamInterruptedException) {
+                TryLogTransportReadFailure(
+                    response,
+                    committedFrameCount,
+                    lastCommittedEventType,
+                    eofDiagnostics,
+                    parser,
+                    exception
+                );
+            }
             CleanupAfterFailure(parser, aggregator, exception);
             throw;
         }
 
         DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");
         return aggregator.Build();
+    }
+
+    private static void TryLogTransportReadFailure(
+        HttpResponseMessage response,
+        int committedFrameCount,
+        string? lastCommittedEventType,
+        CompletionSseEofDiagnostics eofDiagnostics,
+        AnthropicStreamParser parser,
+        Exception exception
+    ) {
+        try {
+            DebugUtil.Warning(
+                DebugCategory,
+                "[Anthropic] Transport read failed before clean EOF. "
+                    + $"exceptionType={exception.GetType().Name}, "
+                    + BuildStreamDiagnosticContext(
+                        response,
+                        committedFrameCount,
+                        lastCommittedEventType,
+                        eofDiagnostics,
+                        parser,
+                        terminalSource: "read-exception"
+                    )
+            );
+        }
+        catch {
+            // Diagnostic logging must never replace the original transport exception.
+        }
+    }
+
+    private static string BuildStreamDiagnosticContext(
+        HttpResponseMessage response,
+        int committedFrameCount,
+        string? lastCommittedEventType,
+        CompletionSseEofDiagnostics eofDiagnostics,
+        AnthropicStreamParser parser,
+        string terminalSource
+    ) {
+        var requestId = GetSafeResponseHeader(response, "request-id")
+            ?? GetSafeResponseHeader(response, "x-request-id")
+            ?? "none";
+        var pendingEvent = eofDiagnostics.HasPendingFrame
+            ? SanitizeDiagnosticToken(eofDiagnostics.PendingEventType ?? "unnamed")
+            : "none";
+        var pendingDataCharacters = eofDiagnostics.PendingDataCharacterCount?.ToString()
+            ?? "none";
+
+        return $"terminalSource={terminalSource}, httpVersion={response.Version}, "
+            + $"status={(int)response.StatusCode}, requestId={requestId}, "
+            + $"committedFrames={committedFrameCount}, "
+            + $"lastEvent={SanitizeDiagnosticToken(lastCommittedEventType ?? "none")}, "
+            + $"cleanEof={eofDiagnostics.CleanEofObserved.ToString().ToLowerInvariant()}, "
+            + $"pendingFrame={eofDiagnostics.HasPendingFrame.ToString().ToLowerInvariant()}, "
+            + $"pendingEvent={pendingEvent}, pendingDataChars={pendingDataCharacters}, "
+            + parser.DescribeInterruptionState();
+    }
+
+    private static string? GetSafeResponseHeader(
+        HttpResponseMessage response,
+        string name
+    ) {
+        if (!response.Headers.TryGetValues(name, out var values)) { return null; }
+
+        var value = values.FirstOrDefault();
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : SanitizeDiagnosticToken(value);
+    }
+
+    private static string SanitizeDiagnosticToken(string value) {
+        const int MaximumLength = 128;
+        var sanitized = new string(
+            value
+                .Take(MaximumLength)
+                .Select(static character => char.IsControl(character) ? '?' : character)
+                .ToArray()
+        );
+        return value.Length > MaximumLength ? $"{sanitized}..." : sanitized;
     }
 
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(AnthropicApiRequest apiRequest, CancellationToken cancellationToken) {

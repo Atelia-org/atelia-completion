@@ -305,6 +305,61 @@ public sealed class AnthropicStreamParserTests {
         Assert.Equal(stopReason, result.Termination.ProviderReason);
     }
 
+    [Theory]
+    [InlineData("end_turn", CompletionTerminationKind.Completed)]
+    [InlineData("tool_use", CompletionTerminationKind.Completed)]
+    [InlineData("max_tokens", CompletionTerminationKind.Incomplete)]
+    [InlineData("future_stop_reason", CompletionTerminationKind.Incomplete)]
+    public void TryFinalizeAtCleanEndOfStream_UsesAuthoritativeStopReason(
+        string stopReason,
+        CompletionTerminationKind expectedKind
+    ) {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"message_start","message":{}}""",
+            aggregator,
+            "message_start"
+        );
+        parser.ParseEvent(
+            """{"type":"message_delta","delta":{"stop_reason":"STOP_REASON"}}"""
+                .Replace("STOP_REASON", stopReason, StringComparison.Ordinal),
+            aggregator,
+            "message_delta"
+        );
+
+        Assert.True(parser.TryFinalizeAtCleanEndOfStream(aggregator));
+        Assert.False(parser.TerminalEventObserved);
+        var result = aggregator.Build();
+        Assert.Equal(expectedKind, result.Termination.Kind);
+        Assert.Equal(stopReason, result.Termination.ProviderReason);
+    }
+
+    [Fact]
+    public void TryFinalizeAtCleanEndOfStream_RejectsActiveContentBlock() {
+        var parser = new AnthropicStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"message_start","message":{}}""",
+            aggregator,
+            "message_start"
+        );
+        parser.ParseEvent(
+            """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}""",
+            aggregator,
+            "content_block_start"
+        );
+
+        Assert.False(parser.TryFinalizeAtCleanEndOfStream(aggregator));
+        Assert.Contains(
+            "activeBlockIndexes=0",
+            parser.DescribeInterruptionState(),
+            StringComparison.Ordinal
+        );
+    }
+
     [Fact]
     public void ParseEvent_MessageStopWithoutAuthoritativeStopReasonIsProtocolError() {
         var parser = new AnthropicStreamParser();

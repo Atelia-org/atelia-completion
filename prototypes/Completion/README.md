@@ -10,9 +10,10 @@
 - 成功HTTP响应必须声明`text/event-stream`；状态码、建连、读取和解码错误按原始transport/protocol错误传播。
 - 所有Provider共享`CompletionSseEventReader`：按SSE空行提交frame，支持CR/LF/CRLF、多行`data:`、注释、
   UTF-8 BOM与replacement decoding；EOF时未提交的半个frame不会交给parser。
-- 只有下表中的provider terminal才能确定远端结果。terminal到达后立即返回，不等待连接EOF。
-- 已收到合法frame但在terminal前EOF，抛出`CompletionStreamInterruptedException`。这表示远端结果不确定，
-  runtime不得透明重试或把它伪装为LLM拒答。
+- 只有下表中的provider terminal evidence才能确定远端结果。显式terminal到达后立即返回，不等待连接EOF。
+- 已收到合法frame但在terminal evidence前EOF，抛出`CompletionStreamInterruptedException`。这表示远端结果不确定，
+  runtime不得透明重试或把它伪装为LLM拒答。唯一的窄兼容例外是Anthropic：所有content block均已关闭、
+  已收到非空`message_delta.stop_reason`、随后无pending frame的clean EOF但缺少data-free `message_stop`时，按该stop reason结束。
 - caller cancellation保持原`CancellationToken`；observer cleanup失败不得覆盖原始read/cancellation异常。
 - 未被当前版本识别、但外层event envelope合法的字段或事件保持forward-compatible；已知事件缺少必需shape、
   生命周期乱序或event/data类型冲突则fail closed。
@@ -25,7 +26,7 @@
 |---|---|---|---|
 | OpenAI Chat Completions | 单一choice的非空`finish_reason`；`stop`/`tool_calls`为Completed，其他值为Incomplete | 顶层`error` | `[DONE]`只是传输哨兵；若它先于`finish_reason`到达，结果仍不确定。当前明确拒绝`n > 1`与多choice stream |
 | OpenAI Responses | `response.completed`、`response.incomplete` | `response.failed`、`error` | `event:`与JSON `type`必须一致；`[DONE]`不能替代Responses terminal event |
-| Anthropic Messages | `message_stop`，并要求完整的`message_start -> content blocks -> message_delta -> message_stop`生命周期 | `error` | `ping`与合法unknown named event只表示收到frame，不代表成功或失败；Anthropic没有`[DONE]` |
+| Anthropic Messages | 首选`message_stop`，并要求`message_start -> content blocks -> message_delta(stop_reason)`；兼容缺尾帧relay时，blocks全关且已有非空`stop_reason`后的无pending-frame clean EOF也是降级terminal evidence | `error` | `ping`与合法unknown named event只表示收到frame，不代表成功或失败；Anthropic没有`[DONE]`；read failure/cancellation/protocol error绝不走clean-EOF兼容 |
 | Gemini `streamGenerateContent` | `candidate.finishReason`；`STOP`为Completed，其他值为Incomplete；无candidate时`promptFeedback.blockReason`为Incomplete | 顶层`error` envelope | Gemini没有文档化的`[DONE]`、named terminal或heartbeat；`responseId`只用于关联，不是resume cursor |
 
 ## 规格依据
@@ -34,4 +35,3 @@
 - OpenAI Responses events：[OpenAI API reference](https://platform.openai.com/docs/api-reference/responses-streaming)
 - Anthropic event types and lifecycle：[Anthropic streaming Messages](https://platform.claude.com/docs/en/build-with-claude/streaming#event-types)
 - Gemini response and finish reasons：[Gemini `generateContent` API](https://ai.google.dev/api/generate-content)
-

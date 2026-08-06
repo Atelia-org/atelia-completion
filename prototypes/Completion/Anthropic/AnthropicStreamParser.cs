@@ -107,6 +107,38 @@ internal sealed class AnthropicStreamParser {
         _contentBlocks.Clear();
     }
 
+    /// <summary>
+    /// Applies the authoritative <c>message_delta.stop_reason</c> only after
+    /// the transport has reached a clean EOF. This is a narrow compatibility
+    /// path for Anthropic-compatible relays that omit the data-free
+    /// <c>message_stop</c> event. Read failures, cancellation, malformed
+    /// frames, or an active content block never reach this method.
+    /// </summary>
+    public bool TryFinalizeAtCleanEndOfStream(CompletionAggregator aggregator) {
+        if (!_messageStarted
+            || !_messageDeltaObserved
+            || string.IsNullOrWhiteSpace(_stopReason)
+            || _contentBlocks.Count > 0) {
+            return false;
+        }
+
+        FinalizeFromStopReason(aggregator);
+        return true;
+    }
+
+    public string DescribeInterruptionState() {
+        var activeBlockIndexes = _contentBlocks.Count == 0
+            ? "none"
+            : string.Join(",", _contentBlocks.Keys.OrderBy(static index => index));
+        var stopReason = string.IsNullOrWhiteSpace(_stopReason)
+            ? "none"
+            : SanitizeDiagnosticToken(_stopReason);
+
+        return $"messageStarted={_messageStarted.ToString().ToLowerInvariant()}, "
+            + $"messageDeltaObserved={_messageDeltaObserved.ToString().ToLowerInvariant()}, "
+            + $"stopReason={stopReason}, activeBlockIndexes={activeBlockIndexes}";
+    }
+
     private void HandleMessageStart(JsonObject obj) {
         if (_messageStarted) {
             throw new InvalidDataException(
@@ -303,8 +335,12 @@ internal sealed class AnthropicStreamParser {
             );
         }
 
-        aggregator.AbortIncompleteStreamingState();
+        FinalizeFromStopReason(aggregator);
         _terminalEventObserved = true;
+    }
+
+    private void FinalizeFromStopReason(CompletionAggregator aggregator) {
+        aggregator.AbortIncompleteStreamingState();
         switch (_stopReason) {
             case "end_turn":
             case "tool_use":
@@ -314,6 +350,17 @@ internal sealed class AnthropicStreamParser {
                 aggregator.MarkIncomplete(_stopReason);
                 break;
         }
+    }
+
+    private static string SanitizeDiagnosticToken(string value) {
+        const int MaximumLength = 80;
+        var sanitized = new string(
+            value
+                .Take(MaximumLength)
+                .Select(static character => char.IsControl(character) ? '?' : character)
+                .ToArray()
+        );
+        return value.Length > MaximumLength ? $"{sanitized}..." : sanitized;
     }
 
     private void HandleError(JsonObject obj, CompletionAggregator aggregator) {

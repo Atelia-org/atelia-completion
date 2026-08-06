@@ -17,6 +17,37 @@ internal sealed record CompletionSseFrame(
 );
 
 /// <summary>
+/// Metadata-only observation of how one SSE read reached a clean EOF.
+/// Provider data is deliberately never retained here.
+/// </summary>
+internal sealed class CompletionSseEofDiagnostics {
+    public bool CleanEofObserved { get; private set; }
+    public bool HasPendingFrame { get; private set; }
+    public string? PendingEventType { get; private set; }
+    public int? PendingDataCharacterCount { get; private set; }
+
+    internal void Reset() {
+        CleanEofObserved = false;
+        HasPendingFrame = false;
+        PendingEventType = null;
+        PendingDataCharacterCount = null;
+    }
+
+    internal void RecordCleanEof(
+        bool hasPendingFrame,
+        string? pendingEventType,
+        int? pendingDataCharacterCount
+    ) {
+        CleanEofObserved = true;
+        HasPendingFrame = hasPendingFrame;
+        PendingEventType = hasPendingFrame ? pendingEventType : null;
+        PendingDataCharacterCount = hasPendingFrame
+            ? pendingDataCharacterCount
+            : null;
+    }
+}
+
+/// <summary>
 /// Reads UTF-8 <c>text/event-stream</c> frames without assigning provider or
 /// completion semantics to them.
 /// </summary>
@@ -29,9 +60,11 @@ internal static class CompletionSseEventReader {
 
     public static async IAsyncEnumerable<CompletionSseFrame> ReadFramesAsync(
         Stream stream,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default
+        [EnumeratorCancellation] CancellationToken cancellationToken = default,
+        CompletionSseEofDiagnostics? eofDiagnostics = null
     ) {
         ArgumentNullException.ThrowIfNull(stream);
+        eofDiagnostics?.Reset();
 
         using var reader = new StreamReader(
             stream,
@@ -117,6 +150,16 @@ internal static class CompletionSseEventReader {
                     break;
             }
         }
+
+        bool hasPendingFrame = eventType is not null
+            || hasData
+            || hasId
+            || retryMilliseconds is not null;
+        eofDiagnostics?.RecordCleanEof(
+            hasPendingFrame,
+            eventType,
+            hasData ? data.Length : null
+        );
 
         // WHATWG event streams require a blank line to commit the final
         // frame. An EOF after field lines leaves a partial frame, which is

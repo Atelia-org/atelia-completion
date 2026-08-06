@@ -80,6 +80,7 @@ public sealed class CompletionSseEventReaderTests {
 
     [Fact]
     public async Task ReadFramesAsync_DiscardsAFrameNotCommittedBeforeEof() {
+        var eofDiagnostics = new CompletionSseEofDiagnostics();
         using var stream = Utf8Stream(
             "data: complete\n\n"
             + "event: partial\n"
@@ -87,11 +88,51 @@ public sealed class CompletionSseEventReaderTests {
         );
 
         CompletionSseFrame frame = Assert.Single(
-            await ReadAllAsync(stream)
+            await ReadAllAsync(stream, eofDiagnostics)
         );
 
         Assert.Equal("complete", frame.Data);
         Assert.Null(frame.EventType);
+        Assert.True(eofDiagnostics.CleanEofObserved);
+        Assert.True(eofDiagnostics.HasPendingFrame);
+        Assert.Equal("partial", eofDiagnostics.PendingEventType);
+        Assert.Equal("discarded".Length, eofDiagnostics.PendingDataCharacterCount);
+    }
+
+    [Fact]
+    public async Task ReadFramesAsync_ReportsCleanEofWithoutPendingFrame() {
+        var eofDiagnostics = new CompletionSseEofDiagnostics();
+        using var stream = Utf8Stream(
+            "event: ping\n"
+            + "data: {\"type\":\"ping\"}\n\n"
+        );
+
+        CompletionSseFrame frame = Assert.Single(
+            await ReadAllAsync(stream, eofDiagnostics)
+        );
+
+        Assert.Equal("ping", frame.EventType);
+        Assert.True(eofDiagnostics.CleanEofObserved);
+        Assert.False(eofDiagnostics.HasPendingFrame);
+        Assert.Null(eofDiagnostics.PendingEventType);
+        Assert.Null(eofDiagnostics.PendingDataCharacterCount);
+    }
+
+    [Fact]
+    public async Task ReadFramesAsync_DiagnosticsRetainOnlyPendingDataLength() {
+        var eofDiagnostics = new CompletionSseEofDiagnostics();
+        using var stream = Utf8Stream(
+            "event: message_stop\n"
+            + "data: first\n"
+            + "data: second"
+        );
+
+        Assert.Empty(await ReadAllAsync(stream, eofDiagnostics));
+
+        Assert.True(eofDiagnostics.CleanEofObserved);
+        Assert.True(eofDiagnostics.HasPendingFrame);
+        Assert.Equal("message_stop", eofDiagnostics.PendingEventType);
+        Assert.Equal("first\nsecond".Length, eofDiagnostics.PendingDataCharacterCount);
     }
 
     [Fact]
@@ -138,6 +179,7 @@ public sealed class CompletionSseEventReaderTests {
     [Fact]
     public async Task ReadFramesAsync_PropagatesReadFailureWithoutDispatchingPartialFrame() {
         var expected = new IOException("scripted read failure");
+        var eofDiagnostics = new CompletionSseEofDiagnostics();
         using var stream = new ControlledReadStream(
             Encoding.UTF8.GetBytes("data: partial\n"),
             expected,
@@ -148,7 +190,10 @@ public sealed class CompletionSseEventReaderTests {
         IOException actual = await Assert.ThrowsAsync<IOException>(
             async () => {
                 await foreach (CompletionSseFrame frame in
-                    CompletionSseEventReader.ReadFramesAsync(stream)) {
+                    CompletionSseEventReader.ReadFramesAsync(
+                        stream,
+                        eofDiagnostics: eofDiagnostics
+                    )) {
                     frames.Add(frame);
                 }
             }
@@ -156,6 +201,10 @@ public sealed class CompletionSseEventReaderTests {
 
         Assert.Same(expected, actual);
         Assert.Empty(frames);
+        Assert.False(eofDiagnostics.CleanEofObserved);
+        Assert.False(eofDiagnostics.HasPendingFrame);
+        Assert.Null(eofDiagnostics.PendingEventType);
+        Assert.Null(eofDiagnostics.PendingDataCharacterCount);
     }
 
     [Fact]
@@ -184,13 +233,15 @@ public sealed class CompletionSseEventReaderTests {
 
     private static async Task<IReadOnlyList<CompletionSseFrame>> ReadAllAsync(
         Stream stream,
+        CompletionSseEofDiagnostics? eofDiagnostics = null,
         CancellationToken cancellationToken = default
     ) {
         var frames = new List<CompletionSseFrame>();
         await foreach (CompletionSseFrame frame in
             CompletionSseEventReader.ReadFramesAsync(
                 stream,
-                cancellationToken
+                cancellationToken,
+                eofDiagnostics
             )) {
             frames.Add(frame);
         }

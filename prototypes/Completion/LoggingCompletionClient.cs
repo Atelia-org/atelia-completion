@@ -86,10 +86,41 @@ public sealed class LoggingCompletionClient : ICompletionClient {
     public IReadOnlyList<string> WrittenCallLogPaths
         => Array.AsReadOnly(_writtenCallLogPaths.ToArray());
 
-    public async Task<CompletionResult> StreamCompletionAsync(
+    public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
+    ) => StreamCompletionCoreAsync(
+        request,
+        CompletionInvocationOptions.Default,
+        observer,
+        cancellationToken,
+        invokeInnerWithOptions: false
+    );
+
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        return StreamCompletionCoreAsync(
+            request,
+            invocationOptions,
+            observer,
+            cancellationToken,
+            invokeInnerWithOptions: true
+        );
+    }
+
+    private async Task<CompletionResult> StreamCompletionCoreAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken,
+        bool invokeInnerWithOptions
     ) {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -100,7 +131,18 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         CompletionResult result;
 
         try {
-            result = await _inner.StreamCompletionAsync(request, observer, cancellationToken).ConfigureAwait(false);
+            result = invokeInnerWithOptions
+                ? await _inner.StreamCompletionAsync(
+                    request,
+                    invocationOptions,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false)
+                : await _inner.StreamCompletionAsync(
+                    request,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false);
         }
         catch (Exception ex) {
             stopwatch.Stop();
@@ -109,6 +151,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
                 startedAt,
                 stopwatch.Elapsed,
                 request,
+                invocationOptions,
                 result: null,
                 ex
             );
@@ -121,6 +164,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
             startedAt,
             stopwatch.Elapsed,
             request,
+            invocationOptions,
             result,
             exception: null
         );
@@ -144,6 +188,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         DateTimeOffset startedAt,
         TimeSpan elapsed,
         CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
         CompletionResult? result,
         Exception? exception
     ) {
@@ -151,7 +196,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v4",
+                Schema: "atelia.completion.call-log.v5",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -161,6 +206,9 @@ public sealed class LoggingCompletionClient : ICompletionClient {
                 ),
                 Context: _context,
                 Request: CompletionCallLogRequest.From(request),
+                InvocationOptions: CompletionCallLogInvocationOptions.From(
+                    invocationOptions
+                ),
                 Response: result is null
                     ? null
                     : CompletionCallLogResponse.From(result),
@@ -312,9 +360,24 @@ public sealed record CompletionCallLogEntry(
     CompletionCallLogConnectionSnapshot Connection,
     CompletionCallLogContext Context,
     CompletionCallLogRequest Request,
+    CompletionCallLogInvocationOptions InvocationOptions,
     CompletionCallLogResponse? Response,
     CompletionCallLogException? Exception
 );
+
+public sealed record CompletionCallLogInvocationOptions(
+    PromptCacheReuseHint PromptCacheReuseHint
+) {
+    public static CompletionCallLogInvocationOptions From(
+        CompletionInvocationOptions invocationOptions
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        return new CompletionCallLogInvocationOptions(
+            invocationOptions.PromptCacheReuseHint
+        );
+    }
+}
 
 public sealed record CompletionCallLogConnectionSnapshot(
     string Id,

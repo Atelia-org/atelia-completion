@@ -268,6 +268,92 @@ public sealed class AnthropicClientTests {
         );
     }
 
+    [Theory]
+    [InlineData(PromptCacheReuseHint.ConnectionDefault, "1h", true)]
+    [InlineData(PromptCacheReuseHint.NoReuseExpected, null, false)]
+    [InlineData(PromptCacheReuseHint.ReuseExpectedSoon, "5m", true)]
+    [InlineData(PromptCacheReuseHint.ReuseExpectedAfterPause, "1h", true)]
+    public async Task StreamCompletionAsync_InvocationCacheHintOverridesConnectionDefault(
+        PromptCacheReuseHint hint,
+        string? expectedTtl,
+        bool expectCacheControl
+    ) {
+        var handler = new SequenceHttpMessageHandler(
+            CompletedEventStreamResponse()
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(
+            apiKey: null,
+            httpClient: httpClient,
+            promptCacheTtl: AnthropicPromptCacheTtl.OneHour
+        );
+
+        _ = await client.StreamCompletionAsync(
+            CreateRequest(),
+            new CompletionInvocationOptions {
+                PromptCacheReuseHint = hint
+            },
+            observer: null,
+            CancellationToken.None
+        );
+
+        string body = Assert.Single(handler.RequestBodies);
+        if (!expectCacheControl) {
+            Assert.DoesNotContain("cache_control", body, StringComparison.Ordinal);
+            return;
+        }
+
+        using JsonDocument document = JsonDocument.Parse(body);
+        JsonElement cacheControl = document.RootElement
+            .GetProperty("system")[0]
+            .GetProperty("cache_control");
+        JsonElement messages = document.RootElement.GetProperty("messages");
+        JsonElement lastContent = messages[messages.GetArrayLength() - 1]
+            .GetProperty("content");
+        JsonElement messageCacheControl = lastContent[lastContent.GetArrayLength() - 1]
+            .GetProperty("cache_control");
+        if (expectedTtl is null) {
+            Assert.False(cacheControl.TryGetProperty("ttl", out _));
+            Assert.False(messageCacheControl.TryGetProperty("ttl", out _));
+        }
+        else {
+            Assert.Equal(expectedTtl, cacheControl.GetProperty("ttl").GetString());
+            Assert.Equal(
+                expectedTtl,
+                messageCacheControl.GetProperty("ttl").GetString()
+            );
+        }
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_DisabledConnectionOverridesInvocationCacheHint() {
+        var handler = new SequenceHttpMessageHandler(
+            CompletedEventStreamResponse()
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(
+            apiKey: null,
+            httpClient: httpClient,
+            enablePromptCaching: false,
+            promptCacheTtl: AnthropicPromptCacheTtl.OneHour
+        );
+
+        _ = await client.StreamCompletionAsync(
+            CreateRequest(),
+            new CompletionInvocationOptions {
+                PromptCacheReuseHint = PromptCacheReuseHint.ReuseExpectedAfterPause
+            },
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.DoesNotContain(
+            "cache_control",
+            Assert.Single(handler.RequestBodies),
+            StringComparison.Ordinal
+        );
+    }
+
     [Fact]
     public async Task StreamCompletionAsync_ErrorEventIsTerminalAndPreservesProviderReason() {
         var handler = new SequenceHttpMessageHandler(
@@ -699,6 +785,31 @@ public sealed class AnthropicClientTests {
             Content = new StringContent(body, Encoding.UTF8, "text/event-stream")
         };
     }
+
+    private static HttpResponseMessage CompletedEventStreamResponse() =>
+        EventStreamResponse(
+            """
+            event: message_start
+            data: {"type":"message_start","message":{}}
+
+            event: content_block_start
+            data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+            event: content_block_delta
+            data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}
+
+            event: content_block_stop
+            data: {"type":"content_block_stop","index":0}
+
+            event: message_delta
+            data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+            event: message_stop
+            data: {"type":"message_stop"}
+
+            """
+            + "\n"
+        );
 
     private sealed class EmptyHttpMessageHandler : HttpMessageHandler {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {

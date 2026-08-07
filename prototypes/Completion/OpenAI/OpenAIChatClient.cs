@@ -131,6 +131,22 @@ public sealed class OpenAIChatClient : ICompletionClient {
         return aggregator.Build();
     }
 
+    /// <summary>
+    /// The current OpenAI Chat surfaces do not expose a uniform request-level
+    /// cache-lifetime control, so validated provider-neutral hints are accepted
+    /// as an explicit no-op.
+    /// </summary>
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        return StreamCompletionAsync(request, observer, cancellationToken);
+    }
+
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(OpenAIChatApiRequest apiRequest, CancellationToken cancellationToken) {
         return await CompletionHttpRequestUtility.SendStreamingRequestAsync(
             _httpClient,

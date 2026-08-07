@@ -83,6 +83,22 @@ public sealed class GeminiClient : ICompletionClient {
         return aggregator.Build();
     }
 
+    /// <summary>
+    /// Gemini implicit caching is provider-managed and its explicit cache is a
+    /// separate resource lifecycle, so validated per-invocation hints are an
+    /// explicit no-op on this client surface.
+    /// </summary>
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        return StreamCompletionAsync(request, observer, cancellationToken);
+    }
+
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(
         string modelId,
         GeminiGenerateContentRequest apiRequest,

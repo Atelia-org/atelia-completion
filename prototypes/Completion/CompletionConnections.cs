@@ -274,6 +274,22 @@ internal sealed class OwnedHttpCompletionClient : ICompletionClient, IDisposable
         cancellationToken
     );
 
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        return _inner.StreamCompletionAsync(
+            request,
+            invocationOptions,
+            observer,
+            cancellationToken
+        );
+    }
+
     public void Dispose() {
         if (_inner is IDisposable disposable) { disposable.Dispose(); }
         _httpClient.Dispose();

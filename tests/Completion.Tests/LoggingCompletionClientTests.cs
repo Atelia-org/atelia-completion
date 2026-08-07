@@ -356,8 +356,14 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v4",
+                "atelia.completion.call-log.v5",
                 document.RootElement.GetProperty("schema").GetString()
+            );
+            Assert.Equal(
+                "connectionDefault",
+                document.RootElement.GetProperty("invocationOptions")
+                    .GetProperty("promptCacheReuseHint")
+                    .GetString()
             );
             Assert.Equal(filenameCallId, document.RootElement.GetProperty("callId").GetInt32());
         }
@@ -371,6 +377,9 @@ public sealed class LoggingCompletionClientTests : IDisposable {
 
         _ = await client.StreamCompletionAsync(
             CreateRequest(),
+            new CompletionInvocationOptions {
+                PromptCacheReuseHint = PromptCacheReuseHint.NoReuseExpected
+            },
             observer: null
         );
 
@@ -379,8 +388,14 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v4",
+            "atelia.completion.call-log.v5",
             root.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            "noReuseExpected",
+            root.GetProperty("invocationOptions")
+                .GetProperty("promptCacheReuseHint")
+                .GetString()
         );
         JsonElement request = root.GetProperty("request");
         Assert.Equal("model-a", request.GetProperty("modelId").GetString());
@@ -437,7 +452,13 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         var client = CreateLoggingClient(new ThrowingCompletionClient());
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.StreamCompletionAsync(CreateRequest(), observer: null)
+            () => client.StreamCompletionAsync(
+                CreateRequest(),
+                new CompletionInvocationOptions {
+                    PromptCacheReuseHint = PromptCacheReuseHint.ReuseExpectedAfterPause
+                },
+                observer: null
+            )
         );
 
         Assert.Equal("scripted completion failure", ex.Message);
@@ -447,8 +468,14 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v4",
+            "atelia.completion.call-log.v5",
             root.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            "reuseExpectedAfterPause",
+            root.GetProperty("invocationOptions")
+                .GetProperty("promptCacheReuseHint")
+                .GetString()
         );
         Assert.False(root.TryGetProperty("response", out _));
         Assert.Equal(
@@ -536,6 +563,17 @@ public sealed class LoggingCompletionClientTests : IDisposable {
                 CompletionDescriptor.From(this, request)
             );
         }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            ArgumentNullException.ThrowIfNull(invocationOptions);
+            invocationOptions.Validate();
+            return StreamCompletionAsync(request, observer, cancellationToken);
+        }
     }
 
     private sealed class ThrowingCompletionClient : ICompletionClient {
@@ -552,6 +590,17 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
             throw new InvalidOperationException("scripted completion failure");
+        }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            ArgumentNullException.ThrowIfNull(invocationOptions);
+            invocationOptions.Validate();
+            return StreamCompletionAsync(request, observer, cancellationToken);
         }
     }
 

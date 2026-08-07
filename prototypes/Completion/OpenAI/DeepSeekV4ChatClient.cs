@@ -28,4 +28,20 @@ public sealed class DeepSeekV4ChatClient : ICompletionClient {
     ) {
         return _inner.StreamCompletionAsync(request, observer, cancellationToken);
     }
+
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        return _inner.StreamCompletionAsync(
+            request,
+            invocationOptions,
+            observer,
+            cancellationToken
+        );
+    }
 }

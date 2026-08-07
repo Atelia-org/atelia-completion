@@ -63,10 +63,65 @@ public sealed class AnthropicClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, defaultMaxTokens={_defaultMaxTokens?.ToString() ?? "(none)"}, promptCaching={_enablePromptCaching}, promptCacheTtl={_promptCacheTtl}, reasoningEffort={_reasoningEffort}");
     }
 
-    public async Task<CompletionResult> StreamCompletionAsync(
+    public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
+    ) => StreamCompletionCoreAsync(
+        request,
+        observer,
+        _enablePromptCaching,
+        _promptCacheTtl,
+        cancellationToken
+    );
+
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+
+        if (!_enablePromptCaching) {
+            return StreamCompletionCoreAsync(
+                request,
+                observer,
+                enablePromptCaching: false,
+                _promptCacheTtl,
+                cancellationToken
+            );
+        }
+
+        (bool enablePromptCaching, AnthropicPromptCacheTtl promptCacheTtl) =
+            invocationOptions.PromptCacheReuseHint switch {
+                PromptCacheReuseHint.ConnectionDefault => (true, _promptCacheTtl),
+                PromptCacheReuseHint.NoReuseExpected => (false, _promptCacheTtl),
+                PromptCacheReuseHint.ReuseExpectedSoon => (true, AnthropicPromptCacheTtl.FiveMinutes),
+                PromptCacheReuseHint.ReuseExpectedAfterPause => (true, AnthropicPromptCacheTtl.OneHour),
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(invocationOptions),
+                    invocationOptions.PromptCacheReuseHint,
+                    "Unknown prompt cache reuse hint."
+                )
+            };
+
+        return StreamCompletionCoreAsync(
+            request,
+            observer,
+            enablePromptCaching,
+            promptCacheTtl,
+            cancellationToken
+        );
+    }
+
+    private async Task<CompletionResult> StreamCompletionCoreAsync(
+        CompletionRequest request,
+        CompletionStreamObserver? observer,
+        bool enablePromptCaching,
+        AnthropicPromptCacheTtl promptCacheTtl,
+        CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
@@ -74,9 +129,9 @@ public sealed class AnthropicClient : ICompletionClient {
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
             request,
             _defaultMaxTokens,
-            _enablePromptCaching,
+            enablePromptCaching,
             _reasoningEffort,
-            _promptCacheTtl,
+            promptCacheTtl,
             invocation
         );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);

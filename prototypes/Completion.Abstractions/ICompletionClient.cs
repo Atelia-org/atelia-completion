@@ -34,6 +34,34 @@ public interface ICompletionClient {
     /// <param name="cancellationToken">用于取消长时间流式推理操作的信号。</param>
     /// <returns>聚合后的完整结果快照，其 <see cref="CompletionResult.Message"/> 可直接作为下一轮历史的 <see cref="ActionMessage"/> 回灌。</returns>
     Task<CompletionResult> StreamCompletionAsync(CompletionRequest request, CompletionStreamObserver? observer, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 使用仅作用于本次调用的运行选项请求模型补全。
+    /// </summary>
+    /// <remarks>
+    /// 默认接口实现只接受 <see cref="PromptCacheReuseHint.ConnectionDefault"/>，并回落到
+    /// 三参数方法，以保持已有实现的行为。实现类必须显式声明自己如何处理其他 hint；未实现时
+    /// fail fast，避免静默丢失调用方意图。
+    /// </remarks>
+    Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+
+        if (invocationOptions.PromptCacheReuseHint
+            is not PromptCacheReuseHint.ConnectionDefault) {
+            throw new NotSupportedException(
+                $"Completion client '{GetType().FullName}' does not support "
+                    + $"prompt cache reuse hint '{invocationOptions.PromptCacheReuseHint}'."
+            );
+        }
+
+        return StreamCompletionAsync(request, observer, cancellationToken);
+    }
 }
 
 /// <summary>

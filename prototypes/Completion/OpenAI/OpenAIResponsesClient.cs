@@ -132,6 +132,21 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         return aggregator.Build();
     }
 
+    /// <summary>
+    /// The current OpenAI Responses integration has no provider-neutral mapping
+    /// for these hints, so validated values are accepted as an explicit no-op.
+    /// </summary>
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        return StreamCompletionAsync(request, observer, cancellationToken);
+    }
+
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(
         OpenAIResponsesApiRequest apiRequest,
         CancellationToken cancellationToken

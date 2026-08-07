@@ -39,7 +39,7 @@
 build CompletionRequest  →  await client.StreamCompletionAsync(...)  →  CompletionResult
 ```
 
-`ICompletionClient` 只有 **一个方法**——发起流式补全，并在 client 内部完成聚合：
+`ICompletionClient` 的基本方法负责发起流式补全，并在 client 内部完成聚合：
 
 ```csharp
 Task<CompletionResult> StreamCompletionAsync(
@@ -48,6 +48,26 @@ Task<CompletionResult> StreamCompletionAsync(
     CancellationToken cancellationToken = default
 );
 ```
+
+需要为单次调用表达运行策略时，使用带 `CompletionInvocationOptions` 的 overload：
+
+```csharp
+await client.StreamCompletionAsync(
+    request,
+    new CompletionInvocationOptions {
+        PromptCacheReuseHint = PromptCacheReuseHint.NoReuseExpected
+    },
+    observer: null,
+    cancellationToken: ct
+);
+```
+
+`PromptCacheReuseHint` 有四档：`ConnectionDefault`、`NoReuseExpected`、
+`ReuseExpectedSoon`、`ReuseExpectedAfterPause`。它是 provider-neutral、best-effort 的
+**经济复用提示**，不是隐私或禁止存储保证；不支持精确控制的 provider 可以显式接受为 no-op。
+这些 options 不属于逻辑 `CompletionRequest`，不进入 Prepared manifest、connection fingerprint
+或 request-adapter fingerprint。只实现旧方法的第三方 client 会由默认接口实现接受
+`ConnectionDefault`；其他 hint 会 fail fast，防止调用意图被静默丢弃。
 
 `observer` 为必传参数——不需要流式观察时显式传 `null` 即可。没有单独暴露的"增量 chunk 流"公共接口。provider 仍然走流式 HTTP/SSE，但由 client 内部解析并聚合后再返回 `CompletionResult`。
 
@@ -588,7 +608,11 @@ new AnthropicClient(
 }
 ```
 
-非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v4` 的 connection snapshot，方便审计实际调用，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。动态地在 tool-loop 与等待用户期间切换 TTL 尚未实现；当前值在创建 connection client 时确定。
+非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v5` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。
+
+单次调用的 `PromptCacheReuseHint` 优先级如下：当 `enablePromptCaching=false` 时始终不发送 cache breakpoint；否则 `ConnectionDefault` 沿用 connection 的 `AnthropicPromptCacheTtl`，`NoReuseExpected` 不发送 `cache_control`，`ReuseExpectedSoon` 映射到 `5m`，`ReuseExpectedAfterPause` 映射到 `1h`。OpenAI Chat、OpenAI Responses、Gemini 与 DeepSeek 当前明确接受这些 hint，但保持 wire 不变；将来只有在相应 surface 的语义可精确验证后才增加映射。
+
+Call log v5 的 `invocationOptions.promptCacheReuseHint` 记录调用方请求的 hint；它不宣称 provider 最终采用了何种 effective cache 行为。
 
 ### 5.3 `GeminiClient`
 

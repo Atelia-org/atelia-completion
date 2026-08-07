@@ -42,6 +42,25 @@ public sealed class DefaultCompletionClientFactoryTests {
     }
 
     [Fact]
+    public async Task OwnedClient_ForwardsInvocationOptionsToInnerClient() {
+        var inner = new InvocationOptionsCapturingClient();
+        using var httpClient = new HttpClient();
+        using var client = new OwnedHttpCompletionClient(inner, httpClient);
+        var options = new CompletionInvocationOptions {
+            PromptCacheReuseHint = PromptCacheReuseHint.NoReuseExpected
+        };
+
+        _ = await client.StreamCompletionAsync(
+            Request(),
+            options,
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Same(options, inner.ObservedOptions);
+    }
+
+    [Fact]
     public void CreateRejectsExplicitReasoningOnGenericSgLangSurface() {
         var factory = new DefaultCompletionClientFactory();
         var connection = Connection("local") with {
@@ -113,6 +132,37 @@ public sealed class DefaultCompletionClientFactoryTests {
             );
             throw new InvalidOperationException(
                 "An infinite streaming wait returned without cancellation."
+            );
+        }
+    }
+
+    private sealed class InvocationOptionsCapturingClient : ICompletionClient {
+        public string Name => "capturing";
+
+        public string ApiSpecId => "test-v1";
+
+        public CompletionInvocationOptions? ObservedOptions { get; private set; }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException("Expected invocation options overload.");
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = observer;
+            cancellationToken.ThrowIfCancellationRequested();
+            ObservedOptions = invocationOptions;
+            return Task.FromResult(
+                new CompletionResult(
+                    new ActionMessage([new ActionBlock.Text("done")]),
+                    CompletionDescriptor.From(this, request)
+                )
             );
         }
     }

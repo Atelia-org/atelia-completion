@@ -74,7 +74,13 @@ public static class CompletionConnectionConfigLoader {
         return NormalizeAndValidate(config);
     }
 
-    private static CompletionConnectionsFileConfig NormalizeAndValidate(CompletionConnectionsFileConfig config) {
+    /// <summary>
+    /// Resolves environment-backed values and validates an already parsed
+    /// shared connection-file payload.
+    /// </summary>
+    public static CompletionConnectionsFileConfig NormalizeAndValidate(
+        CompletionConnectionsFileConfig config
+    ) {
         ArgumentNullException.ThrowIfNull(config);
         if (config.Connections is not { Count: > 0 }) { throw new InvalidOperationException("Completion connections file must contain at least one connection."); }
 

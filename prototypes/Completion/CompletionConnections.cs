@@ -27,8 +27,39 @@ public sealed record CompletionConnectionConfig(
     /// Provider-neutral reasoning preset. <see cref="CompletionReasoningEffort.ProviderDefault"/>
     /// preserves the selected provider/model default.
     /// </summary>
-    CompletionReasoningEffort ReasoningEffort = CompletionReasoningEffort.ProviderDefault
+    CompletionReasoningEffort ReasoningEffort = CompletionReasoningEffort.ProviderDefault,
+    /// <summary>
+    /// Anthropic-specific prompt-cache TTL. The provider default preserves the
+    /// existing wire shape by omitting <c>cache_control.ttl</c>.
+    /// </summary>
+    AnthropicPromptCacheTtl AnthropicPromptCacheTtl =
+        AnthropicPromptCacheTtl.ProviderDefault
 );
+
+internal static class CompletionConnectionConfigValidation {
+    public static void ValidateAnthropicPromptCacheTtl(
+        CompletionConnectionConfig connection
+    ) {
+        if (!Enum.IsDefined(connection.AnthropicPromptCacheTtl)) {
+            throw new InvalidOperationException(
+                $"Completion connection '{connection.Id}' has unsupported anthropicPromptCacheTtl value "
+                + $"'{connection.AnthropicPromptCacheTtl}'."
+            );
+        }
+        if (connection.AnthropicPromptCacheTtl
+                is not AnthropicPromptCacheTtl.ProviderDefault
+            && !string.Equals(
+                connection.Kind,
+                "anthropic",
+                StringComparison.OrdinalIgnoreCase
+            )) {
+            throw new InvalidOperationException(
+                $"Completion connection '{connection.Id}' sets anthropicPromptCacheTtl, "
+                + $"but kind '{connection.Kind}' is not 'anthropic'."
+            );
+        }
+    }
+}
 
 public static class CompletionConnectionConfigLoader {
     public static CompletionConnectionsFileConfig LoadFile(string path) {
@@ -93,6 +124,8 @@ public static class CompletionConnectionConfigLoader {
                     $"Completion connection '{connection.Id}' has unsupported reasoningEffort value '{connection.ReasoningEffort}'."
                 );
             }
+            CompletionConnectionConfigValidation
+                .ValidateAnthropicPromptCacheTtl(connection);
 
             resolvedConnections.Add(connection with { CompletionSurfaceId = completionSurfaceId, BaseAddress = baseAddress, ApiKey = apiKey });
         }
@@ -133,6 +166,8 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
     public ICompletionClient Create(CompletionConnectionConfig connection) {
         ArgumentNullException.ThrowIfNull(connection);
         ValidateReasoningConfiguration(connection);
+        CompletionConnectionConfigValidation
+            .ValidateAnthropicPromptCacheTtl(connection);
 
         var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
             new Uri(connection.BaseAddress, UriKind.Absolute)
@@ -158,7 +193,8 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
                     apiKey: connection.ApiKey,
                     httpClient: httpClient,
                     defaultMaxTokens: connection.MaxTokens,
-                    reasoningEffort: connection.ReasoningEffort
+                    reasoningEffort: connection.ReasoningEffort,
+                    promptCacheTtl: connection.AnthropicPromptCacheTtl
                 ),
                 _ => throw new InvalidOperationException($"Unsupported completion connection kind '{connection.Kind}'.")
             };

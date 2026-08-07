@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Xunit;
 
 namespace Atelia.Completion.Tests;
@@ -355,7 +356,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v3",
+                "atelia.completion.call-log.v4",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(filenameCallId, document.RootElement.GetProperty("callId").GetInt32());
@@ -378,7 +379,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v3",
+            "atelia.completion.call-log.v4",
             root.GetProperty("schema").GetString()
         );
         JsonElement request = root.GetProperty("request");
@@ -395,6 +396,10 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         Assert.Equal(
             "high",
             connection.GetProperty("reasoningEffort").GetString()
+        );
+        Assert.Equal(
+            "1h",
+            connection.GetProperty("anthropicPromptCacheTtl").GetString()
         );
         Assert.False(
             connection.TryGetProperty(
@@ -442,7 +447,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v3",
+            "atelia.completion.call-log.v4",
             root.GetProperty("schema").GetString()
         );
         Assert.False(root.TryGetProperty("response", out _));
@@ -487,12 +492,13 @@ public sealed class LoggingCompletionClientTests : IDisposable {
 
     private static CompletionConnectionConfig CreateConnection() => new(
         Id: "test",
-        Kind: "scripted",
+        Kind: "anthropic",
         ModelId: "model-a",
         CompletionSurfaceId: "surface-a",
         BaseAddress: "http://localhost/",
         MaxTokens: 4096,
-        ReasoningEffort: CompletionReasoningEffort.High
+        ReasoningEffort: CompletionReasoningEffort.High,
+        AnthropicPromptCacheTtl: AnthropicPromptCacheTtl.OneHour
     );
 
     private static CompletionRequest CreateRequest()

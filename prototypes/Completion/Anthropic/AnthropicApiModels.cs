@@ -96,7 +96,23 @@ internal sealed class AnthropicCacheControl {
     [JsonPropertyName("type")]
     public string Type { get; set; } = "ephemeral";
 
-    public static AnthropicCacheControl Ephemeral { get; } = new();
+    [JsonPropertyName("ttl")]
+    public string? Ttl { get; set; }
+
+    public static AnthropicCacheControl CreateEphemeral(
+        AnthropicPromptCacheTtl ttl
+    ) => new() {
+        Ttl = ttl switch {
+            AnthropicPromptCacheTtl.ProviderDefault => null,
+            AnthropicPromptCacheTtl.FiveMinutes => "5m",
+            AnthropicPromptCacheTtl.OneHour => "1h",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(ttl),
+                ttl,
+                "Unknown Anthropic prompt cache TTL."
+            )
+        }
+    };
 }
 
 /// <summary>

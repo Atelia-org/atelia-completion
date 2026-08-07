@@ -649,10 +649,61 @@ public sealed class AnthropicMessageConverterTests {
         var firstSystem = systemArray[0];
         Assert.Equal("text", firstSystem.GetProperty("type").GetString());
         Assert.Equal("ephemeral", firstSystem.GetProperty("cache_control").GetProperty("type").GetString());
+        Assert.False(
+            firstSystem.GetProperty("cache_control").TryGetProperty("ttl", out _)
+        );
 
         var toolsArray = root.GetProperty("tools");
         var lastTool = toolsArray[toolsArray.GetArrayLength() - 1];
         Assert.Equal("ephemeral", lastTool.GetProperty("cache_control").GetProperty("type").GetString());
+        Assert.False(
+            lastTool.GetProperty("cache_control").TryGetProperty("ttl", out _)
+        );
+        var messages = root.GetProperty("messages");
+        var lastMessage = messages[messages.GetArrayLength() - 1];
+        var content = lastMessage.GetProperty("content");
+        Assert.False(
+            content[content.GetArrayLength() - 1]
+                .GetProperty("cache_control")
+                .TryGetProperty("ttl", out _)
+        );
+    }
+
+    [Theory]
+    [InlineData(AnthropicPromptCacheTtl.FiveMinutes, "5m")]
+    [InlineData(AnthropicPromptCacheTtl.OneHour, "1h")]
+    public void ConvertToApiRequest_PromptCacheTtlSerializesOnAllBreakpoints(
+        AnthropicPromptCacheTtl promptCacheTtl,
+        string expectedWireTtl
+    ) {
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
+            BuildToolLoopRequest(),
+            enablePromptCaching: true,
+            promptCacheTtl: promptCacheTtl
+        );
+        var options = new JsonSerializerOptions {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        };
+        using JsonDocument document = JsonDocument.Parse(
+            JsonSerializer.Serialize(apiRequest, options)
+        );
+        JsonElement root = document.RootElement;
+        JsonElement systemCacheControl = root
+            .GetProperty("system")[0]
+            .GetProperty("cache_control");
+        JsonElement tools = root.GetProperty("tools");
+        JsonElement toolCacheControl = tools[tools.GetArrayLength() - 1]
+            .GetProperty("cache_control");
+        JsonElement messages = root.GetProperty("messages");
+        JsonElement lastMessage = messages[messages.GetArrayLength() - 1];
+        JsonElement content = lastMessage.GetProperty("content");
+        JsonElement messageCacheControl = content[content.GetArrayLength() - 1]
+            .GetProperty("cache_control");
+
+        Assert.Equal(expectedWireTtl, systemCacheControl.GetProperty("ttl").GetString());
+        Assert.Equal(expectedWireTtl, toolCacheControl.GetProperty("ttl").GetString());
+        Assert.Equal(expectedWireTtl, messageCacheControl.GetProperty("ttl").GetString());
     }
 
     [Fact]

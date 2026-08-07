@@ -1,9 +1,152 @@
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Xunit;
 
 namespace Atelia.Completion.Tests;
 
 public sealed class CompletionConnectionConfigLoaderTests {
+    [Fact]
+    public void LoadFile_DefaultsAnthropicPromptCacheTtlToProviderDefault() {
+        string tempDirectory = CreateTempDirectory();
+        try {
+            string path = Path.Combine(tempDirectory, "connections.json");
+            File.WriteAllText(
+                path,
+                """
+                {
+                  "connections": [{
+                    "id": "anthropic",
+                    "kind": "anthropic",
+                    "modelId": "claude-opus-4-6",
+                    "completionSurfaceId": "anthropic",
+                    "baseAddress": "https://api.anthropic.com/"
+                  }]
+                }
+                """
+            );
+
+            CompletionConnectionConfig connection = Assert.Single(
+                CompletionConnectionConfigLoader.LoadFile(path).Connections
+            );
+
+            Assert.Equal(
+                AnthropicPromptCacheTtl.ProviderDefault,
+                connection.AnthropicPromptCacheTtl
+            );
+        }
+        finally {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("provider-default", AnthropicPromptCacheTtl.ProviderDefault)]
+    [InlineData("5m", AnthropicPromptCacheTtl.FiveMinutes)]
+    [InlineData("1h", AnthropicPromptCacheTtl.OneHour)]
+    public void LoadFile_ParsesAnthropicPromptCacheTtlByStableStringName(
+        string jsonValue,
+        AnthropicPromptCacheTtl expected
+    ) {
+        string tempDirectory = CreateTempDirectory();
+        try {
+            string path = Path.Combine(tempDirectory, "connections.json");
+            File.WriteAllText(
+                path,
+                $$"""
+                {
+                  "connections": [{
+                    "id": "anthropic",
+                    "kind": "anthropic",
+                    "modelId": "claude-opus-4-6",
+                    "completionSurfaceId": "anthropic",
+                    "baseAddress": "https://api.anthropic.com/",
+                    "anthropicPromptCacheTtl": "{{jsonValue}}"
+                  }]
+                }
+                """
+            );
+
+            CompletionConnectionConfig connection = Assert.Single(
+                CompletionConnectionConfigLoader.LoadFile(path).Connections
+            );
+
+            Assert.Equal(expected, connection.AnthropicPromptCacheTtl);
+        }
+        finally {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("\"30m\"")]
+    public void LoadFile_RejectsNumericOrUnknownAnthropicPromptCacheTtl(
+        string jsonValue
+    ) {
+        string tempDirectory = CreateTempDirectory();
+        try {
+            string path = Path.Combine(tempDirectory, "connections.json");
+            File.WriteAllText(
+                path,
+                $$"""
+                {
+                  "connections": [{
+                    "id": "anthropic",
+                    "kind": "anthropic",
+                    "modelId": "claude-opus-4-6",
+                    "completionSurfaceId": "anthropic",
+                    "baseAddress": "https://api.anthropic.com/",
+                    "anthropicPromptCacheTtl": {{jsonValue}}
+                  }]
+                }
+                """
+            );
+
+            Assert.Throws<System.Text.Json.JsonException>(
+                () => CompletionConnectionConfigLoader.LoadFile(path)
+            );
+        }
+        finally {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void LoadFile_RejectsAnthropicPromptCacheTtlForOtherKinds() {
+        string tempDirectory = CreateTempDirectory();
+        try {
+            string path = Path.Combine(tempDirectory, "connections.json");
+            File.WriteAllText(
+                path,
+                """
+                {
+                  "connections": [{
+                    "id": "openai",
+                    "kind": "openai-responses",
+                    "modelId": "gpt-5",
+                    "completionSurfaceId": "openai-responses",
+                    "baseAddress": "https://api.openai.com/",
+                    "anthropicPromptCacheTtl": "1h"
+                  }]
+                }
+                """
+            );
+
+            InvalidOperationException exception = Assert.Throws<
+                InvalidOperationException
+            >(() => CompletionConnectionConfigLoader.LoadFile(path));
+
+            Assert.Contains(
+                "kind 'openai-responses' is not 'anthropic'",
+                exception.Message,
+                StringComparison.Ordinal
+            );
+        }
+        finally {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
     [Fact]
     public void LoadFile_AllowsBaseAddressAndApiKeyFromEnvironment() {
         string baseAddressEnv = CreateEnvName(nameof(LoadFile_AllowsBaseAddressAndApiKeyFromEnvironment), "BASE");

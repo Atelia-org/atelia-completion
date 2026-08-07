@@ -59,6 +59,10 @@ public static class CompletionDispatchIdentityFactory {
         );
     }
 
+    // AnthropicPromptCacheTtl is intentionally excluded from both durable
+    // fingerprints. It changes cache cost/retention, not the logical model
+    // request, and may later vary between tool-loop and human-wait phases.
+
     public static string ComputeRequestAdapterFingerprint(
         ICompletionClient client,
         CompletionConnectionConfig connection

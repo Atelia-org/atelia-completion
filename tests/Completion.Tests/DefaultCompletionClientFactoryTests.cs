@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Xunit;
 
 namespace Atelia.Completion.Tests;
@@ -53,6 +54,24 @@ public sealed class DefaultCompletionClientFactoryTests {
         );
 
         Assert.Contains("openai-chat/qwen-sglang", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CreateRejectsAnthropicPromptCacheTtlForOtherKinds() {
+        var factory = new DefaultCompletionClientFactory();
+        var connection = Connection("local") with {
+            AnthropicPromptCacheTtl = AnthropicPromptCacheTtl.OneHour
+        };
+
+        InvalidOperationException exception = Assert.Throws<
+            InvalidOperationException
+        >(() => factory.Create(connection));
+
+        Assert.Contains(
+            "kind 'openai-chat' is not 'anthropic'",
+            exception.Message,
+            StringComparison.Ordinal
+        );
     }
 
     private static CompletionConnectionConfig Connection(string id) => new(

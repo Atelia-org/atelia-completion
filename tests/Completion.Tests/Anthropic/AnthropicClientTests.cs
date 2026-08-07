@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Transport;
 using Xunit;
@@ -47,6 +48,18 @@ public sealed class AnthropicClientTests {
         );
 
         Assert.Contains("end with '/'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Constructor_RejectsUnknownPromptCacheTtl() {
+        using var handler = new EmptyHttpMessageHandler();
+        using var httpClient = CreateHttpClient(handler);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => new AnthropicClient(
+            apiKey: null,
+            httpClient: httpClient,
+            promptCacheTtl: (AnthropicPromptCacheTtl)999
+        ));
     }
 
     [Fact]
@@ -190,6 +203,69 @@ public sealed class AnthropicClientTests {
         Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
         Assert.Equal("end_turn", result.Termination.ProviderReason);
         Assert.Equal("text/event-stream", Assert.Single(handler.RequestAcceptHeaders));
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_OneHourPromptCacheTtlReachesHttpBody() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: message_start
+                data: {"type":"message_start","message":{}}
+
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"done"}}
+
+                event: content_block_stop
+                data: {"type":"content_block_stop","index":0}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+                event: message_stop
+                data: {"type":"message_stop"}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(
+            apiKey: null,
+            httpClient: httpClient,
+            promptCacheTtl: AnthropicPromptCacheTtl.OneHour
+        );
+
+        _ = await client.StreamCompletionAsync(
+            CreateRequest(),
+            observer: null,
+            CancellationToken.None
+        );
+
+        using JsonDocument document = JsonDocument.Parse(
+            Assert.Single(handler.RequestBodies)
+        );
+        JsonElement root = document.RootElement;
+        Assert.Equal(
+            "1h",
+            root.GetProperty("system")[0]
+                .GetProperty("cache_control")
+                .GetProperty("ttl")
+                .GetString()
+        );
+        JsonElement messages = root.GetProperty("messages");
+        JsonElement content = messages[messages.GetArrayLength() - 1]
+            .GetProperty("content");
+        Assert.Equal(
+            "1h",
+            content[content.GetArrayLength() - 1]
+                .GetProperty("cache_control")
+                .GetProperty("ttl")
+                .GetString()
+        );
     }
 
     [Fact]
@@ -638,10 +714,17 @@ public sealed class AnthropicClientTests {
         }
 
         public List<string> RequestAcceptHeaders { get; } = new();
+        public List<string> RequestBodies { get; } = new();
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        ) {
             RequestAcceptHeaders.Add(request.Headers.Accept.ToString());
-            return Task.FromResult(_responses.Dequeue());
+            RequestBodies.Add(await request.Content!.ReadAsStringAsync(
+                cancellationToken
+            ));
+            return _responses.Dequeue();
         }
     }
 

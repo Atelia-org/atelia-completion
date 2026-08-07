@@ -1,4 +1,5 @@
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Xunit;
 
 namespace Atelia.Completion.Tests;
@@ -150,6 +151,37 @@ public sealed class CompletionDispatchIdentityTests {
         Assert.Equal(
             adapterVariants.Length,
             adapterVariants.Distinct(StringComparer.Ordinal).Count()
+        );
+    }
+
+    [Fact]
+    public void FingerprintsExcludeAnthropicPromptCacheTtlOperationalPolicy() {
+        CompletionConnectionConfig connection = CreateConnection() with {
+            Kind = "anthropic",
+            CompletionSurfaceId = "anthropic"
+        };
+        var client = new IdentityCompletionClient("client-a", "api-a");
+        CompletionConnectionConfig changedTtl = connection with {
+            AnthropicPromptCacheTtl = AnthropicPromptCacheTtl.OneHour
+        };
+
+        Assert.Equal(
+            CompletionDispatchIdentityFactory.ComputeConnectionFingerprint(
+                connection
+            ),
+            CompletionDispatchIdentityFactory.ComputeConnectionFingerprint(
+                changedTtl
+            )
+        );
+        Assert.Equal(
+            CompletionDispatchIdentityFactory.ComputeRequestAdapterFingerprint(
+                client,
+                connection
+            ),
+            CompletionDispatchIdentityFactory.ComputeRequestAdapterFingerprint(
+                client,
+                changedTtl
+            )
         );
     }
 

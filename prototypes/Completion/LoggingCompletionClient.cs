@@ -5,6 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
 using Atelia.Diagnostics;
 
 namespace Atelia.Completion;
@@ -23,7 +24,10 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+        Converters = {
+            new AnthropicPromptCacheTtlJsonConverter(),
+            new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
+        }
     };
 
     private readonly ICompletionClient _inner;
@@ -147,7 +151,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v3",
+                Schema: "atelia.completion.call-log.v4",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -323,6 +327,7 @@ public sealed record CompletionCallLogConnectionSnapshot(
     bool HasApiKey,
     int? MaxTokens,
     CompletionReasoningEffort ReasoningEffort,
+    AnthropicPromptCacheTtl AnthropicPromptCacheTtl,
     string ProviderId,
     string ApiSpecId
 ) {
@@ -341,6 +346,7 @@ public sealed record CompletionCallLogConnectionSnapshot(
             !string.IsNullOrWhiteSpace(connection.ApiKey),
             connection.MaxTokens,
             connection.ReasoningEffort,
+            connection.AnthropicPromptCacheTtl,
             client.Name,
             client.ApiSpecId
         );

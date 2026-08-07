@@ -552,6 +552,7 @@ new DeepSeekV4ChatClient(
 ### 5.2 `AnthropicClient`
 
 ```csharp
+using Atelia.Completion.Anthropic;
 using Atelia.Completion.Transport;
 
 using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
@@ -562,7 +563,8 @@ new AnthropicClient(
     apiKey: null,
     httpClient: httpClient,
     apiVersion: null, // 默认 "2023-06-01"
-    reasoningEffort: CompletionReasoningEffort.High
+    reasoningEffort: CompletionReasoningEffort.High,
+    promptCacheTtl: AnthropicPromptCacheTtl.OneHour
 );
 ```
 
@@ -576,6 +578,17 @@ new AnthropicClient(
 配置驱动的调用方在 `CompletionConnectionConfig.ReasoningEffort`（JSON: `reasoningEffort`）上使用同一组稳定字符串档位。该值会进入 connection fingerprint；provider 映射版本会进入 request-adapter fingerprint，恢复时不会静默沿用不同 reasoning 语义。
 
 当前映射摘要：OpenAI Chat / Responses 使用 `none|low|medium|high|xhigh`；OpenAI Responses 在启用档位下同时请求 `summary=auto`；Qwen 映射为 `enable_thinking` 布尔开关；DeepSeek V4 的 `Disabled` 映射为 `thinking.type=disabled`，启用档位显式发送 `thinking.type=enabled`，并将 `Low|Medium|High` 收敛到 `reasoning_effort=high`、`Max` 映射为 `max`；Anthropic 使用 adaptive thinking 与同名 effort。
+
+**Anthropic prompt cache TTL**：`AnthropicPromptCacheTtl` 是 provider-specific 配置，稳定 JSON 字符串为 `provider-default|5m|1h`。`provider-default`（默认）保持原有 wire，不发送 `cache_control.ttl`；`5m` 与 `1h` 会把相应 `ttl` 写到当前的 system、tool definitions 和最新 user/assistant message 三处 cache breakpoint。例如：
+
+```json
+{
+  "kind": "anthropic",
+  "anthropicPromptCacheTtl": "1h"
+}
+```
+
+非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v4` 的 connection snapshot，方便审计实际调用，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。动态地在 tool-loop 与等待用户期间切换 TTL 尚未实现；当前值在创建 connection client 时确定。
 
 ### 5.3 `GeminiClient`
 

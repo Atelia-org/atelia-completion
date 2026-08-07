@@ -20,6 +20,7 @@ internal static class AnthropicMessageConverter {
         int? defaultMaxTokens = null,
         bool enablePromptCaching = false,
         CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
+        AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault,
         CompletionDescriptor? targetInvocation = null
     ) {
         var messages = new List<AnthropicMessage>();
@@ -80,7 +81,7 @@ internal static class AnthropicMessageConverter {
         ApplyReasoningConfig(apiRequest, reasoningEffort);
 
         if (enablePromptCaching) {
-            ApplyPromptCaching(apiRequest);
+            ApplyPromptCaching(apiRequest, promptCacheTtl);
         }
 
         DebugUtil.Info(
@@ -126,16 +127,22 @@ internal static class AnthropicMessageConverter {
     /// 断点最多 4 个；此处最多用 3 个，使多轮 tool loop 能命中前缀缓存——后续轮次仅重算新增尾部，
     /// 稳定前缀（tools + system + 已有历史）按缓存读取计费。
     /// </summary>
-    private static void ApplyPromptCaching(AnthropicApiRequest apiRequest) {
+    private static void ApplyPromptCaching(
+        AnthropicApiRequest apiRequest,
+        AnthropicPromptCacheTtl promptCacheTtl
+    ) {
+        AnthropicCacheControl NewCacheControl()
+            => AnthropicCacheControl.CreateEphemeral(promptCacheTtl);
+
         // 1) tools 段末尾：缓存整段工具定义。
         if (apiRequest.Tools is { Count: > 0 } tools) {
-            tools[^1].CacheControl = AnthropicCacheControl.Ephemeral;
+            tools[^1].CacheControl = NewCacheControl();
         }
 
         // 2) system 段：转为 content-block 数组形式以承载 cache_control。
         if (apiRequest.System is string systemText && !string.IsNullOrWhiteSpace(systemText)) {
             apiRequest.System = new List<AnthropicSystemTextBlock> {
-                new() { Text = systemText, CacheControl = AnthropicCacheControl.Ephemeral }
+                new() { Text = systemText, CacheControl = NewCacheControl() }
             };
         }
 
@@ -145,7 +152,7 @@ internal static class AnthropicMessageConverter {
         if (apiRequest.Messages is { Count: > 0 } messages) {
             var lastBlocks = messages[^1].Content;
             if (lastBlocks.Count > 0) {
-                lastBlocks[^1].CacheControl = AnthropicCacheControl.Ephemeral;
+                lastBlocks[^1].CacheControl = NewCacheControl();
             }
         }
     }

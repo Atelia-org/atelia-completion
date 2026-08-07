@@ -26,6 +26,7 @@ public sealed class AnthropicClient : ICompletionClient {
     private readonly int? _defaultMaxTokens;
     private readonly bool _enablePromptCaching;
     private readonly CompletionReasoningEffort _reasoningEffort;
+    private readonly AnthropicPromptCacheTtl _promptCacheTtl;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "anthropic";
     public string ApiSpecId => "messages-v1";
@@ -36,7 +37,8 @@ public sealed class AnthropicClient : ICompletionClient {
         string? apiVersion = null,
         int? defaultMaxTokens = null,
         bool enablePromptCaching = true,
-        CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault
+        CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
+        AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault
     ) {
         Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
 
@@ -50,8 +52,15 @@ public sealed class AnthropicClient : ICompletionClient {
         _reasoningEffort = Enum.IsDefined(reasoningEffort)
             ? reasoningEffort
             : throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.");
+        _promptCacheTtl = Enum.IsDefined(promptCacheTtl)
+            ? promptCacheTtl
+            : throw new ArgumentOutOfRangeException(
+                nameof(promptCacheTtl),
+                promptCacheTtl,
+                "Unknown Anthropic prompt cache TTL."
+            );
 
-        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, defaultMaxTokens={_defaultMaxTokens?.ToString() ?? "(none)"}, promptCaching={_enablePromptCaching}, reasoningEffort={_reasoningEffort}");
+        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, defaultMaxTokens={_defaultMaxTokens?.ToString() ?? "(none)"}, promptCaching={_enablePromptCaching}, promptCacheTtl={_promptCacheTtl}, reasoningEffort={_reasoningEffort}");
     }
 
     public async Task<CompletionResult> StreamCompletionAsync(
@@ -67,6 +76,7 @@ public sealed class AnthropicClient : ICompletionClient {
             _defaultMaxTokens,
             _enablePromptCaching,
             _reasoningEffort,
+            _promptCacheTtl,
             invocation
         );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);

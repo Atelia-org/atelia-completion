@@ -108,6 +108,9 @@ public sealed class CompletionOutputContract {
                 );
             }
         }
+
+        SemanticFingerprint =
+            CompletionOutputContractCanonicalizer.ComputeFingerprint(this);
     }
 
     public ImmutableArray<ToolDefinition> Tools { get; }
@@ -115,6 +118,11 @@ public sealed class CompletionOutputContract {
     public CompletionToolChoice ToolChoice { get; }
 
     public bool? AllowParallelToolCalls { get; }
+
+    /// <summary>
+    /// Canonical semantic identity of the ordered tools and output policy.
+    /// </summary>
+    public string SemanticFingerprint { get; }
 
     public bool IsProviderDefault
         => ToolChoice.Kind is CompletionToolChoiceKind.ProviderDefault

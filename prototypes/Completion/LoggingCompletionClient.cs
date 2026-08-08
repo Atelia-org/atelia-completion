@@ -16,7 +16,8 @@ public sealed record CompletionCallLogContext(
     long? EventOrdinal = null,
     string? MaintainerId = null,
     string? TargetCarrier = null,
-    string? TargetBlockId = null
+    string? TargetBlockId = null,
+    string? SourceId = null
 );
 
 public sealed class LoggingCompletionClient : ICompletionClient {
@@ -93,6 +94,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
     ) => StreamCompletionCoreAsync(
         request,
         CompletionInvocationOptions.Default,
+        _context,
         observer,
         cancellationToken,
         invokeInnerWithOptions: false
@@ -109,6 +111,31 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         return StreamCompletionCoreAsync(
             request,
             invocationOptions,
+            _context,
+            observer,
+            cancellationToken,
+            invokeInnerWithOptions: true
+        );
+    }
+
+    /// <summary>
+    /// Sends one call with call-scoped attribution while retaining this
+    /// wrapper's single raw client and call-log sink.
+    /// </summary>
+    public Task<CompletionResult> StreamCompletionAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionCallLogContext callContext,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(invocationOptions);
+        invocationOptions.Validate();
+        ArgumentNullException.ThrowIfNull(callContext);
+        return StreamCompletionCoreAsync(
+            request,
+            invocationOptions,
+            callContext,
             observer,
             cancellationToken,
             invokeInnerWithOptions: true
@@ -118,6 +145,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
     private async Task<CompletionResult> StreamCompletionCoreAsync(
         CompletionRequest request,
         CompletionInvocationOptions invocationOptions,
+        CompletionCallLogContext callContext,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken,
         bool invokeInnerWithOptions
@@ -152,6 +180,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
                 stopwatch.Elapsed,
                 request,
                 invocationOptions,
+                callContext,
                 result: null,
                 ex
             );
@@ -165,6 +194,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
             stopwatch.Elapsed,
             request,
             invocationOptions,
+            callContext,
             result,
             exception: null
         );
@@ -189,6 +219,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         TimeSpan elapsed,
         CompletionRequest request,
         CompletionInvocationOptions invocationOptions,
+        CompletionCallLogContext callContext,
         CompletionResult? result,
         Exception? exception
     ) {
@@ -196,7 +227,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v6",
+                Schema: "atelia.completion.call-log.v7",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -204,7 +235,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
                     _connection,
                     _inner
                 ),
-                Context: _context,
+                Context: callContext,
                 Request: CompletionCallLogRequest.From(request),
                 InvocationOptions: CompletionCallLogInvocationOptions.From(
                     invocationOptions

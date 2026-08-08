@@ -356,7 +356,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v6",
+                "atelia.completion.call-log.v7",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -388,7 +388,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v6",
+            "atelia.completion.call-log.v7",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -508,7 +508,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v6",
+            "atelia.completion.call-log.v7",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(

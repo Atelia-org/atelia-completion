@@ -356,7 +356,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v5",
+                "atelia.completion.call-log.v6",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -376,7 +376,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
 
         _ = await client.StreamCompletionAsync(
-            CreateRequest(),
+            CreateStructuredRequest(),
             new CompletionInvocationOptions {
                 PromptCacheReuseHint = PromptCacheReuseHint.NoReuseExpected
             },
@@ -388,7 +388,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v5",
+            "atelia.completion.call-log.v6",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -399,13 +399,53 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement request = root.GetProperty("request");
         Assert.Equal("model-a", request.GetProperty("modelId").GetString());
-        Assert.Equal("system", request.GetProperty("systemPrompt").GetString());
-        JsonElement history = Assert.Single(
-            request.GetProperty("context").EnumerateArray()
+        Assert.Equal(2048, request.GetProperty("maxTokens").GetInt32());
+        Assert.False(request.TryGetProperty("systemPrompt", out _));
+        Assert.False(request.TryGetProperty("context", out _));
+        Assert.False(request.TryGetProperty("tools", out _));
+        JsonElement promptPrefix = request.GetProperty("promptPrefix");
+        Assert.Equal(
+            "system",
+            promptPrefix.GetProperty("systemPrompt").GetString()
         );
-        Assert.Equal("observation", history.GetProperty("kind").GetString());
-        Assert.Equal("hello", history.GetProperty("content").GetString());
-        Assert.Empty(request.GetProperty("tools").EnumerateArray());
+        JsonElement shared = Assert.Single(
+            promptPrefix.GetProperty("sharedContextMessages").EnumerateArray()
+        );
+        Assert.Equal("observation", shared.GetProperty("kind").GetString());
+        Assert.Equal("shared", shared.GetProperty("content").GetString());
+        JsonElement tail = Assert.Single(
+            request.GetProperty("tailMessages").EnumerateArray()
+        );
+        Assert.Equal("tail", tail.GetProperty("content").GetString());
+        JsonElement outputContract = promptPrefix.GetProperty("outputContract");
+        Assert.False(
+            outputContract.GetProperty("allowParallelToolCalls").GetBoolean()
+        );
+        JsonElement toolChoice = outputContract.GetProperty("toolChoice");
+        Assert.Equal("requiredNamed", toolChoice.GetProperty("kind").GetString());
+        Assert.Equal(
+            "emit_result",
+            toolChoice.GetProperty("requiredToolName").GetString()
+        );
+        JsonElement tool = Assert.Single(
+            outputContract.GetProperty("tools").EnumerateArray()
+        );
+        Assert.Equal("emit_result", tool.GetProperty("name").GetString());
+        JsonElement inputSchema = tool.GetProperty("inputSchema");
+        Assert.Equal("object", inputSchema.GetProperty("kind").GetString());
+        Assert.False(inputSchema.GetProperty("additionalProperties").GetBoolean());
+        JsonElement property = Assert.Single(
+            inputSchema.GetProperty("properties").EnumerateArray()
+        );
+        Assert.Equal("query", property.GetProperty("name").GetString());
+        Assert.True(property.GetProperty("required").GetBoolean());
+        JsonElement valueSchema = property.GetProperty("schema");
+        Assert.Equal("string", valueSchema.GetProperty("valueKind").GetString());
+        Assert.True(valueSchema.GetProperty("nullable").GetBoolean());
+        Assert.Equal(
+            JsonValueKind.Null,
+            valueSchema.GetProperty("default").ValueKind
+        );
         JsonElement connection = root.GetProperty("connection");
         Assert.Equal(4096, connection.GetProperty("maxTokens").GetInt32());
         Assert.Equal(
@@ -468,7 +508,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v5",
+            "atelia.completion.call-log.v6",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -541,6 +581,40 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             ),
             tailMessages: []
         );
+
+    private static CompletionRequest CreateStructuredRequest() {
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit a structured result.",
+            new ToolSchema.Object(
+                properties: [
+                    new ToolSchema.Property(
+                        "query",
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            isNullable: true,
+                            defaultValue: new ParamDefault(null)
+                        ),
+                        isRequired: true
+                    )
+                ]
+            )
+        );
+        return new CompletionRequest(
+            "model-a",
+            new CompletionPromptPrefix(
+                "system",
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result"),
+                    allowParallelToolCalls: false
+                ),
+                [new ObservationMessage("shared")]
+            ),
+            [new ObservationMessage("tail")],
+            maxTokens: 2048
+        );
+    }
 
     private static CompletionResult CreateResult(string text)
         => new(

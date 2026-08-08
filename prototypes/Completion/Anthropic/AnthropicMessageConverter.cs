@@ -32,9 +32,13 @@ internal static class AnthropicMessageConverter {
             pendingToolCalls,
             targetInvocation
         );
-        AnthropicContentBlock? lastPrefixContentBlock = messages
+        AnthropicContentBlock? lastCacheablePrefixContentBlock = messages
             .SelectMany(static message => message.Content)
-            .LastOrDefault();
+            .LastOrDefault(static block => block is (
+                AnthropicTextBlock
+                or AnthropicToolUseBlock
+                or AnthropicToolResultBlock
+            ));
         ProjectMessages(
             request.TailMessages,
             messages,
@@ -57,7 +61,7 @@ internal static class AnthropicMessageConverter {
         }
 
         // 确保消息序列符合 Anthropic 的交错约定。Content block 对象不会被复制，
-        // 因此 lastPrefixContentBlock 在同 role merge 后仍准确指向 prefix 边界。
+        // 因此 lastCacheablePrefixContentBlock 在同 role merge 后仍准确指向 prefix 边界。
         NormalizeMessageSequence(messages);
 
         CompletionOutputContract outputContract =
@@ -80,7 +84,7 @@ internal static class AnthropicMessageConverter {
             ApplyPromptCaching(
                 apiRequest,
                 promptCacheTtl,
-                lastPrefixContentBlock
+                lastCacheablePrefixContentBlock
             );
         }
 
@@ -215,12 +219,13 @@ internal static class AnthropicMessageConverter {
     /// <summary>
     /// 在稳定前缀的各段末尾放置 ephemeral cache 断点（Anthropic 前缀顺序：tools → system → messages）。
     /// 断点最多 4 个；此处最多用 3 个，使多轮 tool loop 能命中前缀缓存——后续轮次仅重算新增尾部，
-    /// 稳定前缀（tools + system + 已有历史）按缓存读取计费。
+    /// messages只缓存到shared prefix内最后一个provider允许标记的content block；末尾不可标记的
+    /// thinking/redacted-thinking会重新计算，但断点绝不越界移动到tail。
     /// </summary>
     private static void ApplyPromptCaching(
         AnthropicApiRequest apiRequest,
         AnthropicPromptCacheTtl promptCacheTtl,
-        AnthropicContentBlock? lastPrefixContentBlock
+        AnthropicContentBlock? lastCacheablePrefixContentBlock
     ) {
         AnthropicCacheControl NewCacheControl()
             => AnthropicCacheControl.CreateEphemeral(promptCacheTtl);
@@ -237,10 +242,11 @@ internal static class AnthropicMessageConverter {
             };
         }
 
-        // 3) shared messages 前缀末尾：即使 tail 与它同 role 并在 normalize 时合并，
-        //    保存下来的 content-block 引用仍精确标记 typed prefix boundary。
-        if (lastPrefixContentBlock is not null) {
-            lastPrefixContentBlock.CacheControl = NewCacheControl();
+        // 3) shared messages 中最后一个provider允许标记的block。即使tail与它同role并在
+        //    normalize时合并，保存下来的引用也不会越过typed boundary。若shared prefix只有
+        //    thinking/redacted-thinking等不可标记block，则省略message断点。
+        if (lastCacheablePrefixContentBlock is not null) {
+            lastCacheablePrefixContentBlock.CacheControl = NewCacheControl();
         }
     }
 

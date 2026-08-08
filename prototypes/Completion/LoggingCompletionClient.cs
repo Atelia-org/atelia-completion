@@ -196,7 +196,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v5",
+                Schema: "atelia.completion.call-log.v6",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -418,26 +418,69 @@ public sealed record CompletionCallLogConnectionSnapshot(
 
 public sealed record CompletionCallLogRequest(
     string ModelId,
-    string SystemPrompt,
-    IReadOnlyList<CompletionCallLogHistoryMessage> Context,
-    IReadOnlyList<CompletionCallLogToolDefinition> Tools
+    CompletionCallLogPromptPrefix PromptPrefix,
+    IReadOnlyList<CompletionCallLogHistoryMessage> TailMessages,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? MaxTokens
 ) {
     public static CompletionCallLogRequest From(CompletionRequest request) {
         ArgumentNullException.ThrowIfNull(request);
 
         return new CompletionCallLogRequest(
             request.ModelId,
-            request.PromptPrefix.SystemPrompt,
-            request.PromptPrefix.SharedContextMessages
-                .Concat(request.TailMessages)
+            CompletionCallLogPromptPrefix.From(request.PromptPrefix),
+            request.TailMessages
                 .Select(CompletionCallLogHistoryMessage.From)
                 .ToArray(),
-            request.PromptPrefix.OutputContract.Tools
-                .Select(CompletionCallLogToolDefinition.From)
+            request.MaxTokens
+        );
+    }
+}
+
+public sealed record CompletionCallLogPromptPrefix(
+    string SystemPrompt,
+    CompletionCallLogOutputContract OutputContract,
+    IReadOnlyList<CompletionCallLogHistoryMessage> SharedContextMessages
+) {
+    public static CompletionCallLogPromptPrefix From(
+        CompletionPromptPrefix prefix
+    ) {
+        ArgumentNullException.ThrowIfNull(prefix);
+        return new CompletionCallLogPromptPrefix(
+            prefix.SystemPrompt,
+            CompletionCallLogOutputContract.From(prefix.OutputContract),
+            prefix.SharedContextMessages
+                .Select(CompletionCallLogHistoryMessage.From)
                 .ToArray()
         );
     }
 }
+
+public sealed record CompletionCallLogOutputContract(
+    IReadOnlyList<CompletionCallLogToolDefinition> Tools,
+    CompletionCallLogToolChoice ToolChoice,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? AllowParallelToolCalls
+) {
+    public static CompletionCallLogOutputContract From(
+        CompletionOutputContract contract
+    ) {
+        ArgumentNullException.ThrowIfNull(contract);
+        return new CompletionCallLogOutputContract(
+            contract.Tools
+                .Select(CompletionCallLogToolDefinition.From)
+                .ToArray(),
+            new CompletionCallLogToolChoice(
+                contract.ToolChoice.Kind,
+                contract.ToolChoice.RequiredToolName
+            ),
+            contract.AllowParallelToolCalls
+        );
+    }
+}
+
+public sealed record CompletionCallLogToolChoice(
+    CompletionToolChoiceKind Kind,
+    string? RequiredToolName
+);
 
 public sealed record CompletionCallLogHistoryMessage(
     string Kind,
@@ -481,13 +524,113 @@ public sealed record CompletionCallLogToolResult(
 
 public sealed record CompletionCallLogToolDefinition(
     string Name,
-    string Description
+    string Description,
+    CompletionCallLogToolSchema InputSchema
 ) {
     public static CompletionCallLogToolDefinition From(ToolDefinition tool) {
         ArgumentNullException.ThrowIfNull(tool);
-        return new CompletionCallLogToolDefinition(tool.Name, tool.Description);
+        return new CompletionCallLogToolDefinition(
+            tool.Name,
+            tool.Description,
+            CompletionCallLogToolSchema.From(tool.InputSchema)
+        );
     }
 }
+
+public sealed record CompletionCallLogToolSchema(
+    string Kind,
+    string? Description,
+    string? Example,
+    bool? AdditionalProperties,
+    IReadOnlyList<CompletionCallLogToolSchemaProperty>? Properties,
+    CompletionCallLogToolSchema? Items,
+    bool? Nullable,
+    ToolParamType? ValueKind,
+    JsonElement? Default,
+    IReadOnlyList<string>? StringEnumValues,
+    int? MinLength,
+    int? MaxLength,
+    string? Pattern,
+    object? Minimum,
+    object? Maximum
+) {
+    public static CompletionCallLogToolSchema From(ToolSchema schema) {
+        ArgumentNullException.ThrowIfNull(schema);
+        return schema switch {
+            ToolSchema.Object objectSchema => new CompletionCallLogToolSchema(
+                "object",
+                objectSchema.Description,
+                objectSchema.Example,
+                objectSchema.AdditionalProperties,
+                objectSchema.Properties
+                    .Select(static property =>
+                        new CompletionCallLogToolSchemaProperty(
+                            property.Name,
+                            property.IsRequired,
+                            From(property.Schema)
+                        ))
+                    .ToArray(),
+                Items: null,
+                Nullable: null,
+                ValueKind: null,
+                Default: null,
+                StringEnumValues: null,
+                MinLength: null,
+                MaxLength: null,
+                Pattern: null,
+                Minimum: null,
+                Maximum: null
+            ),
+            ToolSchema.Array arraySchema => new CompletionCallLogToolSchema(
+                "array",
+                arraySchema.Description,
+                arraySchema.Example,
+                AdditionalProperties: null,
+                Properties: null,
+                From(arraySchema.ItemSchema),
+                arraySchema.IsNullable,
+                ValueKind: null,
+                Default: null,
+                StringEnumValues: null,
+                MinLength: null,
+                MaxLength: null,
+                Pattern: null,
+                Minimum: null,
+                Maximum: null
+            ),
+            ToolSchema.Value valueSchema => new CompletionCallLogToolSchema(
+                "value",
+                valueSchema.Description,
+                valueSchema.Example,
+                AdditionalProperties: null,
+                Properties: null,
+                Items: null,
+                valueSchema.IsNullable,
+                valueSchema.ValueKind,
+                valueSchema.Default.HasValue
+                    ? JsonSerializer.SerializeToElement(
+                        valueSchema.Default.Value.Value
+                    )
+                    : null,
+                valueSchema.StringEnumValues.ToArray(),
+                valueSchema.MinLength,
+                valueSchema.MaxLength,
+                valueSchema.Pattern,
+                valueSchema.Minimum,
+                valueSchema.Maximum
+            ),
+            _ => throw new NotSupportedException(
+                $"Unsupported tool schema node '{schema.GetType().FullName}'."
+            )
+        };
+    }
+}
+
+public sealed record CompletionCallLogToolSchemaProperty(
+    string Name,
+    bool Required,
+    CompletionCallLogToolSchema Schema
+);
 
 public sealed record CompletionCallLogResponse(
     CompletionDescriptor Invocation,

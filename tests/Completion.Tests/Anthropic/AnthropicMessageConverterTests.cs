@@ -813,6 +813,131 @@ public sealed class AnthropicMessageConverterTests {
         );
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConvertToApiRequest_ReasoningEndingPrefixKeepsCacheMarkerOnLastAllowedBlock(
+        bool redacted
+    ) {
+        ReadOnlyMemory<byte> payload = redacted
+            ? AnthropicThinkingPayloadCodec.EncodeRedacted("encrypted")
+            : AnthropicThinkingPayloadCodec.Encode("reason", "signature");
+        var request = new CompletionRequest(
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [
+                    new ObservationMessage("shared-prefix"),
+                    new ActionMessage([
+                        new AnthropicReasoningBlock(
+                            payload,
+                            new CompletionDescriptor(
+                                "provider",
+                                "spec",
+                                "model"
+                            ),
+                            redacted ? null : "reason"
+                        )
+                    ])
+                ]
+            ),
+            [new ObservationMessage("member-tail")]
+        );
+
+        AnthropicApiRequest apiRequest =
+            AnthropicMessageConverter.ConvertToApiRequest(
+                request,
+                enablePromptCaching: true
+            );
+        var options = new JsonSerializerOptions {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        };
+        using JsonDocument document = JsonDocument.Parse(
+            JsonSerializer.Serialize(apiRequest, options)
+        );
+        JsonElement[] messages = document.RootElement
+            .GetProperty("messages")
+            .EnumerateArray()
+            .ToArray();
+
+        Assert.Equal(3, messages.Length);
+        JsonElement sharedText = Assert.Single(
+            messages[0].GetProperty("content").EnumerateArray()
+        );
+        Assert.Equal("shared-prefix", sharedText.GetProperty("text").GetString());
+        Assert.Equal(
+            "ephemeral",
+            sharedText.GetProperty("cache_control").GetProperty("type").GetString()
+        );
+        JsonElement reasoning = Assert.Single(
+            messages[1].GetProperty("content").EnumerateArray()
+        );
+        Assert.Equal(
+            redacted ? "redacted_thinking" : "thinking",
+            reasoning.GetProperty("type").GetString()
+        );
+        Assert.False(reasoning.TryGetProperty("cache_control", out _));
+        JsonElement tailText = Assert.Single(
+            messages[2].GetProperty("content").EnumerateArray()
+        );
+        Assert.Equal("member-tail", tailText.GetProperty("text").GetString());
+        Assert.False(tailText.TryGetProperty("cache_control", out _));
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_UncacheableOnlyPrefixOmitsMessageBreakpoint() {
+        var tool = new ToolDefinition(
+            "search",
+            "Search.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "claude-3",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([tool]),
+                [
+                    new ActionMessage([
+                        new AnthropicReasoningBlock(
+                            AnthropicThinkingPayloadCodec.Encode(
+                                "reason",
+                                "signature"
+                            ),
+                            new CompletionDescriptor(
+                                "provider",
+                                "spec",
+                                "model"
+                            ),
+                            "reason"
+                        )
+                    ])
+                ]
+            ),
+            [new ObservationMessage("member-tail")]
+        );
+
+        AnthropicApiRequest apiRequest =
+            AnthropicMessageConverter.ConvertToApiRequest(
+                request,
+                enablePromptCaching: true
+            );
+
+        Assert.NotNull(Assert.Single(apiRequest.Tools!).CacheControl);
+        Assert.NotNull(
+            Assert.Single(
+                Assert.IsType<List<AnthropicSystemTextBlock>>(
+                    apiRequest.System
+                )
+            ).CacheControl
+        );
+        Assert.All(
+            apiRequest.Messages.SelectMany(static message => message.Content),
+            static block => Assert.Null(block.CacheControl)
+        );
+    }
+
     [Fact]
     public void ConvertToApiRequest_ToolDependencyCanCrossPrefixTailBoundary() {
         var action = new ActionMessage([

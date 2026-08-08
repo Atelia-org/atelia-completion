@@ -87,6 +87,30 @@ public sealed class ActionMessageSerializationTests {
     }
 
     [Fact]
+    public void AnthropicReasoningBlock_CopiesCallerOwnedPayload() {
+        byte[] callerOwned = [1, 2, 3];
+        var block = new AnthropicReasoningBlock(
+            callerOwned,
+            Invocation,
+            "reason"
+        );
+
+        callerOwned[0] = 99;
+
+        Assert.Equal([1, 2, 3], block.OpaquePayload.ToArray());
+    }
+
+    [Fact]
+    public void GeminiReplayBlock_CopiesCallerOwnedPayload() {
+        byte[] callerOwned = [4, 5, 6];
+        var block = new GeminiReplayBlock(callerOwned, Invocation);
+
+        callerOwned[0] = 99;
+
+        Assert.Equal([4, 5, 6], block.OpaquePayload.ToArray());
+    }
+
+    [Fact]
     public void UnknownReasoningCodec_DecodesToTextReasoningFallback() {
         var serialized = new[] {
             new SerializedActionBlock(

@@ -48,9 +48,11 @@ public sealed class OpenAIChatProjectionRoundTripTests {
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(
             new CompletionRequest(
-                ModelId: "deepseek-v4",
-                SystemPrompt: string.Empty,
-                Context: [
+                "deepseek-v4",
+                new CompletionPromptPrefix(
+                    string.Empty,
+                    CompletionOutputContract.ProviderDefault(WeatherTools),
+                    [
                     parsed,
                     new ToolResultsMessage(
                         content: null,
@@ -66,8 +68,9 @@ public sealed class OpenAIChatProjectionRoundTripTests {
                             )
                         ]
                     )
-                ],
-                Tools: WeatherTools
+                ]
+                ),
+                tailMessages: []
             ),
             OpenAIChatDialects.DeepSeekV4
         );
@@ -108,10 +111,13 @@ public sealed class OpenAIChatProjectionRoundTripTests {
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(
             new CompletionRequest(
-                ModelId: "deepseek-v4",
-                SystemPrompt: string.Empty,
-                Context: [parsed],
-                Tools: WeatherTools
+                "deepseek-v4",
+                new CompletionPromptPrefix(
+                    string.Empty,
+                    CompletionOutputContract.ProviderDefault(WeatherTools),
+                    [parsed]
+                ),
+                tailMessages: []
             ),
             OpenAIChatDialects.DeepSeekV4
         );
@@ -158,9 +164,11 @@ public sealed class OpenAIChatProjectionRoundTripTests {
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(
             new CompletionRequest(
-                ModelId: "deepseek-v4",
-                SystemPrompt: string.Empty,
-                Context: [
+                "deepseek-v4",
+                new CompletionPromptPrefix(
+                    string.Empty,
+                    CompletionOutputContract.ProviderDefault(WeatherTools),
+                    [
                     new ObservationMessage("How's the weather in Hangzhou tomorrow?"),
                     toolTurn,
                     new ToolResultsMessage(
@@ -171,8 +179,9 @@ public sealed class OpenAIChatProjectionRoundTripTests {
                     ),
                     finalAnswerTurn,
                     new ObservationMessage("What about Guangzhou tomorrow?")
-                ],
-                Tools: WeatherTools
+                ]
+                ),
+                tailMessages: []
             ),
             OpenAIChatDialects.DeepSeekV4
         );
@@ -227,10 +236,13 @@ public sealed class OpenAIChatProjectionRoundTripTests {
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(
             new CompletionRequest(
-                ModelId: "gpt-4.1",
-                SystemPrompt: string.Empty,
-                Context: [parsed],
-                Tools: WeatherTools
+                "gpt-4.1",
+                new CompletionPromptPrefix(
+                    string.Empty,
+                    CompletionOutputContract.ProviderDefault(WeatherTools),
+                    [parsed]
+                ),
+                tailMessages: []
             ),
             OpenAIChatDialects.Strict
         );

@@ -517,10 +517,13 @@ public sealed class CompletionHttpTransportTests {
 
     private static CompletionRequest CreateRequest(string modelId) {
         return new CompletionRequest(
-            ModelId: modelId,
-            SystemPrompt: "system",
-            Context: new[] { new ObservationMessage("hello") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            modelId,
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new[] { new ObservationMessage("hello") }
+            ),
+            tailMessages: []
         );
     }
 

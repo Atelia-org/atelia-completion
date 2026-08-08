@@ -258,7 +258,7 @@ prototypes/Completion.Tools/
 
 - `ToolDefinition.InputSchema` 已支持递归 object / array / value 声明
 - provider 请求投影与执行期参数解析都走同一条 `ToolDefinition.InputSchema` 主链，不再存在 flat 公共 API 作为第二真源
-- `ReflectedToolDefinitionBuilder` 是共享声明 helper；若只需要 `ToolDefinition`，调用方仍需显式放进 `CompletionRequest.Tools`，若要直接拿到可执行工具则优先用 `MethodToolWrapper` / `ArtifactToolWrapper<T>`
+- `ReflectedToolDefinitionBuilder` 是共享声明 helper；若只需要 `ToolDefinition`，调用方仍需显式放进 `CompletionPromptPrefix.OutputContract.Tools`，若要直接拿到可执行工具则优先用 `MethodToolWrapper` / `ArtifactToolWrapper<T>`
 - `ReflectedToolDefinitionBuilder` 位于 `prototypes/Completion.Tools/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
 - LLM JSON 没有 uint，调用方需自行做 long → uint 的范围检查
 

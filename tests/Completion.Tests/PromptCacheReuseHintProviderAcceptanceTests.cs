@@ -70,10 +70,13 @@ public sealed class PromptCacheReuseHintProviderAcceptanceTests {
     }
 
     private static CompletionRequest CreateRequest() => new(
-        ModelId: "model-a",
-        SystemPrompt: "system",
-        Context: [new ObservationMessage("hello")],
-        Tools: []
+        "model-a",
+        new CompletionPromptPrefix(
+            "system",
+            CompletionOutputContract.ProviderDefault([]),
+            [new ObservationMessage("hello")]
+        ),
+        tailMessages: []
     );
 
     private static HttpClient CreateHttpClient(HttpMessageHandler handler) =>

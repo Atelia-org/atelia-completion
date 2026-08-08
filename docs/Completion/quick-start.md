@@ -100,12 +100,13 @@ var client = new OpenAIChatClient(
 );
 
 var request = new CompletionRequest(
-    ModelId: "Qwen3.5-27b-GPTQ-Int4",
-    SystemPrompt: "You are a helpful assistant.",
-    Context: new IHistoryMessage[] {
-        new ObservationMessage("用一句话介绍自己。"),
-    },
-    Tools: ImmutableArray<ToolDefinition>.Empty
+    "Qwen3.5-27b-GPTQ-Int4",
+    new CompletionPromptPrefix(
+        "You are a helpful assistant.",
+        CompletionOutputContract.ProviderDefault([]),
+        [new ObservationMessage("用一句话介绍自己。")]
+    ),
+    tailMessages: []
 );
 
 var ct = CancellationToken.None;                    // 生产代码请传真正的 token
@@ -178,12 +179,13 @@ var client = new OpenAIChatClient(
 );
 
 var request = new CompletionRequest(
-    ModelId: "Qwen3.5-27b-GPTQ-Int4",
-    SystemPrompt: "You are a helpful assistant.",
-    Context: new IHistoryMessage[] {
-        new ObservationMessage("用一句话介绍自己。"),
-    },
-    Tools: ImmutableArray<ToolDefinition>.Empty
+    "Qwen3.5-27b-GPTQ-Int4",
+    new CompletionPromptPrefix(
+        "You are a helpful assistant.",
+        CompletionOutputContract.ProviderDefault([]),
+        [new ObservationMessage("用一句话介绍自己。")]
+    ),
+    tailMessages: []
 );
 
 var result = await client.StreamCompletionAsync(request, null, CancellationToken.None);
@@ -288,30 +290,47 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 ## 3. 构造 `CompletionRequest`
 
 ```csharp
-public sealed record CompletionRequest(
-    string ModelId,                                 // 必填，且必须能被服务端识别
-    string SystemPrompt,                            // 空字符串可以，按约定不要传 null
-    IReadOnlyList<IHistoryMessage> Context,         // 历史消息，按时间顺序
-    ImmutableArray<ToolDefinition> Tools            // 无工具时传 ImmutableArray<ToolDefinition>.Empty —— 不要用 default！
-);
+public sealed class CompletionPromptPrefix {
+    public string SystemPrompt { get; }                            // 空字符串可以，不要传 null
+    public CompletionOutputContract OutputContract { get; }       // ordered tools + tool-call policy
+    public ImmutableArray<IHistoryMessage> SharedContextMessages { get; }
+}
+
+public sealed class CompletionRequest {
+    public string ModelId { get; }                                 // 必填，且必须能被服务端识别
+    public CompletionPromptPrefix PromptPrefix { get; }            // typed stable-prefix boundary
+    public ImmutableArray<IHistoryMessage> TailMessages { get; }   // 不共享的请求尾部
+    public int? MaxTokens { get; }
+}
 ```
 
-四个字段都不可变。要"修改"一次请求，新建一个 record（用 `with`）。
+这些对象在构造时冻结消息和工具集合；要“修改”一次请求，应显式新建对象。没有旧的 flat
+`SystemPrompt` / `Context` / `Tools` compatibility view。
 
-**当前不暴露的字段**（按需走 provider 默认值，未来再扩展）：`temperature`、`top_p`、`max_tokens`、`stop` 等采样参数；`tool_choice` / 强制调用某工具；`response_format` 等。
+`CompletionOutputContract` 是 ordered tools、`CompletionToolChoice` 和可选
+`AllowParallelToolCalls` 的单一真相源。`CompletionToolChoice` 支持
+`ProviderDefault` / `Auto` / `None` / `RequiredAny` / `RequiredNamed(name)`；provider
+无法等价表达某个策略时会 fail fast。
 
-⚠️ **不要把 system 拼进 `Context`**——它走独立的 `SystemPrompt` 字段，与历史解耦。
+普通、不需要共享前缀的调用可把全部旧历史放入 `SharedContextMessages`，并令
+`TailMessages = []`。需要共享 prefix 的调用必须显式划分两段，不能用裸 message index 或
+adapter 内字符串搜索表达 boundary。
 
-⚠️ **`Tools` 必须显式构造**：用 `ImmutableArray.Create(...)` 或 `.Empty`。`default(ImmutableArray<T>)` 的 `IsDefault == true`，converter 内部 `foreach` 时会 NRE。
+**当前不暴露的字段**（按需走 provider 默认值，未来再扩展）：`temperature`、`top_p`、`stop`、`response_format` 等。
 
-### 3.1 `Context`：用 RL 术语，不是 OpenAI 角色
+⚠️ **不要把 system 拼进 messages**——它走 `PromptPrefix.SystemPrompt`，与历史解耦。
+
+⚠️ **Tools 只从 `PromptPrefix.OutputContract.Tools` 进入 provider wire**。不要在 member/tail
+另建一份工具集合或 tool-choice override。
+
+### 3.1 Shared context / tail：消息仍使用 RL 术语
 
 `IHistoryMessage` 故意 **不叫** `user/assistant/system/tool`——它向强化学习靠拢，为多 Agent 场景预留。映射规则：
 
 | 你想表达 | 用什么 | 备注 |
 |---|---|---|
 | 用户输入 / 系统通知 / 环境观测 | `new ObservationMessage(string? content)` | 统一文本字段 |
-| LLM 上一次输出（要回灌） | `CompletionResult.Message`（取聚合结果的 `ActionMessage` 字段，详见 §4.2） | 纯 `ActionMessage` 实现 `IHistoryMessage`，可塞回 `Context` |
+| LLM 上一次输出（要回灌） | `CompletionResult.Message`（取聚合结果的 `ActionMessage` 字段，详见 §4.2） | 纯 `ActionMessage` 实现 `IHistoryMessage`，可放入 shared context 或 tail |
 | 工具执行结果（要回灌） | `new ToolResultsMessage(content, results)` | `results: IReadOnlyList<ToolResult>`，且必须与 pending tool call 按 `ToolCallId + ToolName` 一一对齐 |
 
 **`ActionMessage` 的归属**：`ActionBlock` sum type、`CompletionDescriptor`、`ActionMessage` 都在 **Abstractions** 层。多轮回灌的标准写法：取 `CompletionResult.Message` 即可——它是 `ActionMessage`（实现 `IHistoryMessage`），可直接 `history.Add(result.Message)`（见 §4.2）。
@@ -385,9 +404,12 @@ var readFile = new ToolDefinition(
 
 var request = new CompletionRequest(
     "Qwen3.5-27b-GPTQ-Int4",
-    "You are a helpful coding agent.",
-    history,
-    ImmutableArray.Create(readFile)
+    new CompletionPromptPrefix(
+        "You are a helpful coding agent.",
+        CompletionOutputContract.ProviderDefault([readFile]),
+        history
+    ),
+    tailMessages: []
 );
 ```
 
@@ -633,7 +655,7 @@ new GeminiClient(
 
 - 非流式底层接口：`models.generateContent`
 - 流式底层接口：`models.streamGenerateContent?alt=sse`
-- `SystemPrompt` 会投影到 `systemInstruction`
+- `PromptPrefix.SystemPrompt` 会投影到 `systemInstruction`
 - `ToolDefinition[]` 会投影到 `tools[].functionDeclarations[]`
 
 Gemini 的特殊点不是构造方式，而是历史回灌：
@@ -659,8 +681,8 @@ Gemini 的特殊点不是构造方式，而是历史回灌：
 
 ### 高频坑（高密度）
 
-1. **`Tools` 用 `default(ImmutableArray<T>)`** → converter 内部 `foreach` NRE。永远用 `ImmutableArray.Create(...)` 或 `.Empty`。
-2. **拼 `role="system"` 进 `Context`** → system 走独立 `SystemPrompt` 字段。
+1. **在 prefix 外另传 tools / tool-choice** → tools 与调用策略只走 `CompletionOutputContract`。
+2. **拼 `role="system"` 进 messages** → system 走独立的 `PromptPrefix.SystemPrompt`。
 3. **把嵌套 schema 当成旧 flat 参数来读** → `ToolSchema` 已支持嵌套 object / array；执行结果会物化为 dictionary/list，不会自动绑成你的自定义 CLR 类型。
 4. **`ToolCallId` 跨轮错位** → converter 抛 `InvalidOperationException`，不是 400。
 5. **解析 `Thinking.OpaquePayload`** → 不要。原样回灌，`Origin` 与产生它的调用对齐。
@@ -678,7 +700,7 @@ Gemini 的特殊点不是构造方式，而是历史回灌：
 | 404 | `HttpClient.BaseAddress` 路径错 / 手写时漏 `/` / 服务未暴露该 API | 核对 §5.3 |
 | 400 且模型名不存在 | `ModelId` 与本地加载模型不一致 | 用 sglang 的 `/v1/models` 端点确认 |
 | `InvalidOperationException` 提到 tool_call_id | 历史里 `ToolResult.ToolCallId` 与上一个 `ActionBlock.ToolCall` 错位 / 缺失 / 数量不一致 | 对齐 id，并为每个 pending tool call 都回灌一条 `ToolResult` |
-| `InvalidOperationException` 提到 first message must be user (Anthropic) | Context 第一条不是 `ObservationMessage`（或空白被跳过后变成第一条不是 user） | 调整历史；Anthropic 协议强制首条 user |
+| `InvalidOperationException` 提到 first message must be user (Anthropic) | shared context / tail 的第一条不是 `ObservationMessage`（或空白被跳过后变成第一条不是 user） | 调整历史；Anthropic 协议强制首条 user |
 | `ArgumentException: Default value ... isNullable` | `ToolSchema.Value` 构造时 default+nullable 组合非法 | 见 §3.2 |
 
 ---

@@ -21,6 +21,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
         "n",
         "stream",
         "tools",
+        "tool_choice",
+        "parallel_tool_calls",
         "reasoning_effort",
         "thinking"
     };

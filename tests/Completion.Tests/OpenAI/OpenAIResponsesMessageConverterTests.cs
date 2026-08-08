@@ -8,9 +8,11 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ProjectsObservationActionAndToolResultsIntoResponsesInput() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: "Follow the house style.",
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                "Follow the house style.",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("Search the docs."),
                 new ObservationMessage("   "),
                 new ActionMessage(
@@ -35,8 +37,9 @@ public sealed class OpenAIResponsesMessageConverterTests {
                         )
                     ]
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(request);
@@ -68,6 +71,79 @@ public sealed class OpenAIResponsesMessageConverterTests {
         );
     }
 
+    [Fact]
+    public void ConvertToApiRequest_ToolDependencyCanCrossPrefixTailBoundary() {
+        var action = new ActionMessage([
+            new ActionBlock.ToolCall(
+                new RawToolCall("search", "call-1", "{}")
+            )
+        ]);
+        var results = new ToolResultsMessage(
+            content: null,
+            results: [
+                ToolResult.FromText(
+                    "search",
+                    "call-1",
+                    ToolExecutionStatus.Success,
+                    "ok"
+                )
+            ]
+        );
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [action]
+            ),
+            [results]
+        );
+
+        OpenAIResponsesApiRequest apiRequest =
+            OpenAIResponsesMessageConverter.ConvertToApiRequest(request);
+
+        Assert.Contains(
+            apiRequest.Input,
+            static item => item is OpenAIResponsesFunctionCallItem
+        );
+        Assert.Contains(
+            apiRequest.Input,
+            static item => item is OpenAIResponsesFunctionCallOutputItem
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_MapsRequiredNamedAndParallelPolicy() {
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result"),
+                    allowParallelToolCalls: false
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        OpenAIResponsesApiRequest apiRequest =
+            OpenAIResponsesMessageConverter.ConvertToApiRequest(request);
+
+        var choice = Assert.IsType<OpenAIResponsesNamedToolChoice>(
+            apiRequest.ToolChoice
+        );
+        Assert.Equal("function", choice.Type);
+        Assert.Equal("emit_result", choice.Name);
+        Assert.False(apiRequest.ParallelToolCalls);
+    }
+
     [Theory]
     [InlineData(CompletionReasoningEffort.Disabled, "none", null)]
     [InlineData(CompletionReasoningEffort.Low, "low", "auto")]
@@ -80,10 +156,13 @@ public sealed class OpenAIResponsesMessageConverterTests {
         string? expectedSummary
     ) {
         var request = new CompletionRequest(
-            ModelId: "gpt-5",
-            SystemPrompt: string.Empty,
-            Context: [new ObservationMessage("hi")],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-5",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [new ObservationMessage("hi")]
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(
@@ -99,10 +178,13 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ProviderDefaultOmitsReasoningControl() {
         var request = new CompletionRequest(
-            ModelId: "gpt-5",
-            SystemPrompt: string.Empty,
-            Context: [new ObservationMessage("hi")],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-5",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [new ObservationMessage("hi")]
+            ),
+            tailMessages: []
         );
 
         Assert.Null(OpenAIResponsesMessageConverter.ConvertToApiRequest(request).Reasoning);
@@ -111,9 +193,11 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_MissingPendingToolResultsThrow() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     [
                         new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}")),
@@ -126,8 +210,9 @@ public sealed class OpenAIResponsesMessageConverterTests {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     ]
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -141,9 +226,11 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ToolNameMismatchThrows() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     [
                         new ActionBlock.ToolCall(new RawToolCall("search", "call-1", "{}"))
@@ -155,8 +242,9 @@ public sealed class OpenAIResponsesMessageConverterTests {
                         ToolResult.FromText("lookup", "call-1", ToolExecutionStatus.Success, "ok")
                     ]
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -171,17 +259,20 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_OrphanToolResultsThrow() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: [
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [
                 new ToolResultsMessage(
                     content: null,
                     results: [
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     ]
                 )
-            ],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            ]
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -194,9 +285,11 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ReplaysOpenAIResponsesReasoningBlockAsReasoningInputItem() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     [
                         new OpenAIResponsesReasoningBlock(
@@ -206,8 +299,9 @@ public sealed class OpenAIResponsesMessageConverterTests {
                         )
                     ]
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(request);
@@ -221,9 +315,11 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ForeignReasoningReplayFailsFast() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     [
                         new ActionBlock.TextReasoningBlock(
@@ -232,8 +328,9 @@ public sealed class OpenAIResponsesMessageConverterTests {
                         )
                     ]
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -247,9 +344,11 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_OpenAIResponsesReasoningWithMismatchedOriginFailsFast() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     [
                         new OpenAIResponsesReasoningBlock(
@@ -258,8 +357,9 @@ public sealed class OpenAIResponsesMessageConverterTests {
                         )
                     ]
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -283,15 +383,18 @@ public sealed class OpenAIResponsesMessageConverterTests {
             "gpt-5"
         );
         var request = new CompletionRequest(
-            ModelId: target.Model,
-            SystemPrompt: string.Empty,
-            Context: [new ActionMessage([
+            target.Model,
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [new ActionMessage([
                 new OpenAIResponsesReasoningBlock(
                     """{"type":"reasoning","id":"rs_1","encrypted_content":"enc_123"}""",
                     source
                 )
-            ])],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            ])]
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -313,16 +416,19 @@ public sealed class OpenAIResponsesMessageConverterTests {
             "gpt-5"
         );
         var request = new CompletionRequest(
-            ModelId: origin.Model,
-            SystemPrompt: string.Empty,
-            Context: [new ActionMessage([
+            origin.Model,
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [new ActionMessage([
                 new OpenAIResponsesReasoningBlock(
                     """{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"authoritative"}]}""",
                     origin,
                     "forged"
                 )
-            ])],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            ])]
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(

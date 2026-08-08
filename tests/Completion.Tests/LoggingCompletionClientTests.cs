@@ -533,10 +533,13 @@ public sealed class LoggingCompletionClientTests : IDisposable {
 
     private static CompletionRequest CreateRequest(IHistoryMessage message)
         => new(
-            ModelId: "model-a",
-            SystemPrompt: "system",
-            Context: [message],
-            Tools: []
+            "model-a",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [message]
+            ),
+            tailMessages: []
         );
 
     private static CompletionResult CreateResult(string text)

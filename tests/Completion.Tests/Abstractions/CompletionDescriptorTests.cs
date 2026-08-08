@@ -8,10 +8,13 @@ public sealed class CompletionDescriptorTests {
     public void FromClientAndRequest_UsesCanonicalClientIdentity() {
         var client = new StubCompletionClient("provider-x", "spec-y");
         var request = new CompletionRequest(
-            ModelId: "model-z",
-            SystemPrompt: "system",
-            Context: Array.Empty<IHistoryMessage>(),
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "model-z",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                Array.Empty<IHistoryMessage>()
+            ),
+            tailMessages: []
         );
 
         var descriptor = CompletionDescriptor.From(client, request);

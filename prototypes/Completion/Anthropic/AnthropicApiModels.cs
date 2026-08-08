@@ -35,6 +35,9 @@ internal sealed class AnthropicApiRequest {
     [JsonPropertyName("tools")]
     public List<AnthropicTool>? Tools { get; set; }
 
+    [JsonPropertyName("tool_choice")]
+    public AnthropicToolChoice? ToolChoice { get; set; }
+
     /// <summary>
     /// Extended thinking 配置。非 null 时响应会包含 thinking / redacted_thinking 内容块。
     /// </summary>
@@ -43,6 +46,17 @@ internal sealed class AnthropicApiRequest {
 
     [JsonPropertyName("output_config")]
     public AnthropicOutputConfig? OutputConfig { get; set; }
+}
+
+internal sealed class AnthropicToolChoice {
+    [JsonPropertyName("type")]
+    public required string Type { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("disable_parallel_tool_use")]
+    public bool? DisableParallelToolUse { get; set; }
 }
 
 /// <summary>

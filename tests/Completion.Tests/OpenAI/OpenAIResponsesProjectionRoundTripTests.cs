@@ -33,9 +33,11 @@ public sealed class OpenAIResponsesProjectionRoundTripTests {
 
         var previousAssistantTurn = aggregator.Build().Message;
         var request = new CompletionRequest(
-            ModelId: "gpt-5",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-5",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("What's the weather in Paris?"),
                 previousAssistantTurn,
                 new ToolResultsMessage(
@@ -45,8 +47,9 @@ public sealed class OpenAIResponsesProjectionRoundTripTests {
                     ]
                 ),
                 new ObservationMessage("What should I wear?")
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(request);

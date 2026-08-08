@@ -45,12 +45,10 @@ public sealed class OpenAIResponsesClientTests {
 
         var client = new OpenAIResponsesClient(apiKey: null, httpClient: httpClient);
         var request = new CompletionRequest(
-            ModelId: "gpt-5",
-            SystemPrompt: "system",
-            Context: new IHistoryMessage[] {
-                new ObservationMessage("hello")
-            },
-            Tools: ImmutableArray.Create(
+            "gpt-5",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault(ImmutableArray.Create(
                 new ToolDefinition(
                     "get_weather",
                     "Look up weather.",
@@ -64,7 +62,12 @@ public sealed class OpenAIResponsesClientTests {
                         ]
                     )
                 )
-            )
+            )),
+                new IHistoryMessage[] {
+                new ObservationMessage("hello")
+            }
+            ),
+            tailMessages: []
         );
 
         var result = await client.StreamCompletionAsync(request, null, CancellationToken.None);
@@ -190,9 +193,11 @@ public sealed class OpenAIResponsesClientTests {
 
         var client = new OpenAIResponsesClient(apiKey: null, httpClient: httpClient);
         var request = new CompletionRequest(
-            ModelId: "gpt-5",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-5",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("What's the weather in Paris?"),
                 new ActionMessage(
                     [
@@ -211,8 +216,9 @@ public sealed class OpenAIResponsesClientTests {
                     ]
                 ),
                 new ObservationMessage("What should I wear?")
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var result = await client.StreamCompletionAsync(request, null, CancellationToken.None);
@@ -380,10 +386,13 @@ public sealed class OpenAIResponsesClientTests {
 
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
-            ModelId: "gpt-5",
-            SystemPrompt: "system",
-            Context: new[] { new ObservationMessage("hello") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-5",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new[] { new ObservationMessage("hello") }
+            ),
+            tailMessages: []
         );
     }
 

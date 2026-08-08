@@ -31,7 +31,57 @@ internal static class OpenAIResponsesMessageConverter {
         var inputItems = new List<OpenAIResponsesInputItem>();
         var state = new ProjectionState();
 
-        foreach (var contextMessage in request.Context) {
+        ProjectMessages(
+            request.PromptPrefix.SharedContextMessages,
+            inputItems,
+            state,
+            targetInvocation
+        );
+        ProjectMessages(
+            request.TailMessages,
+            inputItems,
+            state,
+            targetInvocation
+        );
+
+        EnsureNoPendingToolCalls(state, "context ended");
+
+        CompletionOutputContract outputContract =
+            request.PromptPrefix.OutputContract;
+        var apiRequest = new OpenAIResponsesApiRequest {
+            Model = request.ModelId,
+            Instructions = string.IsNullOrWhiteSpace(request.PromptPrefix.SystemPrompt)
+                ? null
+                : request.PromptPrefix.SystemPrompt,
+            Input = inputItems,
+            Tools = BuildToolDefinitions(outputContract.Tools),
+            ToolChoice = BuildToolChoice(outputContract.ToolChoice),
+            Stream = true,
+            Store = options.Store,
+            Include = options.IncludeEncryptedReasoning ? [EncryptedReasoningInclude] : null,
+            ParallelToolCalls = outputContract.AllowParallelToolCalls ?? true,
+            Reasoning = BuildReasoningConfig(options.ReasoningEffort)
+        };
+
+        int contextMessageCount = checked(
+            request.PromptPrefix.SharedContextMessages.Length
+                + request.TailMessages.Length
+        );
+        DebugUtil.Info(
+            DebugCategory,
+            $"[OpenAIResponses] Converted {contextMessageCount} context messages to {inputItems.Count} input items, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={options.ReasoningEffort}"
+        );
+
+        return apiRequest;
+    }
+
+    private static void ProjectMessages(
+        IReadOnlyList<IHistoryMessage> contextMessages,
+        List<OpenAIResponsesInputItem> inputItems,
+        ProjectionState state,
+        CompletionDescriptor? targetInvocation
+    ) {
+        foreach (IHistoryMessage contextMessage in contextMessages) {
             switch (contextMessage) {
                 case ToolResultsMessage toolResults:
                     BuildToolResultsItems(toolResults, inputItems, state);
@@ -56,28 +106,27 @@ internal static class OpenAIResponsesMessageConverter {
                     );
             }
         }
-
-        EnsureNoPendingToolCalls(state, "context ended");
-
-        var apiRequest = new OpenAIResponsesApiRequest {
-            Model = request.ModelId,
-            Instructions = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt,
-            Input = inputItems,
-            Tools = BuildToolDefinitions(request.Tools),
-            Stream = true,
-            Store = options.Store,
-            Include = options.IncludeEncryptedReasoning ? [EncryptedReasoningInclude] : null,
-            ParallelToolCalls = options.ParallelToolCalls,
-            Reasoning = BuildReasoningConfig(options.ReasoningEffort)
-        };
-
-        DebugUtil.Info(
-            DebugCategory,
-            $"[OpenAIResponses] Converted {request.Context.Count} context messages to {inputItems.Count} input items, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={options.ReasoningEffort}"
-        );
-
-        return apiRequest;
     }
+
+    private static object? BuildToolChoice(CompletionToolChoice toolChoice)
+        => toolChoice.Kind switch {
+            CompletionToolChoiceKind.ProviderDefault => null,
+            CompletionToolChoiceKind.Auto => "auto",
+            CompletionToolChoiceKind.None => "none",
+            CompletionToolChoiceKind.RequiredAny => "required",
+            CompletionToolChoiceKind.RequiredNamed =>
+                new OpenAIResponsesNamedToolChoice {
+                    Name = toolChoice.RequiredToolName
+                        ?? throw new InvalidOperationException(
+                            "RequiredNamed tool choice is missing its tool name."
+                        )
+                },
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(toolChoice),
+                toolChoice.Kind,
+                "Unknown completion tool choice."
+            )
+        };
 
     private static OpenAIResponsesReasoningConfig? BuildReasoningConfig(
         CompletionReasoningEffort reasoningEffort

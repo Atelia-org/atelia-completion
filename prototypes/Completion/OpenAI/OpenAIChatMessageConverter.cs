@@ -18,16 +18,63 @@ internal static class OpenAIChatMessageConverter {
         var messages = new List<OpenAIChatMessage>();
         var state = new ProjectionState();
 
-        if (!string.IsNullOrWhiteSpace(request.SystemPrompt)) {
+        if (!string.IsNullOrWhiteSpace(request.PromptPrefix.SystemPrompt)) {
             messages.Add(
                 new OpenAIChatMessage {
                     Role = "system",
-                    Content = request.SystemPrompt
+                    Content = request.PromptPrefix.SystemPrompt
                 }
             );
         }
 
-        foreach (var contextMessage in request.Context) {
+        ProjectMessages(
+            request.PromptPrefix.SharedContextMessages,
+            messages,
+            state,
+            dialect,
+            targetInvocation
+        );
+        ProjectMessages(
+            request.TailMessages,
+            messages,
+            state,
+            dialect,
+            targetInvocation
+        );
+
+        EnsureNoPendingToolCalls(state, "context ended");
+
+        CompletionOutputContract outputContract =
+            request.PromptPrefix.OutputContract;
+        var apiRequest = new OpenAIChatApiRequest {
+            Model = request.ModelId,
+            Messages = messages,
+            Stream = true,
+            Tools = BuildToolDefinitions(outputContract.Tools),
+            ToolChoice = BuildToolChoice(outputContract.ToolChoice),
+            ParallelToolCalls = outputContract.AllowParallelToolCalls
+        };
+
+        int contextMessageCount = checked(
+            request.PromptPrefix.SharedContextMessages.Length
+                + request.TailMessages.Length
+        );
+        DebugUtil.Info(
+            DebugCategory,
+            $"[OpenAI] Converted {contextMessageCount} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, dialect={dialect.Name}"
+        );
+
+        return apiRequest;
+    }
+
+    private static void ProjectMessages(
+        IReadOnlyList<IHistoryMessage> contextMessages,
+        List<OpenAIChatMessage> messages,
+        ProjectionState state,
+        OpenAIChatDialect dialect,
+        CompletionDescriptor? targetInvocation
+    ) {
+        foreach (IHistoryMessage contextMessage in contextMessages) {
             switch (contextMessage) {
                 case ToolResultsMessage toolResults:
                     BuildToolResultsMessages(toolResults, messages, dialect, state);
@@ -53,23 +100,29 @@ internal static class OpenAIChatMessageConverter {
                     );
             }
         }
-
-        EnsureNoPendingToolCalls(state, "context ended");
-
-        var apiRequest = new OpenAIChatApiRequest {
-            Model = request.ModelId,
-            Messages = messages,
-            Stream = true,
-            Tools = BuildToolDefinitions(request.Tools)
-        };
-
-        DebugUtil.Info(
-            DebugCategory,
-            $"[OpenAI] Converted {request.Context.Count} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, dialect={dialect.Name}"
-        );
-
-        return apiRequest;
     }
+
+    private static object? BuildToolChoice(CompletionToolChoice toolChoice)
+        => toolChoice.Kind switch {
+            CompletionToolChoiceKind.ProviderDefault => null,
+            CompletionToolChoiceKind.Auto => "auto",
+            CompletionToolChoiceKind.None => "none",
+            CompletionToolChoiceKind.RequiredAny => "required",
+            CompletionToolChoiceKind.RequiredNamed =>
+                new OpenAIChatNamedToolChoice {
+                    Function = new OpenAIChatNamedFunctionChoice {
+                        Name = toolChoice.RequiredToolName
+                            ?? throw new InvalidOperationException(
+                                "RequiredNamed tool choice is missing its tool name."
+                            )
+                    }
+                },
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(toolChoice),
+                toolChoice.Kind,
+                "Unknown completion tool choice."
+            )
+        };
 
     private static void BuildObservationMessage(ObservationMessage input, List<OpenAIChatMessage> messages, ProjectionState state) {
         EnsureNoPendingToolCalls(state, $"observation before tool results content={input.Content}");

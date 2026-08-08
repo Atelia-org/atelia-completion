@@ -468,9 +468,11 @@ public sealed class OpenAIChatClientTests {
 
         var client = new DeepSeekV4ChatClient(apiKey: null, httpClient: httpClient);
         var request = new CompletionRequest(
-            ModelId: "deepseek-v4",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "deepseek-v4",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     new ActionBlock[] {
                         new OpenAIChatReasoningBlock(
@@ -480,8 +482,9 @@ public sealed class OpenAIChatClientTests {
                         new ActionBlock.Text("hello")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         await client.StreamCompletionAsync(request, null, CancellationToken.None);
@@ -656,10 +659,13 @@ public sealed class OpenAIChatClientTests {
 
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: "system",
-            Context: new[] { new ObservationMessage("hello") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new[] { new ObservationMessage("hello") }
+            ),
+            tailMessages: []
         );
     }
 

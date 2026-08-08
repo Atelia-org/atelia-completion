@@ -78,13 +78,16 @@ public sealed class CompletionToolsQuickStartSamplesTests {
         };
 
         var request = new CompletionRequest(
-            ModelId: "demo-model",
-            SystemPrompt: "You are a helpful assistant.",
-            Context: history,
-            Tools: session.VisibleDefinitions
+            "demo-model",
+            new CompletionPromptPrefix(
+                "You are a helpful assistant.",
+                CompletionOutputContract.ProviderDefault(session.VisibleDefinitions),
+                history
+            ),
+            tailMessages: []
         );
 
-        Assert.Equal("workspace.echo", Assert.Single(request.Tools).Name);
+        Assert.Equal("workspace.echo", Assert.Single(request.PromptPrefix.OutputContract.Tools).Name);
 
         var assistantMessage = new ActionMessage(
             [

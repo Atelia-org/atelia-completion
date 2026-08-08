@@ -16,11 +16,30 @@ internal sealed class OpenAIChatApiRequest {
     [JsonPropertyName("tools")]
     public List<OpenAIChatTool>? Tools { get; set; }
 
+    [JsonPropertyName("tool_choice")]
+    public object? ToolChoice { get; set; }
+
+    [JsonPropertyName("parallel_tool_calls")]
+    public bool? ParallelToolCalls { get; set; }
+
     [JsonPropertyName("reasoning_effort")]
     public string? ReasoningEffort { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+}
+
+internal sealed class OpenAIChatNamedToolChoice {
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "function";
+
+    [JsonPropertyName("function")]
+    public required OpenAIChatNamedFunctionChoice Function { get; set; }
+}
+
+internal sealed class OpenAIChatNamedFunctionChoice {
+    [JsonPropertyName("name")]
+    public required string Name { get; set; }
 }
 
 internal sealed class OpenAIChatMessage {

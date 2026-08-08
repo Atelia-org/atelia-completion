@@ -50,10 +50,13 @@ public sealed class GeminiProjectionRoundTripTests {
 
         using var apiRequest = ConvertToGeminiApiRequest(
             new CompletionRequest(
-                ModelId: "gemini-3-flash-preview",
-                SystemPrompt: string.Empty,
-                Context: [parsed],
-                Tools: WeatherTools
+                "gemini-3-flash-preview",
+                new CompletionPromptPrefix(
+                    string.Empty,
+                    CompletionOutputContract.ProviderDefault(WeatherTools),
+                    [parsed]
+                ),
+                tailMessages: []
             )
         );
 
@@ -82,9 +85,11 @@ public sealed class GeminiProjectionRoundTripTests {
 
         using var apiRequest = ConvertToGeminiApiRequest(
             new CompletionRequest(
-                ModelId: "gemini-3-flash-preview",
-                SystemPrompt: string.Empty,
-                Context: [
+                "gemini-3-flash-preview",
+                new CompletionPromptPrefix(
+                    string.Empty,
+                    CompletionOutputContract.ProviderDefault(WeatherTools),
+                    [
                     new ObservationMessage("What's the weather in Paris tomorrow?"),
                     parsed,
                     new ToolResultsMessage(
@@ -101,8 +106,9 @@ public sealed class GeminiProjectionRoundTripTests {
                             )
                         ]
                     )
-                ],
-                Tools: WeatherTools
+                ]
+                ),
+                tailMessages: []
             )
         );
 

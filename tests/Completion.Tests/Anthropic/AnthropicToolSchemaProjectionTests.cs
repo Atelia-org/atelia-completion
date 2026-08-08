@@ -9,10 +9,13 @@ public sealed class AnthropicToolSchemaProjectionTests {
     [Fact]
     public void ConvertToApiRequest_ProjectsRecursiveToolSchemaIntoInputSchema() {
         var request = new CompletionRequest(
-            ModelId: "claude-3-7-sonnet",
-            SystemPrompt: string.Empty,
-            Context: [new ObservationMessage("Search the docs.")],
-            Tools: ImmutableArray.Create(CreateRecursiveToolDefinition())
+            "claude-3-7-sonnet",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray.Create(CreateRecursiveToolDefinition())),
+                [new ObservationMessage("Search the docs.")]
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);

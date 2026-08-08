@@ -14,7 +14,54 @@ internal static class GeminiMessageConverter {
         var contents = new List<GeminiContent>();
         var pendingToolCalls = new List<PendingToolCall>();
 
-        foreach (var contextMessage in request.Context) {
+        ProjectMessages(
+            request.PromptPrefix.SharedContextMessages,
+            contents,
+            pendingToolCalls
+        );
+        ProjectMessages(
+            request.TailMessages,
+            contents,
+            pendingToolCalls
+        );
+
+        EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
+
+        CompletionOutputContract outputContract =
+            request.PromptPrefix.OutputContract;
+        var apiRequest = new GeminiGenerateContentRequest {
+            Contents = contents,
+            SystemInstruction = string.IsNullOrWhiteSpace(
+                request.PromptPrefix.SystemPrompt
+            )
+                ? null
+                : new GeminiContent {
+                    Parts = new List<GeminiPart> {
+                        new() { Text = request.PromptPrefix.SystemPrompt }
+                    }
+                },
+            Tools = BuildToolDefinitions(outputContract.Tools),
+            ToolConfig = BuildToolConfig(outputContract)
+        };
+
+        int contextMessageCount = checked(
+            request.PromptPrefix.SharedContextMessages.Length
+                + request.TailMessages.Length
+        );
+        DebugUtil.Info(
+            DebugCategory,
+            $"[Gemini] Converted {contextMessageCount} context messages to {contents.Count} contents, tools={apiRequest.Tools?.Count ?? 0}"
+        );
+
+        return apiRequest;
+    }
+
+    private static void ProjectMessages(
+        IReadOnlyList<IHistoryMessage> contextMessages,
+        List<GeminiContent> contents,
+        List<PendingToolCall> pendingToolCalls
+    ) {
+        foreach (IHistoryMessage contextMessage in contextMessages) {
             switch (contextMessage) {
                 case ToolResultsMessage toolResults:
                     BuildToolResultsContent(toolResults, contents, pendingToolCalls);
@@ -34,27 +81,44 @@ internal static class GeminiMessageConverter {
                     );
             }
         }
+    }
 
-        EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
+    private static GeminiToolConfig? BuildToolConfig(
+        CompletionOutputContract outputContract
+    ) {
+        if (outputContract.AllowParallelToolCalls is false) {
+            throw new NotSupportedException(
+                "Gemini function-calling config cannot guarantee that parallel tool calls are disabled."
+            );
+        }
 
-        var apiRequest = new GeminiGenerateContentRequest {
-            Contents = contents,
-            SystemInstruction = string.IsNullOrWhiteSpace(request.SystemPrompt)
-                ? null
-                : new GeminiContent {
-                    Parts = new List<GeminiPart> {
-                        new() { Text = request.SystemPrompt }
-                    }
+        CompletionToolChoice toolChoice = outputContract.ToolChoice;
+        if (toolChoice.Kind is CompletionToolChoiceKind.ProviderDefault) {
+            return null;
+        }
+
+        return new GeminiToolConfig {
+            FunctionCallingConfig = new GeminiFunctionCallingConfig {
+                Mode = toolChoice.Kind switch {
+                    CompletionToolChoiceKind.Auto => "AUTO",
+                    CompletionToolChoiceKind.None => "NONE",
+                    CompletionToolChoiceKind.RequiredAny => "ANY",
+                    CompletionToolChoiceKind.RequiredNamed => "ANY",
+                    _ => throw new ArgumentOutOfRangeException(
+                        nameof(outputContract),
+                        toolChoice.Kind,
+                        "Unknown completion tool choice."
+                    )
                 },
-            Tools = BuildToolDefinitions(request.Tools)
+                AllowedFunctionNames = toolChoice.Kind
+                    is CompletionToolChoiceKind.RequiredNamed
+                        ? [toolChoice.RequiredToolName
+                            ?? throw new InvalidOperationException(
+                                "RequiredNamed tool choice is missing its tool name."
+                            )]
+                        : null
+            }
         };
-
-        DebugUtil.Info(
-            DebugCategory,
-            $"[Gemini] Converted {request.Context.Count} context messages to {contents.Count} contents, tools={apiRequest.Tools?.Count ?? 0}"
-        );
-
-        return apiRequest;
     }
 
     private static void BuildObservationContent(

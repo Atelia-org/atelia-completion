@@ -427,9 +427,14 @@ public sealed record CompletionCallLogRequest(
 
         return new CompletionCallLogRequest(
             request.ModelId,
-            request.SystemPrompt,
-            request.Context.Select(CompletionCallLogHistoryMessage.From).ToArray(),
-            request.Tools.Select(CompletionCallLogToolDefinition.From).ToArray()
+            request.PromptPrefix.SystemPrompt,
+            request.PromptPrefix.SharedContextMessages
+                .Concat(request.TailMessages)
+                .Select(CompletionCallLogHistoryMessage.From)
+                .ToArray(),
+            request.PromptPrefix.OutputContract.Tools
+                .Select(CompletionCallLogToolDefinition.From)
+                .ToArray()
         );
     }
 }

@@ -9,10 +9,13 @@ public sealed class OpenAIResponsesToolSchemaProjectionTests {
     [Fact]
     public void ConvertToApiRequest_ProjectsRecursiveToolSchemaIntoStrictFunctionTools() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: [new ObservationMessage("Search the docs.")],
-            Tools: ImmutableArray.Create(CreateRecursiveToolDefinition())
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray.Create(CreateRecursiveToolDefinition())),
+                [new ObservationMessage("Search the docs.")]
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(

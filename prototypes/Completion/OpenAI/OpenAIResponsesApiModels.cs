@@ -16,6 +16,9 @@ internal sealed class OpenAIResponsesApiRequest {
     [JsonPropertyName("tools")]
     public List<OpenAIResponsesTool>? Tools { get; set; }
 
+    [JsonPropertyName("tool_choice")]
+    public object? ToolChoice { get; set; }
+
     [JsonPropertyName("stream")]
     public bool Stream { get; set; } = true;
 
@@ -33,6 +36,14 @@ internal sealed class OpenAIResponsesApiRequest {
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+}
+
+internal sealed class OpenAIResponsesNamedToolChoice {
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "function";
+
+    [JsonPropertyName("name")]
+    public required string Name { get; set; }
 }
 
 internal sealed class OpenAIResponsesReasoningConfig {

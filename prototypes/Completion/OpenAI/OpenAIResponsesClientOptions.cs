@@ -11,7 +11,5 @@ public sealed class OpenAIResponsesClientOptions {
 
     public bool IncludeEncryptedReasoning { get; init; } = true;
 
-    public bool ParallelToolCalls { get; init; } = true;
-
     public JsonObject? ExtraBody { get; init; }
 }

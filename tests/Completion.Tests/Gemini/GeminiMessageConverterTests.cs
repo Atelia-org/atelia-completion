@@ -15,10 +15,13 @@ public sealed class GeminiMessageConverterTests {
         if (!GeminiProductionTypesPresent()) { return; }
 
         var request = new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: "Follow the system policy.",
-            Context: new IHistoryMessage[] { new ObservationMessage("hello") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                "Follow the system policy.",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hello") }
+            ),
+            tailMessages: []
         );
 
         using var document = SerializeApiRequest(ConvertToApiRequest(request));
@@ -66,10 +69,13 @@ public sealed class GeminiMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         using var document = SerializeApiRequest(ConvertToApiRequest(request));
@@ -106,13 +112,125 @@ public sealed class GeminiMessageConverterTests {
     }
 
     [Fact]
+    public void ConvertToApiRequest_ToolDependencyCanCrossPrefixTailBoundary() {
+        if (!GeminiProductionTypesPresent()) { return; }
+
+        ActionBlock replayBlock = CreateGeminiReplayBlock(
+            toolName: "search",
+            toolCallId: "call-1",
+            rawArgumentsJson: "{}",
+            thoughtSignature: "sig-1"
+        );
+        var results = new ToolResultsMessage(
+            content: null,
+            results: [
+                ToolResult.FromText(
+                    "search",
+                    "call-1",
+                    ToolExecutionStatus.Success,
+                    "ok"
+                )
+            ]
+        );
+        var request = new CompletionRequest(
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [new ActionMessage([replayBlock])]
+            ),
+            [results]
+        );
+
+        using JsonDocument document = SerializeApiRequest(
+            ConvertToApiRequest(request)
+        );
+
+        JsonElement[] contents = document.RootElement
+            .GetProperty("contents")
+            .EnumerateArray()
+            .ToArray();
+        Assert.Equal(2, contents.Length);
+        Assert.Equal("model", contents[0].GetProperty("role").GetString());
+        Assert.Equal("user", contents[1].GetProperty("role").GetString());
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_MapsRequiredNamedToolChoice() {
+        if (!GeminiProductionTypesPresent()) { return; }
+
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result")
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        using JsonDocument document = SerializeApiRequest(
+            ConvertToApiRequest(request)
+        );
+        JsonElement config = document.RootElement
+            .GetProperty("toolConfig")
+            .GetProperty("functionCallingConfig");
+
+        Assert.Equal("ANY", config.GetProperty("mode").GetString());
+        Assert.Equal(
+            "emit_result",
+            Assert.Single(
+                config.GetProperty("allowedFunctionNames").EnumerateArray()
+            ).GetString()
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_RejectsDisableParallelPolicy() {
+        if (!GeminiProductionTypesPresent()) { return; }
+
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.Auto,
+                    allowParallelToolCalls: false
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        Assert.Throws<NotSupportedException>(
+            () => ConvertToApiRequest(request)
+        );
+    }
+
+    [Fact]
     public void ConvertToApiRequest_ToolReplayWithoutGeminiReplayPayloadFailsFast() {
         if (!GeminiProductionTypesPresent()) { return; }
 
         var request = new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     new ActionBlock[] {
                         new ActionBlock.ToolCall(
@@ -130,8 +248,9 @@ public sealed class GeminiMessageConverterTests {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -163,10 +282,13 @@ public sealed class GeminiMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -200,10 +322,13 @@ public sealed class GeminiMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -257,17 +382,20 @@ public sealed class GeminiMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     new ActionBlock[] {
                         new ActionBlock.Text("visible text"),
                         replayBlock
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(

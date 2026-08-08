@@ -20,6 +20,7 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         "instructions",
         "input",
         "tools",
+        "tool_choice",
         "stream",
         "store",
         "include",
@@ -49,7 +50,6 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
             ReasoningEffort = options.ReasoningEffort,
             Store = options.Store,
             IncludeEncryptedReasoning = options.IncludeEncryptedReasoning,
-            ParallelToolCalls = options.ParallelToolCalls,
             ExtraBody = options.ExtraBody is null
                 ? null
                 : (JsonObject)options.ExtraBody.DeepClone()

@@ -19,9 +19,11 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
@@ -30,8 +32,9 @@ public sealed class AnthropicMessageConverterTests {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -63,9 +66,11 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
@@ -74,8 +79,9 @@ public sealed class AnthropicMessageConverterTests {
                         ToolResult.FromText("echo", "call-2", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -99,9 +105,11 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
@@ -110,8 +118,9 @@ public sealed class AnthropicMessageConverterTests {
                         ToolResult.FromText("echo", "call-3", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -135,9 +144,11 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
@@ -146,8 +157,9 @@ public sealed class AnthropicMessageConverterTests {
                         ToolResult.FromText("echo", "call-invalid", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -172,9 +184,11 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("hi"),
                 actionMessage,
                 new ToolResultsMessage(
@@ -183,8 +197,9 @@ public sealed class AnthropicMessageConverterTests {
                         ToolResult.FromText("echo", "call-array", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -222,10 +237,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -299,10 +317,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -329,10 +350,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi"), actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -354,10 +378,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -372,14 +399,17 @@ public sealed class AnthropicMessageConverterTests {
         // 纯空观测不携带信息，跳过可避免向 Anthropic 发送空 text block
         // (`messages: text content blocks must contain non-whitespace text`)。
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("hi"),
                 new ObservationMessage(null),
                 new ObservationMessage("   ")
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -397,14 +427,17 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage(null),
                 actionMessage,
                 new ObservationMessage("next")
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -443,9 +476,11 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ObservationMessage("hi"),
                 action,
                 new ToolResultsMessage(
@@ -454,8 +489,9 @@ public sealed class AnthropicMessageConverterTests {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -492,10 +528,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi"), action }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -526,10 +565,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi"), action }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -545,15 +587,18 @@ public sealed class AnthropicMessageConverterTests {
         var source = new CompletionDescriptor("old-host", "anthropic-messages-v1", "claude-old");
         var target = new CompletionDescriptor("new-host", "anthropic-messages-v1", "claude-new");
         var request = new CompletionRequest(
-            ModelId: target.Model,
-            SystemPrompt: string.Empty,
-            Context: [
+            target.Model,
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [
                 new ObservationMessage("hi"),
                 new ActionMessage([
                     new AnthropicReasoningBlock(payload, source, "reason")
                 ])
-            ],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            ]
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -579,10 +624,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi"), action }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -709,10 +757,13 @@ public sealed class AnthropicMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_PromptCachingEnabledWithoutSystem_SkipsSystemBreakpoint() {
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi") }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, defaultMaxTokens: null, enablePromptCaching: true);
@@ -724,13 +775,153 @@ public sealed class AnthropicMessageConverterTests {
     }
 
     [Fact]
+    public void ConvertToApiRequest_SameRoleMergeKeepsCacheMarkerAtPrefixBoundary() {
+        var request = new CompletionRequest(
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("shared-prefix")]
+            ),
+            [new ObservationMessage("member-tail")]
+        );
+
+        AnthropicApiRequest apiRequest =
+            AnthropicMessageConverter.ConvertToApiRequest(
+                request,
+                enablePromptCaching: true
+            );
+
+        AnthropicMessage message = Assert.Single(apiRequest.Messages);
+        Assert.Equal("user", message.Role);
+        Assert.Collection(
+            message.Content,
+            block => {
+                Assert.Equal(
+                    "shared-prefix",
+                    Assert.IsType<AnthropicTextBlock>(block).Text
+                );
+                Assert.NotNull(block.CacheControl);
+            },
+            block => {
+                Assert.Equal(
+                    "member-tail",
+                    Assert.IsType<AnthropicTextBlock>(block).Text
+                );
+                Assert.Null(block.CacheControl);
+            }
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ToolDependencyCanCrossPrefixTailBoundary() {
+        var action = new ActionMessage([
+            new ActionBlock.ToolCall(
+                new RawToolCall("search", "call-1", "{}")
+            )
+        ]);
+        var results = new ToolResultsMessage(
+            content: null,
+            results: [
+                ToolResult.FromText(
+                    "search",
+                    "call-1",
+                    ToolExecutionStatus.Success,
+                    "ok"
+                )
+            ]
+        );
+        var request = new CompletionRequest(
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [action]
+            ),
+            [results]
+        );
+
+        AnthropicApiRequest apiRequest =
+            AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        Assert.Contains(
+            apiRequest.Messages.SelectMany(static message => message.Content),
+            static block => block is AnthropicToolUseBlock
+        );
+        Assert.Contains(
+            apiRequest.Messages.SelectMany(static message => message.Content),
+            static block => block is AnthropicToolResultBlock
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_MapsRequiredNamedAndParallelPolicy() {
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result"),
+                    allowParallelToolCalls: false
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        AnthropicApiRequest apiRequest =
+            AnthropicMessageConverter.ConvertToApiRequest(request);
+
+        Assert.Equal("tool", apiRequest.ToolChoice!.Type);
+        Assert.Equal("emit_result", apiRequest.ToolChoice.Name);
+        Assert.True(apiRequest.ToolChoice.DisableParallelToolUse);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_ForcedToolChoiceRejectsExtendedThinking() {
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredAny
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        Assert.Throws<NotSupportedException>(
+            () => AnthropicMessageConverter.ConvertToApiRequest(
+                request,
+                reasoningEffort: CompletionReasoningEffort.High
+            )
+        );
+    }
+
+    [Fact]
     public void ConvertToApiRequest_ReasoningDisabledSendsExplicitDisabledThinking() {
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
-            Tools: ImmutableArray<ToolDefinition>.Empty,
-            MaxTokens: 8000
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi") }
+            ),
+            tailMessages: [],
+            maxTokens: 8000
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
@@ -756,10 +947,13 @@ public sealed class AnthropicMessageConverterTests {
         string expectedEffort
     ) {
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi") }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
@@ -775,10 +969,13 @@ public sealed class AnthropicMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_ProviderDefaultOmitsReasoningControls() {
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi") }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -799,10 +996,13 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { new ObservationMessage("hi"), action },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { new ObservationMessage("hi"), action }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
@@ -821,9 +1021,11 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         return new CompletionRequest(
-            ModelId: "claude-3",
-            SystemPrompt: "You are a helpful assistant.",
-            Context: new IHistoryMessage[] {
+            "claude-3",
+            new CompletionPromptPrefix(
+                "You are a helpful assistant.",
+                CompletionOutputContract.ProviderDefault(ImmutableArray.Create(CreateSimpleTool())),
+                new IHistoryMessage[] {
                 new ObservationMessage("Please search."),
                 action,
                 new ToolResultsMessage(
@@ -832,8 +1034,9 @@ public sealed class AnthropicMessageConverterTests {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray.Create(CreateSimpleTool())
+            }
+            ),
+            tailMessages: []
         );
     }
 

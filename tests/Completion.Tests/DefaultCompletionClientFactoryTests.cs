@@ -103,9 +103,14 @@ public sealed class DefaultCompletionClientFactoryTests {
 
     private static CompletionRequest Request() => new(
         "model-a",
-        "system-a",
-        Array.Empty<IHistoryMessage>(),
-        ImmutableArray<ToolDefinition>.Empty
+        new CompletionPromptPrefix(
+            "system-a",
+            CompletionOutputContract.ProviderDefault(
+                ImmutableArray<ToolDefinition>.Empty
+            ),
+            Array.Empty<IHistoryMessage>()
+        ),
+        tailMessages: []
     );
 
     private sealed class StalledStreamingClient : ICompletionClient {

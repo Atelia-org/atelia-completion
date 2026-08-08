@@ -26,7 +26,82 @@ internal static class AnthropicMessageConverter {
         var messages = new List<AnthropicMessage>();
         var pendingToolCalls = new List<PendingToolCall>();
 
-        foreach (var contextMessage in request.Context) {
+        ProjectMessages(
+            request.PromptPrefix.SharedContextMessages,
+            messages,
+            pendingToolCalls,
+            targetInvocation
+        );
+        AnthropicContentBlock? lastPrefixContentBlock = messages
+            .SelectMany(static message => message.Content)
+            .LastOrDefault();
+        ProjectMessages(
+            request.TailMessages,
+            messages,
+            pendingToolCalls,
+            targetInvocation
+        );
+
+        EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
+
+        // 通用历史允许以 Action 开头（例如 ContextHeader 只有 Action memory carrier）。
+        // Anthropic 要求第一条消息必须是 user，且拒绝空文本，因此补一个最小非空形式占位符。
+        if (messages.Count > 0 && messages[0].Role != "user") {
+            messages.Insert(
+                0,
+                new AnthropicMessage {
+                    Role = "user",
+                    Content = [new AnthropicTextBlock { Text = EmptyLeadingUserPlaceholder }]
+                }
+            );
+        }
+
+        // 确保消息序列符合 Anthropic 的交错约定。Content block 对象不会被复制，
+        // 因此 lastPrefixContentBlock 在同 role merge 后仍准确指向 prefix 边界。
+        NormalizeMessageSequence(messages);
+
+        CompletionOutputContract outputContract =
+            request.PromptPrefix.OutputContract;
+        var apiRequest = new AnthropicApiRequest {
+            Model = request.ModelId,
+            MaxTokens = request.MaxTokens ?? defaultMaxTokens ?? 32000,
+            Messages = messages,
+            System = string.IsNullOrWhiteSpace(request.PromptPrefix.SystemPrompt)
+                ? null
+                : request.PromptPrefix.SystemPrompt,
+            Stream = true,
+            Tools = BuildToolDefinitions(outputContract.Tools),
+            ToolChoice = BuildToolChoice(outputContract, reasoningEffort)
+        };
+
+        ApplyReasoningConfig(apiRequest, reasoningEffort);
+
+        if (enablePromptCaching) {
+            ApplyPromptCaching(
+                apiRequest,
+                promptCacheTtl,
+                lastPrefixContentBlock
+            );
+        }
+
+        int contextMessageCount = checked(
+            request.PromptPrefix.SharedContextMessages.Length
+                + request.TailMessages.Length
+        );
+        DebugUtil.Info(
+            DebugCategory,
+            $"[Anthropic] Converted {contextMessageCount} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={reasoningEffort}"
+        );
+        return apiRequest;
+    }
+
+    private static void ProjectMessages(
+        IReadOnlyList<IHistoryMessage> contextMessages,
+        List<AnthropicMessage> messages,
+        List<PendingToolCall> pendingToolCalls,
+        CompletionDescriptor? targetInvocation
+    ) {
+        foreach (IHistoryMessage contextMessage in contextMessages) {
             switch (contextMessage) {
                 case ToolResultsMessage toolResults:
                     BuildToolResultsMessage(toolResults, messages, pendingToolCalls);
@@ -51,44 +126,59 @@ internal static class AnthropicMessageConverter {
                     );
             }
         }
+    }
 
-        EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
-
-        // 通用历史允许以 Action 开头（例如 ContextHeader 只有 Action memory carrier）。
-        // Anthropic 要求第一条消息必须是 user，且拒绝空文本，因此补一个最小非空形式占位符。
-        if (messages.Count > 0 && messages[0].Role != "user") {
-            messages.Insert(
-                0,
-                new AnthropicMessage {
-                    Role = "user",
-                    Content = [new AnthropicTextBlock { Text = EmptyLeadingUserPlaceholder }]
-                }
+    private static AnthropicToolChoice? BuildToolChoice(
+        CompletionOutputContract outputContract,
+        CompletionReasoningEffort reasoningEffort
+    ) {
+        CompletionToolChoice toolChoice = outputContract.ToolChoice;
+        if (toolChoice.Kind is (
+                CompletionToolChoiceKind.RequiredAny
+                or CompletionToolChoiceKind.RequiredNamed
+            )
+            && reasoningEffort is not (
+                CompletionReasoningEffort.ProviderDefault
+                or CompletionReasoningEffort.Disabled
+            )) {
+            throw new NotSupportedException(
+                "Anthropic forced tool choice is incompatible with enabled extended thinking."
             );
         }
 
-        // 确保消息序列符合 Anthropic 的交错约定
-        NormalizeMessageSequence(messages);
-
-        var apiRequest = new AnthropicApiRequest {
-            Model = request.ModelId,
-            MaxTokens = request.MaxTokens ?? defaultMaxTokens ?? 32000,
-            Messages = messages,
-            System = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt,
-            Stream = true,
-            Tools = BuildToolDefinitions(request.Tools)
-        };
-
-        ApplyReasoningConfig(apiRequest, reasoningEffort);
-
-        if (enablePromptCaching) {
-            ApplyPromptCaching(apiRequest, promptCacheTtl);
+        if (toolChoice.Kind is CompletionToolChoiceKind.None
+            && outputContract.AllowParallelToolCalls is not null) {
+            throw new NotSupportedException(
+                "Anthropic parallel tool-call policy is not meaningful when tool choice is None."
+            );
         }
 
-        DebugUtil.Info(
-            DebugCategory,
-            $"[Anthropic] Converted {request.Context.Count} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={reasoningEffort}"
-        );
-        return apiRequest;
+        if (toolChoice.Kind is CompletionToolChoiceKind.ProviderDefault
+            && outputContract.AllowParallelToolCalls is null) {
+            return null;
+        }
+
+        return new AnthropicToolChoice {
+            Type = toolChoice.Kind switch {
+                CompletionToolChoiceKind.ProviderDefault => "auto",
+                CompletionToolChoiceKind.Auto => "auto",
+                CompletionToolChoiceKind.None => "none",
+                CompletionToolChoiceKind.RequiredAny => "any",
+                CompletionToolChoiceKind.RequiredNamed => "tool",
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(outputContract),
+                    toolChoice.Kind,
+                    "Unknown completion tool choice."
+                )
+            },
+            Name = toolChoice.Kind is CompletionToolChoiceKind.RequiredNamed
+                ? toolChoice.RequiredToolName
+                : null,
+            DisableParallelToolUse = outputContract.AllowParallelToolCalls
+                is bool allowParallelToolCalls
+                    ? !allowParallelToolCalls
+                    : null
+        };
     }
 
     /// <summary>
@@ -129,7 +219,8 @@ internal static class AnthropicMessageConverter {
     /// </summary>
     private static void ApplyPromptCaching(
         AnthropicApiRequest apiRequest,
-        AnthropicPromptCacheTtl promptCacheTtl
+        AnthropicPromptCacheTtl promptCacheTtl,
+        AnthropicContentBlock? lastPrefixContentBlock
     ) {
         AnthropicCacheControl NewCacheControl()
             => AnthropicCacheControl.CreateEphemeral(promptCacheTtl);
@@ -146,14 +237,10 @@ internal static class AnthropicMessageConverter {
             };
         }
 
-        // 3) messages 段末尾（最后一条消息的最后一个内容块）：缓存 tools + system + 全部历史前缀。
-        //    请求 completion 时最后一条消息恒为 user（observation / tool_result），其末块为 text / tool_result，
-        //    可安全承载 cache_control；下一轮请求即可命中该前缀。
-        if (apiRequest.Messages is { Count: > 0 } messages) {
-            var lastBlocks = messages[^1].Content;
-            if (lastBlocks.Count > 0) {
-                lastBlocks[^1].CacheControl = NewCacheControl();
-            }
+        // 3) shared messages 前缀末尾：即使 tail 与它同 role 并在 normalize 时合并，
+        //    保存下来的 content-block 引用仍精确标记 typed prefix boundary。
+        if (lastPrefixContentBlock is not null) {
+            lastPrefixContentBlock.CacheControl = NewCacheControl();
         }
     }
 

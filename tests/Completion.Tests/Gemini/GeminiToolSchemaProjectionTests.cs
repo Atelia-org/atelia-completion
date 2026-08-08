@@ -14,10 +14,13 @@ public sealed class GeminiToolSchemaProjectionTests {
         if (!GeminiProductionTypesPresent()) { return; }
 
         var request = new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: string.Empty,
-            Context: [new ObservationMessage("Search the docs.")],
-            Tools: ImmutableArray.Create(CreateRecursiveToolDefinition())
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray.Create(CreateRecursiveToolDefinition())),
+                [new ObservationMessage("Search the docs.")]
+            ),
+            tailMessages: []
         );
 
         using var document = SerializeApiRequest(ConvertToApiRequest(request));

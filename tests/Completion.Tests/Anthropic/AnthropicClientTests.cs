@@ -106,10 +106,13 @@ public sealed class AnthropicClientTests {
 
         var aggregated = await client.StreamCompletionAsync(
             new CompletionRequest(
-                ModelId: "claude-3-5-sonnet-20241022",
-                SystemPrompt: "system",
-                Context: new[] { new ObservationMessage("hello") },
-                Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+                "claude-3-5-sonnet-20241022",
+                new CompletionPromptPrefix(
+                    "system",
+                    CompletionOutputContract.ProviderDefault(System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty),
+                    new[] { new ObservationMessage("hello") }
+                ),
+                tailMessages: []
             ),
             observer,
             CancellationToken.None
@@ -145,10 +148,13 @@ public sealed class AnthropicClientTests {
         var exception = await Assert.ThrowsAsync<HttpRequestException>(
             () => client.StreamCompletionAsync(
                 new CompletionRequest(
-                    ModelId: "claude-3-5-sonnet-20241022",
-                    SystemPrompt: "system",
-                    Context: new[] { new ObservationMessage("hello") },
-                    Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+                    "claude-3-5-sonnet-20241022",
+                    new CompletionPromptPrefix(
+                        "system",
+                        CompletionOutputContract.ProviderDefault(System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty),
+                        new[] { new ObservationMessage("hello") }
+                    ),
+                    tailMessages: []
                 ),
                 observer: null,
                 CancellationToken.None
@@ -767,10 +773,13 @@ public sealed class AnthropicClientTests {
 
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
-            ModelId: "claude-opus-4-6",
-            SystemPrompt: "system",
-            Context: new[] { new ObservationMessage("hello") },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "claude-opus-4-6",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new[] { new ObservationMessage("hello") }
+            ),
+            tailMessages: []
         );
     }
 

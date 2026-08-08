@@ -305,10 +305,13 @@ public sealed class GeminiClientTests {
 
     private static CompletionRequest CreateRequest() {
         return new CompletionRequest(
-            ModelId: "gemini-2.5-flash",
-            SystemPrompt: "system",
-            Context: new[] { new ObservationMessage("hello") },
-            Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+            "gemini-2.5-flash",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault(System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty),
+                new[] { new ObservationMessage("hello") }
+            ),
+            tailMessages: []
         );
     }
 

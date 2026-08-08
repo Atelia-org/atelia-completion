@@ -21,9 +21,11 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 actionMessage,
                 new ToolResultsMessage(
                     content: null,
@@ -31,8 +33,9 @@ public sealed class OpenAIChatMessageConverterTests {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.Strict);
@@ -78,10 +81,13 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.Strict);
@@ -115,6 +121,85 @@ public sealed class OpenAIChatMessageConverterTests {
     }
 
     [Fact]
+    public void ConvertToApiRequest_ToolDependencyCanCrossPrefixTailBoundary() {
+        var action = new ActionMessage([
+            new ActionBlock.ToolCall(
+                new RawToolCall("search", "call-1", "{}")
+            )
+        ]);
+        var results = new ToolResultsMessage(
+            content: null,
+            results: [
+                ToolResult.FromText(
+                    "search",
+                    "call-1",
+                    ToolExecutionStatus.Success,
+                    "ok"
+                )
+            ]
+        );
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [action]
+            ),
+            [results]
+        );
+
+        OpenAIChatApiRequest apiRequest =
+            OpenAIChatMessageConverter.ConvertToApiRequest(
+                request,
+                OpenAIChatDialects.Strict
+            );
+
+        Assert.Contains(
+            apiRequest.Messages,
+            static message => message.ToolCalls is { Count: > 0 }
+        );
+        Assert.Contains(
+            apiRequest.Messages,
+            static message => message.ToolCallId == "call-1"
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_MapsRequiredNamedAndParallelPolicy() {
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result"),
+                    allowParallelToolCalls: false
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        OpenAIChatApiRequest apiRequest =
+            OpenAIChatMessageConverter.ConvertToApiRequest(
+                request,
+                OpenAIChatDialects.Strict
+            );
+
+        var choice = Assert.IsType<OpenAIChatNamedToolChoice>(
+            apiRequest.ToolChoice
+        );
+        Assert.Equal("function", choice.Type);
+        Assert.Equal("emit_result", choice.Function.Name);
+        Assert.False(apiRequest.ParallelToolCalls);
+    }
+
+    [Fact]
     public void ConvertToApiRequest_MissingPendingToolResultsThrow() {
         var actionMessage = new ActionMessage(
             new ActionBlock[] {
@@ -131,10 +216,13 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -161,10 +249,13 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { actionMessage, toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { actionMessage, toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -186,10 +277,13 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] { toolResults },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] { toolResults }
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -215,9 +309,11 @@ public sealed class OpenAIChatMessageConverterTests {
         );
 
         var request = new CompletionRequest(
-            ModelId: "deepseek-v4",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "deepseek-v4",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 actionMessage,
                 new ToolResultsMessage(
                     content: null,
@@ -225,8 +321,9 @@ public sealed class OpenAIChatMessageConverterTests {
                         ToolResult.FromText("search", "call-1", ToolExecutionStatus.Success, "ok")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.DeepSeekV4);
@@ -246,12 +343,15 @@ public sealed class OpenAIChatMessageConverterTests {
             "deepseek-other"
         );
         var request = new CompletionRequest(
-            ModelId: DummyInvocation.Model,
-            SystemPrompt: string.Empty,
-            Context: [new ActionMessage([
+            DummyInvocation.Model,
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [new ActionMessage([
                 new OpenAIChatReasoningBlock("reason", source)
-            ])],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            ])]
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -268,12 +368,15 @@ public sealed class OpenAIChatMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_DeepSeekRejectsGenericTextReasoningReplay() {
         var request = new CompletionRequest(
-            ModelId: DummyInvocation.Model,
-            SystemPrompt: string.Empty,
-            Context: [new ActionMessage([
+            DummyInvocation.Model,
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [new ActionMessage([
                 new ActionBlock.TextReasoningBlock("reason", DummyInvocation)
-            ])],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            ])]
+            ),
+            tailMessages: []
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
@@ -290,17 +393,20 @@ public sealed class OpenAIChatMessageConverterTests {
     [Fact]
     public void ConvertToApiRequest_StrictDialectStillIgnoresReasoningContent() {
         var request = new CompletionRequest(
-            ModelId: "gpt-4.1",
-            SystemPrompt: string.Empty,
-            Context: new IHistoryMessage[] {
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
                 new ActionMessage(
                     new ActionBlock[] {
                         new OpenAIChatReasoningBlock("Should stay local.", DummyInvocation),
                         new ActionBlock.Text("hello")
                     }
                 )
-            },
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            }
+            ),
+            tailMessages: []
         );
 
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(request, OpenAIChatDialects.Strict);

@@ -25,7 +25,7 @@ ToolRegistry
     ↓ CreateSession 工厂
 ToolSession（持有可逐轮替换的 Access 快照，内化执行）
     ↓ VisibleDefinitions + ExecuteAsync(RawToolCall)
-CompletionRequest.Tools / ToolResultsMessage
+CompletionPromptPrefix.OutputContract.Tools / ToolResultsMessage
 ```
 
 它提供三种核心能力：
@@ -246,7 +246,7 @@ Console.WriteLine(execution.ExecuteResult.GetFlattenedText());
 
 `ToolSession` 有两个直接用途：
 
-1. 把当前 session 可见的工具投影成 `CompletionRequest.Tools`
+1. 把当前 session 可见的工具投影成 `CompletionPromptPrefix.OutputContract.Tools`
 2. 把模型返回的 `RawToolCall` 执行成 `ToolResult`，再回灌成 `ToolResultsMessage`
 
 最小接法是：
@@ -259,10 +259,13 @@ var history = new List<IHistoryMessage> {
 };
 
 var request = new CompletionRequest(
-    ModelId: "Qwen3.5-27b-GPTQ-Int4",
-    SystemPrompt: "You are a helpful coding agent.",
-    Context: history,
-    Tools: session.VisibleDefinitions
+    "Qwen3.5-27b-GPTQ-Int4",
+    new CompletionPromptPrefix(
+        "You are a helpful coding agent.",
+        CompletionOutputContract.ProviderDefault(session.VisibleDefinitions),
+        history
+    ),
+    tailMessages: []
 );
 
 var completion = await client.StreamCompletionAsync(request, null, cancellationToken);
@@ -285,7 +288,7 @@ if (completion.Message.ToolCalls.Count > 0) {
 - `completion.Message.ToolCalls` 给你 `RawToolCall`
 - `ToolSession.ExecuteAsync(...)` 给你 `ToolCallExecutionResult`
 - `ToolCallExecutionResult.ToToolResult()` 变成可回灌的 `ToolResult`
-- `new ToolResultsMessage(null, results)` 再喂回下一轮 `CompletionRequest.Context`
+- `new ToolResultsMessage(null, results)` 再喂回下一轮请求的 shared context 或 tail
 
 如果你已经在用 `Atelia.Completion`，这一段就是 tool loop 的主拼接点。
 

@@ -17,10 +17,13 @@ public sealed class OpenAIResponsesLiveTests {
         using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://openrouter.ai/api/"));
         var client = new OpenAIResponsesClient(apiKey, httpClient);
         var request = new CompletionRequest(
-            ModelId: "openai/gpt-5.4-mini",
-            SystemPrompt: "Answer tersely.",
-            Context: [new ObservationMessage("Reply with exactly OK.")],
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            "openai/gpt-5.4-mini",
+            new CompletionPromptPrefix(
+                "Answer tersely.",
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                [new ObservationMessage("Reply with exactly OK.")]
+            ),
+            tailMessages: []
         );
 
         var result = await client.StreamCompletionAsync(request, observer: null, CancellationToken.None);
@@ -37,10 +40,10 @@ public sealed class OpenAIResponsesLiveTests {
         using var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://openrouter.ai/api/"));
         var client = new OpenAIResponsesClient(apiKey, httpClient);
         var request = new CompletionRequest(
-            ModelId: "openai/gpt-5.4-mini",
-            SystemPrompt: "You are a strict tool-using assistant.",
-            Context: [new ObservationMessage("Use the get_weather tool for Paris. Do not answer without calling the tool.")],
-            Tools: ImmutableArray.Create(
+            "openai/gpt-5.4-mini",
+            new CompletionPromptPrefix(
+                "You are a strict tool-using assistant.",
+                CompletionOutputContract.ProviderDefault(ImmutableArray.Create(
                 new ToolDefinition(
                     "get_weather",
                     "Look up weather.",
@@ -54,7 +57,10 @@ public sealed class OpenAIResponsesLiveTests {
                         ]
                     )
                 )
-            )
+            )),
+                [new ObservationMessage("Use the get_weather tool for Paris. Do not answer without calling the tool.")]
+            ),
+            tailMessages: []
         );
 
         var result = await client.StreamCompletionAsync(request, observer: null, CancellationToken.None);

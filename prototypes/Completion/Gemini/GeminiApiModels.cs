@@ -85,6 +85,9 @@ internal sealed class GeminiToolConfig {
 internal sealed class GeminiFunctionCallingConfig {
     [JsonPropertyName("mode")]
     public string? Mode { get; set; }
+
+    [JsonPropertyName("allowedFunctionNames")]
+    public List<string>? AllowedFunctionNames { get; set; }
 }
 
 internal sealed class GeminiGenerateContentResponse {

@@ -50,6 +50,9 @@ internal static class OpenAIChatMessageConverter {
             Model = request.ModelId,
             Messages = messages,
             Stream = true,
+            StreamOptions = dialect.RequestStreamUsage
+                ? new OpenAIChatStreamOptions { IncludeUsage = true }
+                : null,
             Tools = BuildToolDefinitions(outputContract.Tools),
             ToolChoice = BuildToolChoice(outputContract.ToolChoice),
             ParallelToolCalls = outputContract.AllowParallelToolCalls

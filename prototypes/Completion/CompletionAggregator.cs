@@ -33,6 +33,7 @@ public sealed class CompletionAggregator {
     private readonly StringBuilder _contentBuilder = new();
     private CompletionTermination? _termination;
     private List<string>? _errors;
+    private CompletionUsage _usage = CompletionUsage.Unknown;
     private bool _thinkingInProgress;
 
     public CompletionAggregator(CompletionDescriptor invocation, CompletionStreamObserver? observer = null) {
@@ -180,6 +181,17 @@ public sealed class CompletionAggregator {
     }
 
     /// <summary>
+    /// Merges one cumulative provider usage snapshot. Reported values replace
+    /// older values; omitted values remain unchanged, so repeated stream events
+    /// are never double-counted.
+    /// </summary>
+    public void MergeUsage(CompletionUsage usage) {
+        _usage = _usage.Merge(
+            usage ?? throw new ArgumentNullException(nameof(usage))
+        );
+    }
+
+    /// <summary>
     /// 产出最终的 <see cref="CompletionResult"/>。调用此方法后不应再调用任何 Append 方法。
     /// </summary>
     public CompletionResult Build() {
@@ -203,7 +215,8 @@ public sealed class CompletionAggregator {
             _errors,
             _termination ?? CompletionTermination.Incomplete(
                 detail: "Completion stream ended without an explicit terminal status."
-            )
+            ),
+            _usage
         );
     }
 

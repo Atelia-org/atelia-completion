@@ -294,7 +294,7 @@ public sealed class AnthropicClientTests {
             promptCacheTtl: AnthropicPromptCacheTtl.OneHour
         );
 
-        _ = await client.StreamCompletionAsync(
+        CompletionResult result = await client.StreamCompletionAsync(
             CreateRequest(),
             new CompletionInvocationOptions {
                 PromptCacheReuseHint = hint
@@ -302,6 +302,25 @@ public sealed class AnthropicClientTests {
             observer: null,
             CancellationToken.None
         );
+
+        Assert.Equal(
+            hint switch {
+                PromptCacheReuseHint.ConnectionDefault =>
+                    PromptCacheRequestStatus.Unknown,
+                PromptCacheReuseHint.NoReuseExpected =>
+                    PromptCacheRequestStatus.NotRequested,
+                _ => PromptCacheRequestStatus.Requested
+            },
+            result.Usage.PromptCache.RequestStatus
+        );
+        Assert.Equal(
+            PromptCacheSupportStatus.Supported,
+            result.Usage.PromptCache.SupportStatus
+        );
+        Assert.Equal(40, result.Usage.UncachedInputTokens);
+        Assert.Equal(20, result.Usage.CacheCreationInputTokens);
+        Assert.Equal(60, result.Usage.CacheReadInputTokens);
+        Assert.Equal(4, result.Usage.OutputTokens);
 
         string body = Assert.Single(handler.RequestBodies);
         if (!expectCacheControl) {
@@ -344,7 +363,7 @@ public sealed class AnthropicClientTests {
             promptCacheTtl: AnthropicPromptCacheTtl.OneHour
         );
 
-        _ = await client.StreamCompletionAsync(
+        CompletionResult result = await client.StreamCompletionAsync(
             CreateRequest(),
             new CompletionInvocationOptions {
                 PromptCacheReuseHint = PromptCacheReuseHint.ReuseExpectedAfterPause
@@ -357,6 +376,14 @@ public sealed class AnthropicClientTests {
             "cache_control",
             Assert.Single(handler.RequestBodies),
             StringComparison.Ordinal
+        );
+        Assert.Equal(
+            PromptCacheRequestStatus.Requested,
+            result.Usage.PromptCache.RequestStatus
+        );
+        Assert.Equal(
+            PromptCacheSupportStatus.Unsupported,
+            result.Usage.PromptCache.SupportStatus
         );
     }
 
@@ -799,7 +826,7 @@ public sealed class AnthropicClientTests {
         EventStreamResponse(
             """
             event: message_start
-            data: {"type":"message_start","message":{}}
+            data: {"type":"message_start","message":{"usage":{"input_tokens":40,"output_tokens":0,"cache_creation_input_tokens":20,"cache_read_input_tokens":60}}}
 
             event: content_block_start
             data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
@@ -811,7 +838,7 @@ public sealed class AnthropicClientTests {
             data: {"type":"content_block_stop","index":0}
 
             event: message_delta
-            data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+            data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}
 
             event: message_stop
             data: {"type":"message_stop"}

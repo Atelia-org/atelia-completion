@@ -109,12 +109,14 @@ internal sealed class OpenAIResponsesStreamParser {
                 break;
 
             case "response.completed":
+                MergeTerminalUsageIfPresent(obj, aggregator);
                 aggregator.MarkCompleted("response.completed");
                 FinalizeTerminalStreamingState(aggregator);
                 _terminalEventObserved = true;
                 break;
 
             case "response.incomplete":
+                MergeTerminalUsageIfPresent(obj, aggregator);
                 var incompleteReason = ExtractIncompleteReason(obj);
                 FinalizeTerminalStreamingState(aggregator);
                 aggregator.MarkIncomplete(
@@ -127,6 +129,17 @@ internal sealed class OpenAIResponsesStreamParser {
                 break;
 
             case "response.failed":
+                MergeTerminalUsageIfPresent(obj, aggregator);
+                var failedMessage = ExtractErrorMessage(
+                    obj,
+                    "OpenAI Responses stream failed."
+                );
+                FinalizeTerminalStreamingState(aggregator);
+                aggregator.AppendError(failedMessage);
+                aggregator.MarkFailed(eventType, failedMessage);
+                _terminalEventObserved = true;
+                break;
+
             case "error":
                 var errorMessage = ExtractErrorMessage(obj, "OpenAI Responses stream failed.");
                 FinalizeTerminalStreamingState(aggregator);
@@ -135,6 +148,80 @@ internal sealed class OpenAIResponsesStreamParser {
                 _terminalEventObserved = true;
                 break;
         }
+    }
+
+    private static void MergeTerminalUsageIfPresent(
+        JsonObject envelope,
+        CompletionAggregator aggregator
+    ) {
+        if (envelope["response"] is not JsonObject response
+            || !response.TryGetPropertyValue("usage", out JsonNode? usageNode)
+            || usageNode is null) {
+            return;
+        }
+        if (usageNode is not JsonObject usage) {
+            throw new InvalidDataException(
+                "OpenAI Responses terminal response field 'usage' must be an object or null."
+            );
+        }
+
+        long? inputTokens = GetOptionalNonNegativeLong(
+            usage,
+            "input_tokens",
+            "Responses usage"
+        );
+        long? outputTokens = GetOptionalNonNegativeLong(
+            usage,
+            "output_tokens",
+            "Responses usage"
+        );
+        long? cachedTokens = null;
+        long? cacheWriteTokens = null;
+        bool readObserved = false;
+        bool writeObserved = false;
+        if (usage.TryGetPropertyValue(
+                "input_tokens_details",
+                out JsonNode? detailsNode
+            )
+            && detailsNode is not null) {
+            if (detailsNode is not JsonObject details) {
+                throw new InvalidDataException(
+                    "OpenAI Responses usage field 'input_tokens_details' must be an object or null."
+                );
+            }
+            cachedTokens = GetOptionalNonNegativeLong(
+                details,
+                "cached_tokens",
+                "Responses input_tokens_details"
+            );
+            cacheWriteTokens = GetOptionalNonNegativeLong(
+                details,
+                "cache_write_tokens",
+                "Responses input_tokens_details"
+            );
+            readObserved = cachedTokens is not null;
+            writeObserved = cacheWriteTokens is not null;
+        }
+
+        aggregator.MergeUsage(
+            new CompletionUsage(
+                SubtractCacheIoTokens(
+                    inputTokens,
+                    cachedTokens,
+                    cacheWriteTokens
+                ),
+                cacheWriteTokens,
+                cachedTokens,
+                outputTokens,
+                new PromptCacheTelemetry(
+                    observationStatus: readObserved && writeObserved
+                        ? PromptCacheObservationStatus.Complete
+                        : readObserved || writeObserved
+                            ? PromptCacheObservationStatus.Partial
+                            : PromptCacheObservationStatus.Unavailable
+                )
+            )
+        );
     }
 
     private void FinalizeTerminalStreamingState(CompletionAggregator aggregator) {
@@ -421,6 +508,39 @@ internal sealed class OpenAIResponsesStreamParser {
         throw new InvalidDataException(
             $"OpenAI {context} requires string field '{propertyName}'."
         );
+    }
+
+    private static long? GetOptionalNonNegativeLong(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (!obj.TryGetPropertyValue(propertyName, out JsonNode? node)
+            || node is null) {
+            return null;
+        }
+        if (node is JsonValue value
+            && value.TryGetValue<long>(out long result)
+            && result >= 0) {
+            return result;
+        }
+        throw new InvalidDataException(
+            $"OpenAI {context} field '{propertyName}' must be a non-negative integer or null."
+        );
+    }
+
+    private static long? SubtractCacheIoTokens(
+        long? total,
+        long? read,
+        long? write
+    ) {
+        if (total is null || read is null || write is null) { return null; }
+        if (read.Value > total.Value - write.Value) {
+            throw new InvalidDataException(
+                "OpenAI Responses usage reported cache read plus write tokens greater than total input tokens."
+            );
+        }
+        return total.Value - read.Value - write.Value;
     }
 
     private sealed class FunctionCallState {

@@ -23,7 +23,8 @@ public sealed record OpenAIChatDialect(
     OpenAIChatWhitespaceContentMode WhitespaceContentMode,
     OpenAIChatReasoningMode ReasoningMode = OpenAIChatReasoningMode.Ignore,
     OpenAIChatReasoningControlMode ReasoningControlMode =
-        OpenAIChatReasoningControlMode.Unsupported
+        OpenAIChatReasoningControlMode.Unsupported,
+    bool RequestStreamUsage = false
 );
 
 public static class OpenAIChatDialects {
@@ -31,7 +32,8 @@ public static class OpenAIChatDialects {
         Name: "strict",
         WhitespaceContentMode: OpenAIChatWhitespaceContentMode.Preserve,
         ReasoningMode: OpenAIChatReasoningMode.CaptureOnly,
-        ReasoningControlMode: OpenAIChatReasoningControlMode.OpenAIReasoningEffort
+        ReasoningControlMode: OpenAIChatReasoningControlMode.OpenAIReasoningEffort,
+        RequestStreamUsage: true
     );
 
     public static OpenAIChatDialect SgLangCompatible { get; } = new(

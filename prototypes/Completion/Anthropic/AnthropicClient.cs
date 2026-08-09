@@ -72,6 +72,7 @@ public sealed class AnthropicClient : ICompletionClient {
         observer,
         _enablePromptCaching,
         _promptCacheTtl,
+        CompletionInvocationOptions.Default,
         cancellationToken
     );
 
@@ -90,6 +91,7 @@ public sealed class AnthropicClient : ICompletionClient {
                 observer,
                 enablePromptCaching: false,
                 _promptCacheTtl,
+                invocationOptions,
                 cancellationToken
             );
         }
@@ -112,6 +114,7 @@ public sealed class AnthropicClient : ICompletionClient {
             observer,
             enablePromptCaching,
             promptCacheTtl,
+            invocationOptions,
             cancellationToken
         );
     }
@@ -121,6 +124,7 @@ public sealed class AnthropicClient : ICompletionClient {
         CompletionStreamObserver? observer,
         bool enablePromptCaching,
         AnthropicPromptCacheTtl promptCacheTtl,
+        CompletionInvocationOptions invocationOptions,
         CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
@@ -139,6 +143,30 @@ public sealed class AnthropicClient : ICompletionClient {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
         var aggregator = new CompletionAggregator(invocation, observer);
+        aggregator.MergeUsage(
+            PromptCacheTelemetryContext.Create(
+                invocationOptions.PromptCacheReuseHint,
+                _enablePromptCaching
+                    ? PromptCacheSupportStatus.Supported
+                    : PromptCacheSupportStatus.Unsupported,
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["explicitBreakpoint"] = enablePromptCaching
+                        ? "true"
+                        : "false",
+                    ["ttl"] = promptCacheTtl switch {
+                        AnthropicPromptCacheTtl.ProviderDefault =>
+                            "provider-default",
+                        AnthropicPromptCacheTtl.FiveMinutes => "5m",
+                        AnthropicPromptCacheTtl.OneHour => "1h",
+                        _ => throw new ArgumentOutOfRangeException(
+                            nameof(promptCacheTtl),
+                            promptCacheTtl,
+                            "Unknown Anthropic prompt cache TTL."
+                        )
+                    }
+                }
+            )
+        );
         var parser = new AnthropicStreamParser();
         var eofDiagnostics = new CompletionSseEofDiagnostics();
         var committedFrameCount = 0;

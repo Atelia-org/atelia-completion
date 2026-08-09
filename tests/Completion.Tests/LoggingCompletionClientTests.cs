@@ -356,7 +356,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v7",
+                "atelia.completion.call-log.v8",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -388,7 +388,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v7",
+            "atelia.completion.call-log.v8",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -418,6 +418,11 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         Assert.Equal("tail", tail.GetProperty("content").GetString());
         JsonElement outputContract = promptPrefix.GetProperty("outputContract");
+        Assert.StartsWith(
+            "sha256:",
+            outputContract.GetProperty("semanticFingerprint").GetString(),
+            StringComparison.Ordinal
+        );
         Assert.False(
             outputContract.GetProperty("allowParallelToolCalls").GetBoolean()
         );
@@ -484,6 +489,16 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         Assert.Equal("text", actionBlock.GetProperty("kind").GetString());
         Assert.Equal("done", actionBlock.GetProperty("content").GetString());
+        JsonElement usage = response.GetProperty("usage");
+        Assert.Equal(30, usage.GetProperty("uncachedInputTokens").GetInt64());
+        Assert.Equal(7, usage.GetProperty("cacheCreationInputTokens").GetInt64());
+        Assert.Equal(11, usage.GetProperty("cacheReadInputTokens").GetInt64());
+        Assert.Equal(5, usage.GetProperty("outputTokens").GetInt64());
+        JsonElement cache = usage.GetProperty("promptCache");
+        Assert.Equal("notRequested", cache.GetProperty("requestStatus").GetString());
+        Assert.Equal("supported", cache.GetProperty("supportStatus").GetString());
+        Assert.Equal("complete", cache.GetProperty("observationStatus").GetString());
+        Assert.False(cache.GetProperty("noCacheIoObserved").GetBoolean());
         Assert.False(root.TryGetProperty("exception", out _));
     }
 
@@ -508,7 +523,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v7",
+            "atelia.completion.call-log.v8",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -641,7 +656,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
         }
 
-        public Task<CompletionResult> StreamCompletionAsync(
+        public async Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
             CompletionInvocationOptions invocationOptions,
             CompletionStreamObserver? observer,
@@ -649,7 +664,24 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         ) {
             ArgumentNullException.ThrowIfNull(invocationOptions);
             invocationOptions.Validate();
-            return StreamCompletionAsync(request, observer, cancellationToken);
+            CompletionResult result = await StreamCompletionAsync(
+                request,
+                observer,
+                cancellationToken
+            );
+            return result with {
+                Usage = new CompletionUsage(
+                    uncachedInputTokens: 30,
+                    cacheCreationInputTokens: 7,
+                    cacheReadInputTokens: 11,
+                    outputTokens: 5,
+                    promptCache: new PromptCacheTelemetry(
+                        PromptCacheRequestStatus.NotRequested,
+                        PromptCacheSupportStatus.Supported,
+                        PromptCacheObservationStatus.Complete
+                    )
+                )
+            };
         }
     }
 

@@ -68,10 +68,22 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         );
     }
 
-    public async Task<CompletionResult> StreamCompletionAsync(
+    public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
+    ) => StreamCompletionCoreAsync(
+        request,
+        CompletionInvocationOptions.Default,
+        observer,
+        cancellationToken
+    );
+
+    private async Task<CompletionResult> StreamCompletionCoreAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[OpenAI/Responses] Starting call model={request.ModelId}");
 
@@ -86,6 +98,15 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
         var aggregator = new CompletionAggregator(invocation, observer);
+        aggregator.MergeUsage(
+            PromptCacheTelemetryContext.Create(
+                invocationOptions.PromptCacheReuseHint,
+                PromptCacheSupportStatus.Unknown,
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["mapping"] = "implicit-best-effort"
+                }
+            )
+        );
         var parser = new OpenAIResponsesStreamParser();
         var stoppedEarly = false;
 
@@ -144,7 +165,12 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
     ) {
         ArgumentNullException.ThrowIfNull(invocationOptions);
         invocationOptions.Validate();
-        return StreamCompletionAsync(request, observer, cancellationToken);
+        return StreamCompletionCoreAsync(
+            request,
+            invocationOptions,
+            observer,
+            cancellationToken
+        );
     }
 
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(

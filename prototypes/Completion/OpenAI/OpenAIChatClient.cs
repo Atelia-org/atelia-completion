@@ -20,6 +20,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
         "messages",
         "n",
         "stream",
+        "stream_options",
         "tools",
         "tool_choice",
         "parallel_tool_calls",
@@ -69,10 +70,22 @@ public sealed class OpenAIChatClient : ICompletionClient {
         );
     }
 
-    public async Task<CompletionResult> StreamCompletionAsync(
+    public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
+    ) => StreamCompletionCoreAsync(
+        request,
+        CompletionInvocationOptions.Default,
+        observer,
+        cancellationToken
+    );
+
+    private async Task<CompletionResult> StreamCompletionCoreAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[OpenAI] Starting call model={request.ModelId}");
 
@@ -87,6 +100,18 @@ public sealed class OpenAIChatClient : ICompletionClient {
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
         var aggregator = new CompletionAggregator(invocation, observer);
+        aggregator.MergeUsage(
+            PromptCacheTelemetryContext.Create(
+                invocationOptions.PromptCacheReuseHint,
+                PromptCacheSupportStatus.Unknown,
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["mapping"] = "implicit-best-effort",
+                    ["streamUsageRequested"] = _dialect.RequestStreamUsage
+                        ? "true"
+                        : "false"
+                }
+            )
+        );
         var parser = new OpenAIChatStreamParser(_dialect.WhitespaceContentMode, _dialect.ReasoningMode);
         var stoppedEarly = false;
 
@@ -104,7 +129,10 @@ public sealed class OpenAIChatClient : ICompletionClient {
                 }
 
                 parser.ParseEvent(frame.Data, aggregator);
-                if (parser.TerminalEventObserved) { break; }
+                if (parser.TerminalEventObserved
+                    && !_dialect.RequestStreamUsage) {
+                    break;
+                }
 
                 if (aggregator.ShouldStop) {
                     stoppedEarly = true;
@@ -146,7 +174,12 @@ public sealed class OpenAIChatClient : ICompletionClient {
     ) {
         ArgumentNullException.ThrowIfNull(invocationOptions);
         invocationOptions.Validate();
-        return StreamCompletionAsync(request, observer, cancellationToken);
+        return StreamCompletionCoreAsync(
+            request,
+            invocationOptions,
+            observer,
+            cancellationToken
+        );
     }
 
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(OpenAIChatApiRequest apiRequest, CancellationToken cancellationToken) {

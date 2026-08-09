@@ -10,6 +10,49 @@ namespace Atelia.Completion.Gemini.Tests;
 
 public sealed class GeminiClientTests {
     [Fact]
+    public async Task StreamCompletionAsync_CapturesUsageChunkAfterFinishReason() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}
+
+                data: {"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":70,"candidatesTokenCount":5},"candidates":[]}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            CreateRequest(),
+            new CompletionInvocationOptions {
+                PromptCacheReuseHint = PromptCacheReuseHint.ReuseExpectedSoon
+            },
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Equal("ok", result.Message.GetFlattenedText());
+        Assert.Equal(30, result.Usage.UncachedInputTokens);
+        Assert.Equal(70, result.Usage.CacheReadInputTokens);
+        Assert.Equal(5, result.Usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheRequestStatus.Requested,
+            result.Usage.PromptCache.RequestStatus
+        );
+        Assert.Equal(
+            PromptCacheSupportStatus.Unknown,
+            result.Usage.PromptCache.SupportStatus
+        );
+        Assert.Equal(
+            PromptCacheObservationStatus.Partial,
+            result.Usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Fact]
     public void Constructor_RequiresPreconfiguredHttpClientBaseAddress() {
         if (!GeminiProductionTypesPresent()) { return; }
 
@@ -90,7 +133,7 @@ public sealed class GeminiClientTests {
                     """
                     data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}
 
-                    data: {not-json}
+                    data: {"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":0,"candidatesTokenCount":2},"candidates":[]}
 
                     """,
                     Encoding.UTF8,

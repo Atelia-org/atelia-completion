@@ -14,9 +14,10 @@ public sealed class PromptCacheReuseHintProviderAcceptanceTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new OpenAIChatClient(null, httpClient);
 
-        await InvokeLegacyAndHintedAsync(client);
+        CompletionResult hinted = await InvokeLegacyAndHintedAsync(client);
 
         Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
+        AssertBestEffortNoGuarantee(hinted);
     }
 
     [Fact]
@@ -25,9 +26,10 @@ public sealed class PromptCacheReuseHintProviderAcceptanceTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new OpenAIResponsesClient(null, httpClient);
 
-        await InvokeLegacyAndHintedAsync(client);
+        CompletionResult hinted = await InvokeLegacyAndHintedAsync(client);
 
         Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
+        AssertBestEffortNoGuarantee(hinted);
     }
 
     [Fact]
@@ -36,9 +38,10 @@ public sealed class PromptCacheReuseHintProviderAcceptanceTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new GeminiClient(null, httpClient);
 
-        await InvokeLegacyAndHintedAsync(client);
+        CompletionResult hinted = await InvokeLegacyAndHintedAsync(client);
 
         Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
+        AssertBestEffortNoGuarantee(hinted);
     }
 
     [Fact]
@@ -47,25 +50,45 @@ public sealed class PromptCacheReuseHintProviderAcceptanceTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new DeepSeekV4ChatClient(null, httpClient);
 
-        await InvokeLegacyAndHintedAsync(client);
+        CompletionResult hinted = await InvokeLegacyAndHintedAsync(client);
 
         Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
+        AssertBestEffortNoGuarantee(hinted);
     }
 
-    private static async Task InvokeLegacyAndHintedAsync(ICompletionClient client) {
+    private static async Task<CompletionResult> InvokeLegacyAndHintedAsync(
+        ICompletionClient client
+    ) {
         CompletionRequest request = CreateRequest();
         _ = await client.StreamCompletionAsync(
             request,
             observer: null,
             CancellationToken.None
         );
-        _ = await client.StreamCompletionAsync(
+        return await client.StreamCompletionAsync(
             request,
             new CompletionInvocationOptions {
                 PromptCacheReuseHint = PromptCacheReuseHint.NoReuseExpected
             },
             observer: null,
             CancellationToken.None
+        );
+    }
+
+    private static void AssertBestEffortNoGuarantee(
+        CompletionResult result
+    ) {
+        Assert.Equal(
+            PromptCacheRequestStatus.NotRequested,
+            result.Usage.PromptCache.RequestStatus
+        );
+        Assert.Equal(
+            PromptCacheSupportStatus.Unknown,
+            result.Usage.PromptCache.SupportStatus
+        );
+        Assert.Equal(
+            PromptCacheObservationStatus.Unknown,
+            result.Usage.PromptCache.ObservationStatus
         );
     }
 

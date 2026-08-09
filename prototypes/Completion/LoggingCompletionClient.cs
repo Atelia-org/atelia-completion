@@ -17,7 +17,11 @@ public sealed record CompletionCallLogContext(
     string? MaintainerId = null,
     string? TargetCarrier = null,
     string? TargetBlockId = null,
-    string? SourceId = null
+    string? SourceId = null,
+    string? FamilyFingerprint = null,
+    string? CallRole = null,
+    long? DispatchPermissionWaitMs = null,
+    long? LaneAdmissionWaitMs = null
 );
 
 public sealed class LoggingCompletionClient : ICompletionClient {
@@ -227,7 +231,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v7",
+                Schema: "atelia.completion.call-log.v8",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -489,7 +493,8 @@ public sealed record CompletionCallLogPromptPrefix(
 public sealed record CompletionCallLogOutputContract(
     IReadOnlyList<CompletionCallLogToolDefinition> Tools,
     CompletionCallLogToolChoice ToolChoice,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? AllowParallelToolCalls
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] bool? AllowParallelToolCalls,
+    string SemanticFingerprint
 ) {
     public static CompletionCallLogOutputContract From(
         CompletionOutputContract contract
@@ -503,7 +508,8 @@ public sealed record CompletionCallLogOutputContract(
                 contract.ToolChoice.Kind,
                 contract.ToolChoice.RequiredToolName
             ),
-            contract.AllowParallelToolCalls
+            contract.AllowParallelToolCalls,
+            contract.SemanticFingerprint
         );
     }
 }
@@ -668,7 +674,8 @@ public sealed record CompletionCallLogResponse(
     CompletionTermination Termination,
     IReadOnlyList<string>? Errors,
     string Text,
-    IReadOnlyList<SerializedActionBlock> ActionBlocks
+    IReadOnlyList<SerializedActionBlock> ActionBlocks,
+    CompletionCallLogUsage Usage
 ) {
     public static CompletionCallLogResponse From(CompletionResult result) {
         ArgumentNullException.ThrowIfNull(result);
@@ -678,7 +685,52 @@ public sealed record CompletionCallLogResponse(
             result.Termination,
             result.Errors,
             result.Message.GetFlattenedText(),
-            ActionMessageSerialization.ToSerializedBlocks(result.Message.Blocks)
+            ActionMessageSerialization.ToSerializedBlocks(result.Message.Blocks),
+            CompletionCallLogUsage.From(result.Usage)
+        );
+    }
+}
+
+public sealed record CompletionCallLogUsage(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? UncachedInputTokens,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? CacheCreationInputTokens,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? CacheReadInputTokens,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? OutputTokens,
+    CompletionCallLogPromptCacheTelemetry PromptCache
+) {
+    public static CompletionCallLogUsage From(CompletionUsage usage) {
+        ArgumentNullException.ThrowIfNull(usage);
+        return new CompletionCallLogUsage(
+            usage.UncachedInputTokens,
+            usage.CacheCreationInputTokens,
+            usage.CacheReadInputTokens,
+            usage.OutputTokens,
+            CompletionCallLogPromptCacheTelemetry.From(
+                usage.PromptCache,
+                usage.IsNoCacheIoObserved
+            )
+        );
+    }
+}
+
+public sealed record CompletionCallLogPromptCacheTelemetry(
+    PromptCacheRequestStatus RequestStatus,
+    PromptCacheSupportStatus SupportStatus,
+    PromptCacheObservationStatus ObservationStatus,
+    bool NoCacheIoObserved,
+    IReadOnlyDictionary<string, string>? ProviderDiagnostics
+) {
+    public static CompletionCallLogPromptCacheTelemetry From(
+        PromptCacheTelemetry telemetry,
+        bool noCacheIoObserved
+    ) {
+        ArgumentNullException.ThrowIfNull(telemetry);
+        return new CompletionCallLogPromptCacheTelemetry(
+            telemetry.RequestStatus,
+            telemetry.SupportStatus,
+            telemetry.ObservationStatus,
+            noCacheIoObserved,
+            telemetry.ProviderDiagnostics
         );
     }
 }

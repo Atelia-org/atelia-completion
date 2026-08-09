@@ -31,8 +31,6 @@ internal sealed class OpenAIChatStreamParser {
     }
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
-        if (_terminalEventObserved) { return; }
-
         JsonNode? node;
         try {
             node = JsonNode.Parse(json);
@@ -41,7 +39,29 @@ internal sealed class OpenAIChatStreamParser {
             throw new InvalidDataException("OpenAI chat stream contained malformed provider JSON.", ex);
         }
 
+        if (_terminalEventObserved) {
+            ParsePostTerminalUsage(node, aggregator);
+            return;
+        }
+
         ParseEventCore(node, aggregator);
+    }
+
+    private static void ParsePostTerminalUsage(
+        JsonNode? node,
+        CompletionAggregator aggregator
+    ) {
+        if (node is not JsonObject obj) {
+            throw new InvalidDataException(
+                "OpenAI chat post-terminal usage event root must be a JSON object."
+            );
+        }
+        if (obj["choices"] is not JsonArray { Count: 0 }) {
+            throw new InvalidDataException(
+                "OpenAI chat events after finish_reason must be the empty-choices usage snapshot."
+            );
+        }
+        MergeUsageIfPresent(obj, aggregator);
     }
 
     public void DiscardIncompleteStreamingState() {
@@ -79,6 +99,8 @@ internal sealed class OpenAIChatStreamParser {
             return;
         }
 
+        MergeUsageIfPresent(obj, aggregator);
+
         if (obj["choices"] is not JsonArray choices) {
             throw new InvalidDataException("OpenAI chat stream event must contain a choices array.");
         }
@@ -100,6 +122,81 @@ internal sealed class OpenAIChatStreamParser {
             }
             HandleChoice(choice, aggregator);
         }
+    }
+
+    private static void MergeUsageIfPresent(
+        JsonObject envelope,
+        CompletionAggregator aggregator
+    ) {
+        if (!envelope.TryGetPropertyValue("usage", out JsonNode? usageNode)
+            || usageNode is null) {
+            return;
+        }
+        if (usageNode is not JsonObject usage) {
+            throw new InvalidDataException(
+                "OpenAI chat stream field 'usage' must be an object or null."
+            );
+        }
+
+        long? promptTokens = GetOptionalNonNegativeLong(
+            usage,
+            "prompt_tokens",
+            "chat usage"
+        );
+        long? outputTokens = GetOptionalNonNegativeLong(
+            usage,
+            "completion_tokens",
+            "chat usage"
+        );
+        long? cachedTokens = null;
+        long? cacheWriteTokens = null;
+        bool readObserved = false;
+        bool writeObserved = false;
+        if (usage.TryGetPropertyValue(
+                "prompt_tokens_details",
+                out JsonNode? detailsNode
+            )
+            && detailsNode is not null) {
+            if (detailsNode is not JsonObject details) {
+                throw new InvalidDataException(
+                    "OpenAI chat usage field 'prompt_tokens_details' must be an object or null."
+                );
+            }
+            cachedTokens = GetOptionalNonNegativeLong(
+                details,
+                "cached_tokens",
+                "chat prompt_tokens_details"
+            );
+            cacheWriteTokens = GetOptionalNonNegativeLong(
+                details,
+                "cache_write_tokens",
+                "chat prompt_tokens_details"
+            );
+            readObserved = cachedTokens is not null;
+            writeObserved = cacheWriteTokens is not null;
+        }
+
+        long? uncachedInput = SubtractCacheIoTokens(
+            promptTokens,
+            cachedTokens,
+            cacheWriteTokens,
+            "OpenAI chat usage"
+        );
+        aggregator.MergeUsage(
+            new CompletionUsage(
+                uncachedInput,
+                cacheWriteTokens,
+                cachedTokens,
+                outputTokens,
+                new PromptCacheTelemetry(
+                    observationStatus: readObserved && writeObserved
+                        ? PromptCacheObservationStatus.Complete
+                        : readObserved || writeObserved
+                            ? PromptCacheObservationStatus.Partial
+                            : PromptCacheObservationStatus.Unavailable
+                )
+            )
+        );
     }
 
     private void HandleChoice(JsonObject choice, CompletionAggregator aggregator) {
@@ -245,6 +342,40 @@ internal sealed class OpenAIChatStreamParser {
         throw new InvalidDataException(
             $"OpenAI {context} requires integer field '{propertyName}'."
         );
+    }
+
+    private static long? GetOptionalNonNegativeLong(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (!obj.TryGetPropertyValue(propertyName, out JsonNode? node)
+            || node is null) {
+            return null;
+        }
+        if (node is JsonValue value
+            && value.TryGetValue<long>(out long result)
+            && result >= 0) {
+            return result;
+        }
+        throw new InvalidDataException(
+            $"OpenAI {context} field '{propertyName}' must be a non-negative integer or null."
+        );
+    }
+
+    private static long? SubtractCacheIoTokens(
+        long? total,
+        long? read,
+        long? write,
+        string context
+    ) {
+        if (total is null || read is null || write is null) { return null; }
+        if (read.Value > total.Value - write.Value) {
+            throw new InvalidDataException(
+                $"{context} reported cache read plus write tokens greater than total input tokens."
+            );
+        }
+        return total.Value - read.Value - write.Value;
     }
 
     private static void RecordTermination(string finishReason, CompletionAggregator aggregator) {

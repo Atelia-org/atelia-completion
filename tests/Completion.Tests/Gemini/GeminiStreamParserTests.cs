@@ -14,6 +14,41 @@ public sealed class GeminiStreamParserTests {
     );
 
     [Fact]
+    public void UsageMetadata_UsesLatestSnapshotAndReportsReadOnlyCoverage() {
+        var parser = new GeminiStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":60,"candidatesTokenCount":4}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"candidates":[{"finishReason":"STOP"}]}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"usageMetadata":{"promptTokenCount":110,"cachedContentTokenCount":70,"candidatesTokenCount":6},"candidates":[]}
+            """,
+            aggregator
+        );
+
+        CompletionUsage usage = aggregator.Build().Usage;
+        Assert.Equal(40, usage.UncachedInputTokens);
+        Assert.Null(usage.CacheCreationInputTokens);
+        Assert.Equal(70, usage.CacheReadInputTokens);
+        Assert.Equal(6, usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Partial,
+            usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Fact]
     public void ParseEvent_AggregatesMultiFrameTextAndCapturesReplayPayloadWithThoughtSignature() {
         var result = ParseGeminiActionMessage(
             """

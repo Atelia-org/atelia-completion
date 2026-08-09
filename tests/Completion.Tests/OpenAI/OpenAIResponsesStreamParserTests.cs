@@ -7,6 +7,42 @@ public sealed class OpenAIResponsesStreamParserTests {
     private static CompletionDescriptor DummyInvocation => new("openai", "openai-responses-v1", "gpt-5");
 
     [Fact]
+    public void TerminalUsage_ProjectsIndependentReadAndWriteCounters() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.completed","response":{"usage":{"input_tokens":120,"output_tokens":9,"input_tokens_details":{"cached_tokens":70,"cache_write_tokens":30}}}}
+            """,
+            aggregator
+        );
+
+        CompletionUsage usage = aggregator.Build().Usage;
+        Assert.Equal(20, usage.UncachedInputTokens);
+        Assert.Equal(30, usage.CacheCreationInputTokens);
+        Assert.Equal(70, usage.CacheReadInputTokens);
+        Assert.Equal(9, usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Complete,
+            usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Fact]
+    public void TerminalUsage_RejectsOverlappingCountersAboveTotalInput() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        Assert.Throws<InvalidDataException>(() => parser.ParseEvent(
+            """
+            {"type":"response.completed","response":{"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":8,"cache_write_tokens":5}}}}
+            """,
+            aggregator
+        ));
+    }
+
+    [Fact]
     public void ParseEvent_AggregatesReasoningToolCallAndTextFromMinimalEventSet() {
         var parser = new OpenAIResponsesStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);

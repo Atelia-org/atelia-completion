@@ -8,7 +8,7 @@ public sealed class AnthropicStreamParserTests {
     private static CompletionDescriptor DummyInvocation => new("test", "test-spec", "test-model");
 
     [Fact]
-    public void ParseEvent_UsageEventsDoNotAffectBlocks() {
+    public void ParseEvent_UsageSnapshotsReplaceWithoutDoubleCounting() {
         var parser = new AnthropicStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
@@ -33,6 +33,14 @@ public sealed class AnthropicStreamParserTests {
         Assert.Single(result.Message.Blocks);
         Assert.IsType<ActionBlock.Text>(result.Message.Blocks[0]);
         Assert.Equal("", ((ActionBlock.Text)result.Message.Blocks[0]).Content);
+        Assert.Equal(123, result.Usage.UncachedInputTokens);
+        Assert.Equal(7, result.Usage.CacheCreationInputTokens);
+        Assert.Equal(11, result.Usage.CacheReadInputTokens);
+        Assert.Equal(46, result.Usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Complete,
+            result.Usage.PromptCache.ObservationStatus
+        );
     }
 
     [Fact]

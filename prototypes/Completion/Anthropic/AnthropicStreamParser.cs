@@ -70,7 +70,7 @@ internal sealed class AnthropicStreamParser {
 
         switch (eventType) {
             case "message_start":
-                HandleMessageStart(obj);
+                HandleMessageStart(obj, aggregator);
                 break;
             case "content_block_start":
                 RequireMessageStarted(eventType);
@@ -86,7 +86,7 @@ internal sealed class AnthropicStreamParser {
                 break;
             case "message_delta":
                 RequireMessageStarted(eventType);
-                HandleMessageDelta(obj);
+                HandleMessageDelta(obj, aggregator);
                 break;
             case "message_stop":
                 RequireMessageStarted(eventType);
@@ -139,14 +139,22 @@ internal sealed class AnthropicStreamParser {
             + $"stopReason={stopReason}, activeBlockIndexes={activeBlockIndexes}";
     }
 
-    private void HandleMessageStart(JsonObject obj) {
+    private void HandleMessageStart(
+        JsonObject obj,
+        CompletionAggregator aggregator
+    ) {
         if (_messageStarted) {
             throw new InvalidDataException(
                 "Anthropic Messages stream contained repeated message_start."
             );
         }
 
-        _ = GetRequiredObject(obj, "message", "message_start");
+        JsonObject message = GetRequiredObject(
+            obj,
+            "message",
+            "message_start"
+        );
+        MergeUsageIfPresent(message, aggregator, "message_start message");
         _messageStarted = true;
     }
 
@@ -301,7 +309,10 @@ internal sealed class AnthropicStreamParser {
         _nextContentBlockIndex++;
     }
 
-    private void HandleMessageDelta(JsonObject obj) {
+    private void HandleMessageDelta(
+        JsonObject obj,
+        CompletionAggregator aggregator
+    ) {
         if (_contentBlocks.Count > 0) {
             throw new InvalidDataException(
                 "Anthropic message_delta arrived before the active content block stopped."
@@ -309,6 +320,7 @@ internal sealed class AnthropicStreamParser {
         }
 
         var delta = GetRequiredObject(obj, "delta", "message_delta");
+        MergeUsageIfPresent(obj, aggregator, "message_delta");
 
         var stopReason = GetOptionalString(delta, "stop_reason", "message_delta delta");
         if (!string.IsNullOrWhiteSpace(stopReason)) {
@@ -321,6 +333,61 @@ internal sealed class AnthropicStreamParser {
             _stopReason = stopReason;
         }
         _messageDeltaObserved = true;
+    }
+
+    private static void MergeUsageIfPresent(
+        JsonObject envelope,
+        CompletionAggregator aggregator,
+        string context
+    ) {
+        if (!envelope.TryGetPropertyValue("usage", out JsonNode? usageNode)
+            || usageNode is null) {
+            return;
+        }
+        if (usageNode is not JsonObject usage) {
+            throw new InvalidDataException(
+                $"Anthropic {context} field 'usage' must be an object or null."
+            );
+        }
+
+        long? input = GetOptionalNonNegativeLong(
+            usage,
+            "input_tokens",
+            $"{context} usage"
+        );
+        long? output = GetOptionalNonNegativeLong(
+            usage,
+            "output_tokens",
+            $"{context} usage"
+        );
+        long? creation = GetOptionalNonNegativeLong(
+            usage,
+            "cache_creation_input_tokens",
+            $"{context} usage"
+        );
+        long? read = GetOptionalNonNegativeLong(
+            usage,
+            "cache_read_input_tokens",
+            $"{context} usage"
+        );
+        bool hasCreation = creation is not null;
+        bool hasRead = read is not null;
+
+        aggregator.MergeUsage(
+            new CompletionUsage(
+                input,
+                creation,
+                read,
+                output,
+                new PromptCacheTelemetry(
+                    observationStatus: hasCreation && hasRead
+                        ? PromptCacheObservationStatus.Complete
+                        : hasCreation || hasRead
+                            ? PromptCacheObservationStatus.Partial
+                            : PromptCacheObservationStatus.Unavailable
+                )
+            )
+        );
     }
 
     private void HandleMessageStop(CompletionAggregator aggregator) {
@@ -468,6 +535,25 @@ internal sealed class AnthropicStreamParser {
 
         throw new InvalidDataException(
             $"Anthropic {context} requires non-negative integer field '{propertyName}'."
+        );
+    }
+
+    private static long? GetOptionalNonNegativeLong(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (!obj.TryGetPropertyValue(propertyName, out JsonNode? node)
+            || node is null) {
+            return null;
+        }
+        if (node is JsonValue value
+            && value.TryGetValue<long>(out long result)
+            && result >= 0) {
+            return result;
+        }
+        throw new InvalidDataException(
+            $"Anthropic {context} field '{propertyName}' must be a non-negative integer or null."
         );
     }
 

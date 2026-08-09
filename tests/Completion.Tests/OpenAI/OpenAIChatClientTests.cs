@@ -47,6 +47,62 @@ public sealed class OpenAIChatClientTests {
     }
 
     [Fact]
+    public async Task StrictSurface_RequestsAndCapturesTerminalUsageSnapshot() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":null}
+
+                data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":12}}}
+
+                data: [DONE]
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIChatClient(
+            null,
+            httpClient,
+            OpenAIChatDialects.Strict
+        );
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            CreateRequest(),
+            new CompletionInvocationOptions {
+                PromptCacheReuseHint = PromptCacheReuseHint.ReuseExpectedSoon
+            },
+            observer: null,
+            CancellationToken.None
+        );
+
+        using JsonDocument request = JsonDocument.Parse(
+            Assert.Single(handler.RequestBodies)
+        );
+        Assert.True(
+            request.RootElement.GetProperty("stream_options")
+                .GetProperty("include_usage")
+                .GetBoolean()
+        );
+        Assert.Equal(8, result.Usage.UncachedInputTokens);
+        Assert.Equal(12, result.Usage.CacheCreationInputTokens);
+        Assert.Equal(80, result.Usage.CacheReadInputTokens);
+        Assert.Equal(5, result.Usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheRequestStatus.Requested,
+            result.Usage.PromptCache.RequestStatus
+        );
+        Assert.Equal(
+            PromptCacheSupportStatus.Unknown,
+            result.Usage.PromptCache.SupportStatus
+        );
+        Assert.Equal(
+            PromptCacheObservationStatus.Complete,
+            result.Usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_IncludesConfiguredExtraBodyFieldsAtRequestRoot() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {
@@ -551,7 +607,11 @@ public sealed class OpenAIChatClientTests {
             )
         );
         using var httpClient = CreateHttpClient(handler);
-        var client = new OpenAIChatClient(null, httpClient, OpenAIChatDialects.Strict);
+        var client = new OpenAIChatClient(
+            null,
+            httpClient,
+            OpenAIChatDialects.SgLangCompatible
+        );
 
         var result = await client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None);
 

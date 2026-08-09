@@ -31,10 +31,22 @@ public sealed class GeminiClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[Gemini] Client initialized base={_httpClient.BaseAddress}");
     }
 
-    public async Task<CompletionResult> StreamCompletionAsync(
+    public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
+    ) => StreamCompletionCoreAsync(
+        request,
+        CompletionInvocationOptions.Default,
+        observer,
+        cancellationToken
+    );
+
+    private async Task<CompletionResult> StreamCompletionCoreAsync(
+        CompletionRequest request,
+        CompletionInvocationOptions invocationOptions,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
     ) {
         DebugUtil.Info(DebugCategory, $"[Gemini] Starting call model={request.ModelId}");
 
@@ -45,6 +57,16 @@ public sealed class GeminiClient : ICompletionClient {
 
         var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
+        aggregator.MergeUsage(
+            PromptCacheTelemetryContext.Create(
+                invocationOptions.PromptCacheReuseHint,
+                PromptCacheSupportStatus.Unknown,
+                new Dictionary<string, string>(StringComparer.Ordinal) {
+                    ["mapping"] = "implicit-best-effort",
+                    ["explicitCache"] = "separate-resource-lifecycle"
+                }
+            )
+        );
         var parser = new GeminiStreamParser();
         var stoppedEarly = false;
 
@@ -54,9 +76,12 @@ public sealed class GeminiClient : ICompletionClient {
                 if (frame.Data is null) { continue; }
 
                 parser.ParseEvent(frame.Data, aggregator);
-                if (parser.TerminalEventObserved) { break; }
-
-                if (aggregator.ShouldStop) {
+                if (parser.TerminalEventObserved
+                    && !parser.PostTerminalUsageAllowed) {
+                    break;
+                }
+                if (!parser.TerminalEventObserved
+                    && aggregator.ShouldStop) {
                     stoppedEarly = true;
                     break;
                 }
@@ -96,7 +121,12 @@ public sealed class GeminiClient : ICompletionClient {
     ) {
         ArgumentNullException.ThrowIfNull(invocationOptions);
         invocationOptions.Validate();
-        return StreamCompletionAsync(request, observer, cancellationToken);
+        return StreamCompletionCoreAsync(
+            request,
+            invocationOptions,
+            observer,
+            cancellationToken
+        );
     }
 
     private async Task<HttpResponseMessage> SendStreamingRequestAsync(

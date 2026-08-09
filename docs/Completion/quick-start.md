@@ -630,15 +630,20 @@ new AnthropicClient(
 }
 ```
 
-非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v7` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。
+非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v8` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。
 
-单次调用的 `PromptCacheReuseHint` 优先级如下：当 `enablePromptCaching=false` 时始终不发送 cache breakpoint；否则 `ConnectionDefault` 沿用 connection 的 `AnthropicPromptCacheTtl`，`NoReuseExpected` 不发送 `cache_control`，`ReuseExpectedSoon` 映射到 `5m`，`ReuseExpectedAfterPause` 映射到 `1h`。OpenAI Chat、OpenAI Responses、Gemini 与 DeepSeek 当前明确接受这些 hint，但保持 wire 不变；将来只有在相应 surface 的语义可精确验证后才增加映射。
+单次调用的 `PromptCacheReuseHint` 优先级如下：当 `enablePromptCaching=false` 时始终不发送 cache breakpoint；否则 `ConnectionDefault` 沿用 connection 的 `AnthropicPromptCacheTtl`，`NoReuseExpected` 不发送 `cache_control`，`ReuseExpectedSoon` 映射到 `5m`，`ReuseExpectedAfterPause` 映射到 `1h`。OpenAI Chat、OpenAI Responses、Gemini 与 DeepSeek 当前接受这些 hint，但只提供 implicit/best-effort 行为，不伪装成显式 breakpoint 保证；Gemini explicit CachedContent 属于独立 resource lifecycle，不在单次 invocation options 中映射。
 
-Call log v7 在 `request.promptPrefix` / `request.tailMessages` 中保留 typed boundary，且完整记录
-`OutputContract` 的 ordered tools、tool choice 与 parallel policy；它的
-`invocationOptions.promptCacheReuseHint` 只记录调用方请求的 hint，不宣称 provider 最终采用了何种
-effective cache 行为。`context.sourceId` 是可选的 call-scoped observability 字段，不参与 durable
-request、Maintainer capability 或 recovery identity。
+Call log v8 在 `request.promptPrefix` / `request.tailMessages` 中保留 typed boundary，完整记录
+`OutputContract` 的 ordered tools、tool choice、parallel policy 与 canonical semantic fingerprint。
+`response.usage` 分别记录 uncached input、cache creation、cache read 与 output tokens；
+`promptCache.requestStatus / supportStatus / observationStatus` 是相互独立的状态。
+`Complete` 且 read/write 都为零只表示 `noCacheIoObserved`，不能推断 provider miss 原因。
+OpenAI strict Chat surface 会发送 `stream_options.include_usage=true` 并读取 `[DONE]` 前的最终usage
+snapshot；兼容方言默认不添加该字段。Responses读取terminal response usage，Gemini接受任意chunk中的
+`usageMetadata`并保留逐字段最后一个非空累计值。
+这些 usage、`context.sourceId`、family/call-role attribution 都只用于观测，不参与 durable request、
+Maintainer capability 或 recovery identity。
 
 ### 5.3 `GeminiClient`
 

@@ -23,6 +23,7 @@ public sealed record CompletionResult {
     private CompletionDescriptor _invocation = null!;
     private CompletionTermination _termination = null!;
     private IReadOnlyList<string>? _errors;
+    private CompletionUsage _usage = null!;
 
     /// <summary>
     /// 创建 <see cref="CompletionResult"/>。
@@ -31,12 +32,14 @@ public sealed record CompletionResult {
         ActionMessage message,
         CompletionDescriptor invocation,
         IReadOnlyList<string>? errors = null,
-        CompletionTermination? termination = null
+        CompletionTermination? termination = null,
+        CompletionUsage? usage = null
     ) {
         Message = message ?? throw new ArgumentNullException(nameof(message));
         Invocation = invocation ?? throw new ArgumentNullException(nameof(invocation));
         Errors = errors;
         Termination = termination ?? CompletionTermination.Completed();
+        Usage = usage ?? CompletionUsage.Unknown;
     }
 
     /// <summary>Canonical action 消息体。历史回灌请使用此字段。</summary>
@@ -64,6 +67,15 @@ public sealed record CompletionResult {
     public IReadOnlyList<string>? Errors {
         get => _errors;
         init => _errors = value is null ? null : FreezeList(value);
+    }
+
+    /// <summary>
+    /// Operational provider usage. It is observability-only and must not enter
+    /// durable history or request identity.
+    /// </summary>
+    public CompletionUsage Usage {
+        get => _usage;
+        init => _usage = value ?? throw new ArgumentNullException(nameof(value));
     }
 
     private static IReadOnlyList<T> FreezeList<T>(IReadOnlyList<T> items)

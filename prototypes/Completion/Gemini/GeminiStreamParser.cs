@@ -12,12 +12,14 @@ internal sealed class GeminiStreamParser {
 
     private readonly List<GeminiReplayPayloadCodec.GeminiReplayPayloadPart> _replayParts = new();
     private bool _terminalEventObserved;
+    private bool _postTerminalUsageAllowed;
 
     public bool TerminalEventObserved => _terminalEventObserved;
 
-    public void ParseEvent(string json, CompletionAggregator aggregator) {
-        if (_terminalEventObserved) { return; }
+    public bool PostTerminalUsageAllowed =>
+        _terminalEventObserved && _postTerminalUsageAllowed;
 
+    public void ParseEvent(string json, CompletionAggregator aggregator) {
         JsonNode? node;
         try {
             node = JsonNode.Parse(json);
@@ -35,10 +37,17 @@ internal sealed class GeminiStreamParser {
             );
         }
 
+        if (_terminalEventObserved) {
+            ParsePostTerminalUsage(obj, aggregator);
+            return;
+        }
+
         if (obj.TryGetPropertyValue("error", out var errorNode)) {
             HandleError(errorNode, aggregator);
             return;
         }
+
+        MergeUsageIfPresent(obj, aggregator);
 
         var promptBlock = GetPromptBlock(obj);
         if (!obj.TryGetPropertyValue("candidates", out var candidatesNode)
@@ -86,6 +95,88 @@ internal sealed class GeminiStreamParser {
         HandleCandidate(candidate, aggregator);
     }
 
+    private static void ParsePostTerminalUsage(
+        JsonObject obj,
+        CompletionAggregator aggregator
+    ) {
+        MergeUsageIfPresent(obj, aggregator);
+        if (obj.TryGetPropertyValue("error", out JsonNode? errorNode)
+            && errorNode is not null) {
+            throw new InvalidDataException(
+                "Gemini returned an error after a terminal candidate."
+            );
+        }
+        if (obj.TryGetPropertyValue(
+                "candidates",
+                out JsonNode? candidatesNode
+            )
+            && candidatesNode is not null
+            && candidatesNode is not JsonArray { Count: 0 }) {
+            throw new InvalidDataException(
+                "Gemini events after finishReason may only contain usage metadata and an empty candidates array."
+            );
+        }
+    }
+
+    private static void MergeUsageIfPresent(
+        JsonObject envelope,
+        CompletionAggregator aggregator
+    ) {
+        if (!envelope.TryGetPropertyValue(
+                "usageMetadata",
+                out JsonNode? usageNode
+            )
+            || usageNode is null) {
+            return;
+        }
+        if (usageNode is not JsonObject usage) {
+            throw new InvalidDataException(
+                "Gemini field 'usageMetadata' must be an object or null."
+            );
+        }
+
+        long? promptTokens = GetOptionalNonNegativeLong(
+            usage,
+            "promptTokenCount",
+            "usageMetadata"
+        );
+        long? cachedTokens = GetOptionalNonNegativeLong(
+            usage,
+            "cachedContentTokenCount",
+            "usageMetadata"
+        );
+        long? outputTokens = GetOptionalNonNegativeLong(
+            usage,
+            "candidatesTokenCount",
+            "usageMetadata"
+        );
+        bool cacheObserved = cachedTokens is not null;
+
+        long? uncachedInput = null;
+        if (promptTokens is not null && cachedTokens is not null) {
+            if (cachedTokens > promptTokens) {
+                throw new InvalidDataException(
+                    "Gemini usageMetadata reported more cached tokens than prompt tokens."
+                );
+            }
+            uncachedInput = promptTokens - cachedTokens;
+        }
+
+        aggregator.MergeUsage(
+            new CompletionUsage(
+                uncachedInput,
+                cacheCreationInputTokens: null,
+                cacheReadInputTokens: cachedTokens,
+                outputTokens: outputTokens,
+                promptCache: new PromptCacheTelemetry(
+                    observationStatus: cacheObserved
+                        ? PromptCacheObservationStatus.Partial
+                        : PromptCacheObservationStatus.Unavailable
+                )
+            )
+        );
+    }
+
     public void Complete(CompletionAggregator aggregator) {
         _ = aggregator;
         CompletionStreamTermination.RequireTerminalEvent(
@@ -127,6 +218,7 @@ internal sealed class GeminiStreamParser {
             EmitReplayBlockIfNeeded(aggregator);
             RecordTermination(finishReason, aggregator);
             _terminalEventObserved = true;
+            _postTerminalUsageAllowed = true;
         }
     }
 
@@ -366,6 +458,25 @@ internal sealed class GeminiStreamParser {
 
         throw new InvalidDataException(
             $"Gemini {context} field '{propertyName}' must be a string or null."
+        );
+    }
+
+    private static long? GetOptionalNonNegativeLong(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (!obj.TryGetPropertyValue(propertyName, out JsonNode? node)
+            || node is null) {
+            return null;
+        }
+        if (node is JsonValue value
+            && value.TryGetValue<long>(out long result)
+            && result >= 0) {
+            return result;
+        }
+        throw new InvalidDataException(
+            $"Gemini {context} field '{propertyName}' must be a non-negative integer or null."
         );
     }
 }

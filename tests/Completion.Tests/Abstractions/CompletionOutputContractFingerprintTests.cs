@@ -87,6 +87,39 @@ public sealed class CompletionOutputContractFingerprintTests {
         }
     }
 
+    [Fact]
+    public void SemanticFingerprint_CoversNestedObjectNullability() {
+        static CompletionOutputContract Create(bool nullable) => new(
+            [
+                new ToolDefinition(
+                    "sample",
+                    "Sample.",
+                    new ToolSchema.Object([
+                        new ToolSchema.Property(
+                            "nested",
+                            new ToolSchema.Object(isNullable: nullable),
+                            true
+                        )
+                    ])
+                )
+            ],
+            CompletionToolChoice.ProviderDefault
+        );
+
+        Assert.NotEqual(
+            Create(nullable: false).SemanticFingerprint,
+            Create(nullable: true).SemanticFingerprint
+        );
+        Assert.Equal(
+            "sha256:bc85b856fbeb9d823417973cf799f3a0ea5e6d94463702635a6e1c5f6171decd",
+            Create(nullable: false).SemanticFingerprint
+        );
+        Assert.Equal(
+            "sha256:f31f6e3292258eb8f1601574ce69d7e68607d5b27d143e3ae89c8b65211ab4f1",
+            Create(nullable: true).SemanticFingerprint
+        );
+    }
+
     private static ToolDefinition CreateTool(
         string name,
         string propertyName

@@ -54,6 +54,7 @@ internal static class JsonToolSchemaBuilder {
 
         AppendDescription(root, schema.Description);
         AppendExamples(root, schema.Example);
+        ApplyNullable(root, schema.IsNullable);
         return root;
     }
 
@@ -65,6 +66,7 @@ internal static class JsonToolSchemaBuilder {
 
         AppendDescription(node, schema.Description);
         AppendExamples(node, schema.Example);
+        ApplyNullable(node, schema.IsNullable);
         return node;
     }
 
@@ -107,8 +109,24 @@ internal static class JsonToolSchemaBuilder {
         AppendExamples(schema, parameter.Example);
         AppendStringConstraints(schema, parameter);
         AppendNumericConstraints(schema, parameter);
+        ApplyNullable(schema, parameter.IsNullable);
 
         return schema;
+    }
+
+    private static void ApplyNullable(JsonObject schema, bool nullable) {
+        if (!nullable) { return; }
+        if (schema["type"] is not JsonValue typeValue
+            || !typeValue.TryGetValue<string>(out string? typeName)
+            || string.IsNullOrWhiteSpace(typeName)) {
+            throw new InvalidOperationException(
+                "Nullable tool schemas require one exact non-null JSON type."
+            );
+        }
+        schema["type"] = new JsonArray(typeName, "null");
+        if (schema["enum"] is JsonArray values) {
+            values.Add(null);
+        }
     }
 
     private static void AppendDescription(JsonObject schema, string? description) {

@@ -43,15 +43,18 @@ public sealed class GeminiToolSchemaProjectionTests {
                 },
                 "filters": {
                   "type": "OBJECT",
+                  "nullable": true,
                   "description": "Structured filters.",
                   "properties": {
                     "mode": {
                       "type": "STRING",
+                      "nullable": true,
                       "description": "Search mode.",
                       "enum": ["Exact", "Fuzzy"]
                     },
                     "clauses": {
                       "type": "ARRAY",
+                      "nullable": true,
                       "description": "Filter clauses.",
                       "items": {
                         "type": "OBJECT",
@@ -118,6 +121,7 @@ public sealed class GeminiToolSchemaProjectionTests {
                                     "mode",
                                     new ToolSchema.Value(
                                         ToolParamType.String,
+                                        isNullable: true,
                                         description: "Search mode.",
                                         stringEnumValues: ["Exact", "Fuzzy"]
                                     ),
@@ -163,12 +167,14 @@ public sealed class GeminiToolSchemaProjectionTests {
                                             ],
                                             description: "Single filter clause."
                                         ),
+                                        isNullable: true,
                                         description: "Filter clauses."
                                     ),
                                     isRequired: true
                                 )
                             ],
-                            description: "Structured filters."
+                            description: "Structured filters.",
+                            isNullable: true
                         ),
                         isRequired: true
                     )

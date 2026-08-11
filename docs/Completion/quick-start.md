@@ -630,7 +630,7 @@ new AnthropicClient(
 }
 ```
 
-非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v8` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。
+非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v9` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。v9 同时显式记录 object schema 的 nullable 语义。`CompletionOutputContract.SemanticFingerprint`采用条件式wire版本：递归schema中没有nullable Object时继续使用原`atelia.completion.output-contract.v1` preimage，保持既有fingerprint；首次出现`ToolSchema.Object.IsNullable=true`时才使用显式提交每个Object nullability的v2 preimage。
 
 单次调用的 `PromptCacheReuseHint` 优先级如下：当 `enablePromptCaching=false` 时始终不发送 cache breakpoint；否则 `ConnectionDefault` 沿用 connection 的 `AnthropicPromptCacheTtl`，`NoReuseExpected` 不发送 `cache_control`，`ReuseExpectedSoon` 映射到 `5m`，`ReuseExpectedAfterPause` 映射到 `1h`。OpenAI Chat、OpenAI Responses、Gemini 与 DeepSeek 当前接受这些 hint，但只提供 implicit/best-effort 行为，不伪装成显式 breakpoint 保证；Gemini explicit CachedContent 属于独立 resource lifecycle，不在单次 invocation options 中映射。
 

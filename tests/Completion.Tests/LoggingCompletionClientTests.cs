@@ -356,7 +356,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v8",
+                "atelia.completion.call-log.v9",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -388,7 +388,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v8",
+            "atelia.completion.call-log.v9",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -523,7 +523,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v8",
+            "atelia.completion.call-log.v9",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -547,6 +547,97 @@ public sealed class LoggingCompletionClientTests : IDisposable {
                 out _
             )
         );
+    }
+
+    [Fact]
+    public async Task CallLogV9_RecordsEveryNullableSchemaNodeExactly() {
+        var client = CreateLoggingClient(
+            new YieldingCompletionClient("nullable-schema-test")
+        );
+        ToolSchema.Object nested = new(
+            [
+                new ToolSchema.Property(
+                    "child",
+                    new ToolSchema.Object(isNullable: false),
+                    isRequired: true
+                )
+            ],
+            isNullable: true
+        );
+        ToolSchema.Property[] properties = [
+            new("objectFalse", new ToolSchema.Object(), true),
+            new("objectTrue", nested, true),
+            new("arrayFalse", new ToolSchema.Array(
+                new ToolSchema.Value(ToolParamType.String),
+                isNullable: false
+            ), true),
+            new("arrayTrue", new ToolSchema.Array(
+                new ToolSchema.Value(ToolParamType.String),
+                isNullable: true
+            ), true),
+            new("valueFalse", new ToolSchema.Value(
+                ToolParamType.String,
+                isNullable: false
+            ), true),
+            new("valueTrue", new ToolSchema.Value(
+                ToolParamType.String,
+                isNullable: true
+            ), true)
+        ];
+        var request = new CompletionRequest(
+            "model-a",
+            new CompletionPromptPrefix(
+                "system",
+                new CompletionOutputContract(
+                    [new ToolDefinition(
+                        "emit_result",
+                        "Emit.",
+                        new ToolSchema.Object(properties)
+                    )],
+                    CompletionToolChoice.RequiredNamed("emit_result")
+                ),
+                [new ObservationMessage("shared")]
+            ),
+            tailMessages: []
+        );
+
+        _ = await client.StreamCompletionAsync(request, observer: null);
+
+        string json = File.ReadAllText(Assert.Single(
+            client.WrittenCallLogPaths
+        ));
+        using JsonDocument document = JsonDocument.Parse(json);
+        Assert.Equal(
+            "atelia.completion.call-log.v9",
+            document.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.DoesNotContain(
+            "atelia.completion.call-log.v8",
+            json,
+            StringComparison.Ordinal
+        );
+        JsonElement schema = document.RootElement.GetProperty("request")
+            .GetProperty("promptPrefix")
+            .GetProperty("outputContract")
+            .GetProperty("tools")[0]
+            .GetProperty("inputSchema");
+        Assert.False(schema.GetProperty("nullable").GetBoolean());
+        Dictionary<string, JsonElement> byName = schema
+            .GetProperty("properties")
+            .EnumerateArray()
+            .ToDictionary(
+                static value => value.GetProperty("name").GetString()!,
+                static value => value.GetProperty("schema"),
+                StringComparer.Ordinal
+            );
+        Assert.False(byName["objectFalse"].GetProperty("nullable").GetBoolean());
+        Assert.True(byName["objectTrue"].GetProperty("nullable").GetBoolean());
+        Assert.False(byName["objectTrue"].GetProperty("properties")[0]
+            .GetProperty("schema").GetProperty("nullable").GetBoolean());
+        Assert.False(byName["arrayFalse"].GetProperty("nullable").GetBoolean());
+        Assert.True(byName["arrayTrue"].GetProperty("nullable").GetBoolean());
+        Assert.False(byName["valueFalse"].GetProperty("nullable").GetBoolean());
+        Assert.True(byName["valueTrue"].GetProperty("nullable").GetBoolean());
     }
 
     private LoggingCompletionClient CreateLoggingClient(

@@ -37,17 +37,17 @@ public sealed class AnthropicToolSchemaProjectionTests {
                   "pattern": "^[a-z ]+$"
                 },
                 "filters": {
-                  "type": "object",
+                  "type": ["object", "null"],
                   "additionalProperties": false,
                   "description": "Structured filters.",
                   "properties": {
                     "mode": {
-                      "type": "string",
+                      "type": ["string", "null"],
                       "description": "Search mode.",
-                      "enum": ["Exact", "Fuzzy"]
+                      "enum": ["Exact", "Fuzzy", null]
                     },
                     "clauses": {
-                      "type": "array",
+                      "type": ["array", "null"],
                       "description": "Filter clauses.",
                       "items": {
                         "type": "object",
@@ -116,6 +116,7 @@ public sealed class AnthropicToolSchemaProjectionTests {
                                     "mode",
                                     new ToolSchema.Value(
                                         ToolParamType.String,
+                                        isNullable: true,
                                         description: "Search mode.",
                                         stringEnumValues: ["Exact", "Fuzzy"]
                                     ),
@@ -161,12 +162,14 @@ public sealed class AnthropicToolSchemaProjectionTests {
                                             ],
                                             description: "Single filter clause."
                                         ),
+                                        isNullable: true,
                                         description: "Filter clauses."
                                     ),
                                     isRequired: true
                                 )
                             ],
-                            description: "Structured filters."
+                            description: "Structured filters.",
+                            isNullable: true
                         ),
                         isRequired: true
                     )

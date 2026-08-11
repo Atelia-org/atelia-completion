@@ -431,16 +431,30 @@ internal static class GeminiMessageConverter {
                 obj.Remove("examples");
                 obj.Remove("format");
 
-                if (obj["type"] is JsonValue typeValue && typeValue.TryGetValue<string>(out var typeName)) {
-                    obj["type"] = typeName switch {
-                        "object" => "OBJECT",
-                        "string" => "STRING",
-                        "boolean" => "BOOLEAN",
-                        "integer" => "INTEGER",
-                        "number" => "NUMBER",
-                        "array" => "ARRAY",
-                        _ => typeName
-                    };
+                if (obj["type"] is JsonArray union) {
+                    string[] members = [.. union
+                        .Select(static item => item?.GetValue<string>())
+                        .Where(static item => item is not null)!];
+                    if (members.Length != 2
+                        || !members.Contains("null", StringComparer.Ordinal)) {
+                        throw new InvalidOperationException(
+                            "Gemini tool schemas support only an exact non-null type plus null union."
+                        );
+                    }
+                    string nonNull = members.Single(static item =>
+                        !string.Equals(item, "null", StringComparison.Ordinal));
+                    obj["type"] = ToGeminiType(nonNull);
+                    obj["nullable"] = true;
+                    if (obj["enum"] is JsonArray values) {
+                        for (int index = values.Count - 1; index >= 0; index--) {
+                            if (values[index] is null) {
+                                values.RemoveAt(index);
+                            }
+                        }
+                    }
+                }
+                else if (obj["type"] is JsonValue typeValue && typeValue.TryGetValue<string>(out var typeName)) {
+                    obj["type"] = ToGeminiType(typeName);
                 }
 
                 foreach (var (_, child) in obj.ToList()) {
@@ -461,6 +475,16 @@ internal static class GeminiMessageConverter {
                 break;
         }
     }
+
+    private static string ToGeminiType(string typeName) => typeName switch {
+        "object" => "OBJECT",
+        "string" => "STRING",
+        "boolean" => "BOOLEAN",
+        "integer" => "INTEGER",
+        "number" => "NUMBER",
+        "array" => "ARRAY",
+        _ => typeName
+    };
 
     private static bool JsonTextsSemanticallyEqual(string leftJson, string rightJson) {
         try {

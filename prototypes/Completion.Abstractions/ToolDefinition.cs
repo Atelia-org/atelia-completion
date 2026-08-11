@@ -144,7 +144,8 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
             IReadOnlyList<Property>? properties = null,
             bool additionalProperties = false,
             string? description = null,
-            string? example = null
+            string? example = null,
+            bool isNullable = false
         ) : base(description, example) {
             var builder = ImmutableArray.CreateBuilder<Property>();
             var exactNames = new HashSet<string>(StringComparer.Ordinal);
@@ -170,10 +171,12 @@ public abstract record class ToolSchema(string? Description = null, string? Exam
 
             Properties = builder.Count == 0 ? ImmutableArray<Property>.Empty : builder.ToImmutable();
             AdditionalProperties = additionalProperties;
+            IsNullable = isNullable;
         }
 
         public ImmutableArray<Property> Properties { get; }
         public bool AdditionalProperties { get; }
+        public bool IsNullable { get; }
     }
 
     public sealed record class Array : ToolSchema {
@@ -295,7 +298,8 @@ public sealed record class ToolDefinition {
             : description;
         InputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
 
-        if (InputSchema is not ToolSchema.Object) { throw new ArgumentException("Tool input schema root must be an object.", nameof(inputSchema)); }
+        if (InputSchema is not ToolSchema.Object root) { throw new ArgumentException("Tool input schema root must be an object.", nameof(inputSchema)); }
+        if (root.IsNullable) { throw new ArgumentException("Tool input schema root must not be nullable.", nameof(inputSchema)); }
     }
 
     public string Name { get; }

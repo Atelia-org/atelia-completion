@@ -7,8 +7,10 @@ using System.Text.Json;
 namespace Atelia.Completion.Abstractions;
 
 internal static class CompletionOutputContractCanonicalizer {
-    private const string Schema =
+    private const string SchemaV1 =
         "atelia.completion.output-contract.v1";
+    private const string SchemaV2 =
+        "atelia.completion.output-contract.v2";
 
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
@@ -20,13 +22,18 @@ internal static class CompletionOutputContractCanonicalizer {
         CompletionOutputContract contract
     ) {
         ArgumentNullException.ThrowIfNull(contract);
+        bool usesNullableObject = contract.Tools.Any(static definition =>
+            ContainsNullableObject(definition.InputSchema));
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             writer.WriteStartObject();
-            writer.WriteString("schema", Schema);
+            writer.WriteString(
+                "schema",
+                usesNullableObject ? SchemaV2 : SchemaV1
+            );
             writer.WriteStartArray("tools");
             foreach (ToolDefinition definition in contract.Tools) {
-                WriteToolDefinition(writer, definition);
+                WriteToolDefinition(writer, definition, usesNullableObject);
             }
             writer.WriteEndArray();
             writer.WriteStartObject("toolChoice");
@@ -60,19 +67,25 @@ internal static class CompletionOutputContractCanonicalizer {
 
     private static void WriteToolDefinition(
         Utf8JsonWriter writer,
-        ToolDefinition definition
+        ToolDefinition definition,
+        bool writeObjectNullability
     ) {
         writer.WriteStartObject();
         writer.WriteString("name", definition.Name);
         writer.WriteString("description", definition.Description);
         writer.WritePropertyName("inputSchema");
-        WriteToolSchema(writer, definition.InputSchema);
+        WriteToolSchema(
+            writer,
+            definition.InputSchema,
+            writeObjectNullability
+        );
         writer.WriteEndObject();
     }
 
     private static void WriteToolSchema(
         Utf8JsonWriter writer,
-        ToolSchema schema
+        ToolSchema schema,
+        bool writeObjectNullability
     ) {
         writer.WriteStartObject();
         switch (schema) {
@@ -92,6 +105,9 @@ internal static class CompletionOutputContractCanonicalizer {
                     "additionalProperties",
                     objectSchema.AdditionalProperties
                 );
+                if (writeObjectNullability) {
+                    writer.WriteBoolean("nullable", objectSchema.IsNullable);
+                }
                 writer.WriteStartArray("properties");
                 foreach (ToolSchema.Property property
                     in objectSchema.Properties) {
@@ -102,7 +118,11 @@ internal static class CompletionOutputContractCanonicalizer {
                         property.IsRequired
                     );
                     writer.WritePropertyName("schema");
-                    WriteToolSchema(writer, property.Schema);
+                    WriteToolSchema(
+                        writer,
+                        property.Schema,
+                        writeObjectNullability
+                    );
                     writer.WriteEndObject();
                 }
                 writer.WriteEndArray();
@@ -121,7 +141,11 @@ internal static class CompletionOutputContractCanonicalizer {
                 );
                 writer.WriteBoolean("nullable", arraySchema.IsNullable);
                 writer.WritePropertyName("items");
-                WriteToolSchema(writer, arraySchema.ItemSchema);
+                WriteToolSchema(
+                    writer,
+                    arraySchema.ItemSchema,
+                    writeObjectNullability
+                );
                 break;
             case ToolSchema.Value valueSchema:
                 writer.WriteString("kind", "value");
@@ -205,6 +229,17 @@ internal static class CompletionOutputContractCanonicalizer {
         }
         writer.WriteEndObject();
     }
+
+    private static bool ContainsNullableObject(ToolSchema schema) => schema switch {
+        ToolSchema.Object value => value.IsNullable
+            || value.Properties.Any(static property =>
+                ContainsNullableObject(property.Schema)),
+        ToolSchema.Array value => ContainsNullableObject(value.ItemSchema),
+        ToolSchema.Value => false,
+        _ => throw new InvalidOperationException(
+            $"Unsupported tool schema type '{schema.GetType().FullName}'."
+        )
+    };
 
     private static void WriteTypedValue(
         Utf8JsonWriter writer,

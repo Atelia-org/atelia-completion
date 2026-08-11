@@ -231,7 +231,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v8",
+                Schema: "atelia.completion.call-log.v9",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -608,7 +608,7 @@ public sealed record CompletionCallLogToolSchema(
                         ))
                     .ToArray(),
                 Items: null,
-                Nullable: null,
+                Nullable: objectSchema.IsNullable,
                 ValueKind: null,
                 Default: null,
                 StringEnumValues: null,

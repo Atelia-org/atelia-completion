@@ -179,6 +179,63 @@ public sealed class ToolDefinitionTests {
         Assert.Contains("differ only by case", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void NullableRootObject_IsRejected() {
+        var exception = Assert.Throws<ArgumentException>(
+            () => new ToolDefinition(
+                "invalid_root",
+                "The root request must be an object.",
+                new ToolSchema.Object(isNullable: true)
+            )
+        );
+
+        Assert.Contains("root", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NestedNullableShapes_AreProjectedAsExactJsonSchemaTypeUnions() {
+        var definition = new ToolDefinition(
+            "nullable_nested",
+            "Exercise all nullable nested shapes.",
+            new ToolSchema.Object([
+                new ToolSchema.Property(
+                    "metadata",
+                    new ToolSchema.Object(isNullable: true),
+                    isRequired: true
+                ),
+                new ToolSchema.Property(
+                    "items",
+                    new ToolSchema.Array(
+                        new ToolSchema.Value(ToolParamType.Boolean, isNullable: true),
+                        isNullable: true
+                    ),
+                    isRequired: true
+                )
+            ])
+        );
+
+        AssertJsonSemanticallyEqual(
+            """
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "metadata": {
+                  "type": ["object", "null"],
+                  "additionalProperties": false
+                },
+                "items": {
+                  "type": ["array", "null"],
+                  "items": { "type": ["boolean", "null"] }
+                }
+              },
+              "required": ["metadata", "items"]
+            }
+            """,
+            JsonToolSchemaBuilder.BuildSchema(definition)
+        );
+    }
+
     private static void AssertJsonSemanticallyEqual(string expectedJson, JsonElement actual) {
         using var expectedDocument = JsonDocument.Parse(expectedJson);
         Assert.True(

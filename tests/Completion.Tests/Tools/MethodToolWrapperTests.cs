@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Text;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Utils;
@@ -99,6 +100,51 @@ public sealed class MethodToolWrapperTests {
     }
 
     [Fact]
+    public async Task ExecuteAsync_MultiMegabyteInvalidArgumentsReturnBoundedDiagnosticWithoutEcho() {
+        var target = new ParseFailureMethodToolTarget();
+        var wrapper = MethodToolWrapper.FromMethod(
+            target,
+            typeof(ParseFailureMethodToolTarget).GetMethod(
+                nameof(ParseFailureMethodToolTarget.ExecuteAsync))!
+        );
+        string secretTail = "must-not-echo-raw-tail";
+        string rawArguments = string.Concat(
+            "{\"text\":\"hello\",\"unexpected\":\"",
+            new string('x', 2 * 1024 * 1024),
+            secretTail,
+            "\"}"
+        );
+        var context = new ToolExecutionContext(
+            new ToolRegistry(Array.Empty<ITool>()).CreateSession(),
+            new RawToolCall(
+                "method.parse_failure",
+                "call-large-parse",
+                rawArguments
+            ),
+            executionSequence: 11
+        );
+
+        ToolExecuteResult result = await wrapper.ExecuteAsync(
+            context,
+            CancellationToken.None
+        );
+
+        Assert.False(target.Invoked);
+        Assert.Equal(ToolExecutionStatus.Failed, result.Status);
+        string content = result.GetFlattenedText();
+        Assert.True(
+            Encoding.UTF8.GetByteCount(content)
+                <= 4 * 1024,
+            content
+        );
+        Assert.Contains("tool_input_parse_failed", content,
+            StringComparison.Ordinal);
+        Assert.Contains("raw_arguments_json: omitted", content,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(secretTail, content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WhenObjectGraphValidationFails_DoesNotInvokeMethod() {
         var target = new ValidatedMethodToolTarget();
         var wrapper = MethodToolWrapper.FromMethod(
@@ -120,6 +166,42 @@ public sealed class MethodToolWrapperTests {
         AssertSingleTextBlock(result.Blocks, content);
         Assert.Contains("工具参数验证失败", content, StringComparison.Ordinal);
         Assert.Contains("text", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FromMethod_UsesExactJsonEnumMemberNamesInSchemaAndBinding() {
+        var target = new EnumMethodToolTarget();
+        var wrapper = MethodToolWrapper.FromMethod(
+            target,
+            typeof(EnumMethodToolTarget).GetMethod(
+                nameof(EnumMethodToolTarget.ExecuteAsync))!
+        );
+
+        ToolSchema.Object input = Assert.IsType<ToolSchema.Object>(
+            wrapper.Definition.InputSchema
+        );
+        ToolSchema.Value action = Assert.IsType<ToolSchema.Value>(
+            Assert.Single(input.Properties).Schema
+        );
+        Assert.Equal(["register-family", "keep-unchanged"],
+            action.StringEnumValues.ToArray());
+
+        var context = new ToolExecutionContext(
+            new ToolRegistry(Array.Empty<ITool>()).CreateSession(),
+            new RawToolCall(
+                "method.enum_member",
+                "call-enum",
+                """{"action":"keep-unchanged"}"""
+            ),
+            executionSequence: 10
+        );
+        ToolExecuteResult result = await wrapper.ExecuteAsync(
+            context,
+            CancellationToken.None
+        );
+
+        Assert.Equal(ToolExecutionStatus.Success, result.Status);
+        AssertSingleTextBlock(result.Blocks, "KeepUnchanged");
     }
 
     private sealed class MethodToolTarget {
@@ -204,6 +286,22 @@ public sealed class MethodToolWrapperTests {
         }
     }
 
+    private sealed class EnumMethodToolTarget {
+        [Tool("method.enum_member", "Bind exact enum wire names.")]
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            EnumMethodInput input,
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) {
+            _ = context;
+            _ = cancellationToken;
+            return ValueTask.FromResult(ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success,
+                input.Action.ToString()
+            ));
+        }
+    }
+
     [Description("Input description that should not become the tool description.")]
     private sealed record class DescriptionSourceInput(
         [property: Description("Visible text from property description.")]
@@ -225,6 +323,19 @@ public sealed class MethodToolWrapperTests {
         [property: MinLength(2)]
         string Text
     );
+
+    private sealed record class EnumMethodInput(
+        [property: Description("Exact action.")]
+        [property: JsonPropertyName("action")]
+        EnumMethodAction Action
+    );
+
+    private enum EnumMethodAction {
+        [JsonStringEnumMemberName("register-family")]
+        RegisterFamily,
+        [JsonStringEnumMemberName("keep-unchanged")]
+        KeepUnchanged
+    }
 
     private static void AssertSingleTextBlock(IReadOnlyList<ToolResultBlock> blocks, string expectedText) {
         var block = Assert.Single(blocks);

@@ -213,6 +213,74 @@ public sealed class ToolSessionTests {
         Assert.Contains("cannot contain null elements", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task UnsettledAndFatalExceptionsPropagateWithoutTerminalResult() {
+        ToolSession unsettled = new ToolRegistry([
+            new ThrowingTool(static () =>
+                new ToolExecutionUnsettledException("pending", "inspect"))
+        ]).CreateSession();
+        await Assert.ThrowsAsync<ToolExecutionUnsettledException>(() =>
+            unsettled.ExecuteReservedAsync(
+                new RawToolCall("throw", "call", "{}"),
+                1,
+                "operation",
+                CancellationToken.None
+            ).AsTask());
+
+        ToolSession fatal = new ToolRegistry([
+            new ThrowingTool(static () => new OutOfMemoryException("fatal"))
+        ]).CreateSession();
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            fatal.ExecuteReservedAsync(
+                new RawToolCall("throw", "call", "{}"),
+                1,
+                "operation",
+                CancellationToken.None
+            ).AsTask());
+    }
+
+    [Fact]
+    public async Task OnlyExplicitPreMutationCancellationBecomesSkipped() {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        ToolSession safe = new ToolRegistry([
+            new ThrowingTool(() =>
+                new ToolExecutionCancelledBeforeMutationException(
+                    cancellation.Token))
+        ]).CreateSession();
+        ToolCallExecutionResult skipped = await safe.ExecuteReservedAsync(
+            new RawToolCall("throw", "call", "{}"),
+            1,
+            "operation",
+            cancellation.Token
+        );
+        Assert.Equal(ToolExecutionStatus.Skipped,
+            skipped.ExecuteResult.Status);
+
+        ToolSession uncertain = new ToolRegistry([
+            new ThrowingTool(() => new OperationCanceledException(
+                cancellation.Token))
+        ]).CreateSession();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            uncertain.ExecuteReservedAsync(
+                new RawToolCall("throw", "call", "{}"),
+                1,
+                "operation",
+                cancellation.Token
+            ).AsTask());
+    }
+
+    [Fact]
+    public void UnsettledDiagnosticsAreStrictAndBounded() {
+        Assert.Throws<ArgumentException>(() =>
+            new ToolExecutionUnsettledException("bad\ud800", "detail"));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new ToolExecutionUnsettledException(
+                "pending",
+                new string('x', 4097)
+            ));
+    }
+
     private sealed class RecordingTool : ITool {
         public RecordingTool(string name) {
             Definition = new ToolDefinition(
@@ -241,6 +309,26 @@ public sealed class ToolSessionTests {
                 )
             );
         }
+    }
+
+    private sealed class ThrowingTool : ITool {
+        private readonly Func<Exception> _exception;
+
+        internal ThrowingTool(Func<Exception> exception) {
+            _exception = exception;
+            Definition = new ToolDefinition(
+                "throw",
+                "Throws one exact exception.",
+                new ToolSchema.Object()
+            );
+        }
+
+        public ToolDefinition Definition { get; }
+
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) => ValueTask.FromException<ToolExecuteResult>(_exception());
     }
 
     private static void AssertSingleTextBlock(IReadOnlyList<ToolResultBlock> blocks, string expectedText) {

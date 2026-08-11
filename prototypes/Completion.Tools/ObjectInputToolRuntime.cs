@@ -1,7 +1,10 @@
 using System.Collections;
+using System.Buffers.Binary;
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
@@ -9,6 +12,9 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Completion.Tools;
 
 internal static class ObjectInputToolRuntime {
+    internal const int MaximumInputFailureUtf8Bytes = 4 * 1024;
+    private const int MaximumInputFailureDetailUtf8Bytes = 1024;
+
     private static readonly JsonSerializerOptions JsonSerializerOptions = new() {
         AllowTrailingCommas = true,
         ReadCommentHandling = JsonCommentHandling.Skip
@@ -87,7 +93,12 @@ internal static class ObjectInputToolRuntime {
             return AttachParseWarning(
                 ToolExecuteResult.FromText(
                     ToolExecutionStatus.Failed,
-                    BuildDeserializeFailureContent(normalizedRawArguments, ex.Message)
+                    BuildInputFailureContent(
+                        "工具参数反序列化失败。",
+                        "tool_input_deserialize_failed",
+                        ex.Message,
+                        normalizedRawArguments
+                    )
                 ),
                 parsed.ParseWarning
             );
@@ -98,7 +109,12 @@ internal static class ObjectInputToolRuntime {
             return AttachParseWarning(
                 ToolExecuteResult.FromText(
                     ToolExecutionStatus.Failed,
-                    BuildAnnotationFailureContent(rawToolCall, validationErrors)
+                    BuildInputFailureContent(
+                        "工具参数验证失败。",
+                        "tool_input_annotation_failed",
+                        JoinBoundedDetails(validationErrors),
+                        rawToolCall.RawArgumentsJson
+                    )
                 ),
                 parsed.ParseWarning
             );
@@ -186,37 +202,105 @@ internal static class ObjectInputToolRuntime {
     }
 
     private static ToolExecuteResult CreateParseFailureResult(RawToolCall request, ToolArgumentParsingResult parsed) {
-        var content = "工具参数解析失败。";
-
-        if (!string.IsNullOrWhiteSpace(parsed.ParseError)) {
-            content = string.Concat(content, "\n解析错误: ", parsed.ParseError);
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.RawArgumentsJson)) {
-            content = string.Concat(content, "\nraw_arguments_json: ", request.RawArgumentsJson);
-        }
-
-        return ToolExecuteResult.FromText(ToolExecutionStatus.Failed, content);
+        return ToolExecuteResult.FromText(
+            ToolExecutionStatus.Failed,
+            BuildInputFailureContent(
+                "工具参数解析失败。",
+                "tool_input_parse_failed",
+                parsed.ParseError,
+                request.RawArgumentsJson
+            )
+        );
     }
 
-    private static string BuildDeserializeFailureContent(string rawArgumentsJson, string errorMessage)
-        => $"工具参数反序列化失败。\n错误: {errorMessage}\nraw_arguments_json: {rawArgumentsJson}";
-
-    private static string BuildAnnotationFailureContent(RawToolCall request, IReadOnlyList<string> validationErrors) {
-        var content = string.Concat("工具参数验证失败。", "\n验证错误: ", string.Join("; ", validationErrors));
-
-        if (!string.IsNullOrWhiteSpace(request.RawArgumentsJson)) {
-            content = string.Concat(content, "\nraw_arguments_json: ", request.RawArgumentsJson);
+    private static string BuildInputFailureContent(
+        string summary,
+        string code,
+        string? detail,
+        string rawArgumentsJson
+    ) {
+        string content = string.Concat(
+            summary,
+            "\ncode: ", code,
+            "\npath: tool.arguments",
+            "\ndetail: ", BoundUtf8(detail),
+            "\nraw_arguments_json: omitted",
+            "\nraw_arguments_utf16_length: ",
+            rawArgumentsJson.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "\nraw_arguments_sha256_utf16le: ",
+            ComputeUtf16LeSha256(rawArgumentsJson)
+        );
+        if (Encoding.UTF8.GetByteCount(content) > MaximumInputFailureUtf8Bytes) {
+            throw new InvalidOperationException(
+                "Code-owned tool input failure diagnostics exceeded their byte cap."
+            );
         }
-
         return content;
+    }
+
+    private static string JoinBoundedDetails(IEnumerable<string> details) {
+        var builder = new StringBuilder();
+        foreach (string detail in details) {
+            string bounded = BoundUtf8(detail);
+            int separatorBytes = builder.Length == 0 ? 0 : 2;
+            if (Encoding.UTF8.GetByteCount(builder.ToString())
+                    + separatorBytes
+                    + Encoding.UTF8.GetByteCount(bounded)
+                > MaximumInputFailureDetailUtf8Bytes) {
+                break;
+            }
+            if (builder.Length > 0) {
+                _ = builder.Append("; ");
+            }
+            _ = builder.Append(bounded);
+        }
+        return builder.Length == 0 ? "unavailable" : builder.ToString();
+    }
+
+    private static string BoundUtf8(string? value) {
+        if (string.IsNullOrWhiteSpace(value)) {
+            return "unavailable";
+        }
+        var builder = new StringBuilder(
+            Math.Min(value.Length, MaximumInputFailureDetailUtf8Bytes)
+        );
+        int utf8Bytes = 0;
+        foreach (Rune rune in value.EnumerateRunes()) {
+            if (utf8Bytes + rune.Utf8SequenceLength
+                > MaximumInputFailureDetailUtf8Bytes) {
+                break;
+            }
+            _ = builder.Append(rune);
+            utf8Bytes += rune.Utf8SequenceLength;
+        }
+        return builder.Length == 0 ? "unavailable" : builder.ToString();
+    }
+
+    private static string ComputeUtf16LeSha256(string value) {
+        using IncrementalHash hash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256
+        );
+        Span<byte> buffer = stackalloc byte[512];
+        int offset = 0;
+        while (offset < value.Length) {
+            int count = Math.Min(buffer.Length / 2, value.Length - offset);
+            for (int index = 0; index < count; index++) {
+                BinaryPrimitives.WriteUInt16LittleEndian(
+                    buffer.Slice(index * 2, 2),
+                    value[offset + index]
+                );
+            }
+            hash.AppendData(buffer[..(count * 2)]);
+            offset += count;
+        }
+        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
     private static ToolExecuteResult AttachParseWarning(ToolExecuteResult result, string? parseWarning) {
         if (string.IsNullOrWhiteSpace(parseWarning)) { return result; }
 
         var blocks = result.Blocks
-            .Concat(new ToolResultBlock[] { new ToolResultBlock.Text(string.Concat("\n[ParseWarning] ", parseWarning)) })
+            .Concat(new ToolResultBlock[] { new ToolResultBlock.Text(string.Concat("\n[ParseWarning] ", BoundUtf8(parseWarning))) })
             .ToArray();
         return new ToolExecuteResult(result.Status, blocks);
     }

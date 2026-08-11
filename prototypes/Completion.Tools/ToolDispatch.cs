@@ -66,7 +66,8 @@ internal static class ToolDispatch {
 
             return new ToolCallExecutionResult(request, executeResult, stopwatch.Elapsed);
         }
-        catch (OperationCanceledException) {
+        catch (ToolExecutionCancelledBeforeMutationException)
+            when (cancellationToken.IsCancellationRequested) {
             stopwatch.Stop();
             DebugUtil.Warning(DebugCategory, $"[Dispatch] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
 
@@ -76,16 +77,61 @@ internal static class ToolDispatch {
                 stopwatch.Elapsed
             );
         }
+        catch (ToolExecutionUnsettledException) {
+            stopwatch.Stop();
+            throw;
+        }
+        catch (Exception ex) when (IsFatal(ex)) {
+            stopwatch.Stop();
+            throw;
+        }
+        catch (OperationCanceledException) {
+            stopwatch.Stop();
+            throw;
+        }
         catch (Exception ex) {
             stopwatch.Stop();
-            DebugUtil.Error(DebugCategory, $"[Dispatch] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} error={ex.Message}", ex);
+            DebugUtil.Error(DebugCategory, $"[Dispatch] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} error={BoundDetail(ex.Message)}", ex);
 
-            var message = $"工具执行异常: {ex.Message}";
+            var message = $"工具执行异常: {BoundDetail(ex.Message)}";
             return new ToolCallExecutionResult(
                 request,
                 ToolExecuteResult.FromText(ToolExecutionStatus.Failed, message),
                 stopwatch.Elapsed
             );
         }
+    }
+
+    private static bool IsFatal(Exception exception)
+        => exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException;
+
+    private static string BoundDetail(string? detail) {
+        const int maximumUtf8Bytes = 4 * 1024;
+        if (string.IsNullOrEmpty(detail)) {
+            return "No detail was provided.";
+        }
+        var encoding = new System.Text.UTF8Encoding(false, true);
+        try {
+            if (encoding.GetByteCount(detail) <= maximumUtf8Bytes) {
+                return detail;
+            }
+        }
+        catch (System.Text.EncoderFallbackException) {
+            return "The exception detail was not strict UTF-8 text.";
+        }
+        var builder = new System.Text.StringBuilder(
+            Math.Min(detail.Length, maximumUtf8Bytes)
+        );
+        int bytes = 0;
+        foreach (System.Text.Rune rune in detail.EnumerateRunes()) {
+            if (bytes + rune.Utf8SequenceLength > maximumUtf8Bytes) {
+                break;
+            }
+            builder.Append(rune);
+            bytes += rune.Utf8SequenceLength;
+        }
+        return builder.ToString();
     }
 }

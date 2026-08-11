@@ -206,7 +206,12 @@ public static class ReflectedToolDefinitionBuilder {
             schema = new ToolSchema.Value(
                 ToolParamType.String,
                 description: description,
-                stringEnumValues: Enum.GetNames(type)
+                stringEnumValues: type.GetFields(
+                    BindingFlags.Public | BindingFlags.Static)
+                    .Select(static field => field.GetCustomAttribute<
+                            JsonStringEnumMemberNameAttribute>()?.Name
+                        ?? field.Name)
+                    .ToArray()
             );
             return true;
         }

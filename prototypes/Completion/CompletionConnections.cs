@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Runtime.ExceptionServices;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Atelia.Completion.OpenAI;
@@ -302,10 +302,14 @@ internal sealed class OwnedHttpCompletionClient : ICompletionClient, IDisposable
     }
 }
 
-public sealed class CompletionConnectionRegistry : IDisposable {
+public sealed class CompletionConnectionRegistry : IDisposable,
+    IAsyncDisposable {
     private readonly ICompletionClientFactory _factory;
     private readonly IReadOnlyDictionary<string, CompletionConnectionConfig> _byId;
-    private readonly ConcurrentDictionary<string, ICompletionClient> _clients = new(StringComparer.Ordinal);
+    private readonly object _clientGate = new();
+    private readonly Dictionary<string, ICompletionClient> _clients =
+        new(StringComparer.Ordinal);
+    private bool _disposed;
 
     public CompletionConnectionRegistry(CompletionConnectionsFileConfig config, ICompletionClientFactory factory) {
         ArgumentNullException.ThrowIfNull(config);
@@ -332,12 +336,18 @@ public sealed class CompletionConnectionRegistry : IDisposable {
 
     public ICompletionClient GetClient(string connectionId) {
         if (!_byId.TryGetValue(connectionId, out var connection)) { throw new InvalidOperationException($"Unknown completion connection '{connectionId}'."); }
-
-        return _clients.GetOrAdd(
-            connection.Id,
-            static (_, state) => state.Factory.Create(state.Connection),
-            (Factory: _factory, Connection: connection)
-        );
+        lock (_clientGate) {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_clients.TryGetValue(connection.Id, out var existing)) {
+                return existing;
+            }
+            ICompletionClient created = _factory.Create(connection)
+                ?? throw new InvalidOperationException(
+                    $"Completion client factory returned null for '{connection.Id}'."
+                );
+            _clients.Add(connection.Id, created);
+            return created;
+        }
     }
 
     /// <summary>
@@ -442,10 +452,73 @@ public sealed class CompletionConnectionRegistry : IDisposable {
     ) => new(reason, detail);
 
     public void Dispose() {
-        foreach (var client in _clients.Values) {
-            if (client is IDisposable disposable) { disposable.Dispose(); }
+        var failures = new List<Exception>();
+        foreach (ICompletionClient client in BeginDispose()) {
+            try {
+                if (client is IDisposable disposable) {
+                    disposable.Dispose();
+                }
+                else if (client is IAsyncDisposable asyncDisposable) {
+                    asyncDisposable.DisposeAsync().AsTask()
+                        .GetAwaiter().GetResult();
+                }
+            }
+            catch (Exception exception) when (!IsFatal(exception)) {
+                failures.Add(exception);
+            }
+        }
+        ThrowDisposeFailures(failures);
+    }
+
+    public async ValueTask DisposeAsync() {
+        var failures = new List<Exception>();
+        foreach (ICompletionClient client in BeginDispose()) {
+            try {
+                if (client is IAsyncDisposable asyncDisposable) {
+                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                }
+                else if (client is IDisposable disposable) {
+                    disposable.Dispose();
+                }
+            }
+            catch (Exception exception) when (!IsFatal(exception)) {
+                failures.Add(exception);
+            }
+        }
+        ThrowDisposeFailures(failures);
+    }
+
+    private ICompletionClient[] BeginDispose() {
+        lock (_clientGate) {
+            if (_disposed) {
+                return [];
+            }
+            _disposed = true;
+            ICompletionClient[] distinct = [.. _clients.Values.Distinct<
+                ICompletionClient>(
+                ReferenceEqualityComparer.Instance
+            )];
+            _clients.Clear();
+            return distinct;
         }
     }
+
+    private static void ThrowDisposeFailures(List<Exception> failures) {
+        if (failures.Count == 1) {
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        }
+        if (failures.Count > 1) {
+            throw new AggregateException(
+                "Multiple Completion clients failed during disposal.",
+                failures
+            );
+        }
+    }
+
+    private static bool IsFatal(Exception exception)
+        => exception is OutOfMemoryException
+            or StackOverflowException
+            or AccessViolationException;
 }
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]

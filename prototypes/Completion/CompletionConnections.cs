@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Runtime.ExceptionServices;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
@@ -62,16 +60,45 @@ internal static class CompletionConnectionConfigValidation {
 }
 
 public static class CompletionConnectionConfigLoader {
+    /// <summary>Maximum encoded size accepted by the V1 connections document.</summary>
+    public const int MaximumInputUtf8Bytes = 1024 * 1024;
+
+    /// <summary>
+    /// Decodes the single strict V1 connections byte language. The root must
+    /// contain exact integer <c>v: 1</c>, 1..256 connections, and an exact
+    /// default connection id; nesting is capped at depth 8 and input at 1 MiB.
+    /// </summary>
+    public static CompletionConnectionsFileConfig Decode(
+        ReadOnlySpan<byte> utf8Json
+    ) => CompletionConnectionsManifestV1Reader.Decode(utf8Json);
+
+    /// <summary>Reads a bounded ordinary file and delegates to <see cref="Decode"/>.</summary>
     public static CompletionConnectionsFileConfig LoadFile(string path) {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         string resolvedPath = Path.GetFullPath(path);
-        if (!File.Exists(resolvedPath)) { throw new FileNotFoundException($"Completion connections file was not found: {resolvedPath}", resolvedPath); }
-
-        var config = JsonSerializer.Deserialize(File.ReadAllText(resolvedPath), CompletionJsonContext.Default.CompletionConnectionsFileConfig)
-            ?? throw new InvalidOperationException($"Failed to deserialize Completion connections file: {resolvedPath}");
-
-        return NormalizeAndValidate(config);
+        using var stream = new FileStream(
+            resolvedPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.SequentialScan
+        );
+        if (stream.Length is < 1 or > MaximumInputUtf8Bytes) {
+            throw new InvalidDataException(
+                "Completion connections bytes are empty or exceed the 1 MiB V1 bound."
+            );
+        }
+        int length = checked((int)stream.Length);
+        byte[] bytes = GC.AllocateUninitializedArray<byte>(length);
+        stream.ReadExactly(bytes);
+        if (stream.Length != length || stream.ReadByte() != -1) {
+            throw new InvalidDataException(
+                "Completion connections file changed during its bounded read."
+            );
+        }
+        return Decode(bytes);
     }
 
     /// <summary>
@@ -82,7 +109,14 @@ public static class CompletionConnectionConfigLoader {
         CompletionConnectionsFileConfig config
     ) {
         ArgumentNullException.ThrowIfNull(config);
-        if (config.Connections is not { Count: > 0 }) { throw new InvalidOperationException("Completion connections file must contain at least one connection."); }
+        if (config.Connections is not { Count: > 0 }
+            || config.Connections.Count
+                > CompletionConnectionsManifestV1Reader
+                    .MaximumConnectionCount) {
+            throw new InvalidOperationException(
+                "Completion connections must contain between 1 and 256 connections."
+            );
+        }
 
         var connectionIds = new HashSet<string>(StringComparer.Ordinal);
         var resolvedConnections = new List<CompletionConnectionConfig>(config.Connections.Count);
@@ -90,20 +124,70 @@ public static class CompletionConnectionConfigLoader {
         for (int i = 0; i < config.Connections.Count; i++) {
             var connection = config.Connections[i] ?? throw new InvalidOperationException($"Completion connection[{i}] must not be null.");
             RequireNonBlank(connection.Id, $"Completion connection[{i}] must have a non-empty id.");
+            RequireConfigBound(
+                connection.Id,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumIdentifierUtf8Bytes,
+                "Completion connection id"
+            );
             if (!connectionIds.Add(connection.Id)) { throw new InvalidOperationException($"Completion connections contain duplicate id '{connection.Id}'."); }
 
             RequireNonBlank(connection.Kind, $"Completion connection '{connection.Id}' must have a non-empty kind.");
             RequireNonBlank(connection.ModelId, $"Completion connection '{connection.Id}' must have a non-empty modelId.");
+            RequireConfigBound(
+                connection.Kind,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumIdentifierUtf8Bytes,
+                "Completion connection kind"
+            );
+            RequireConfigBound(
+                connection.ModelId,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumIdentifierUtf8Bytes,
+                "Completion connection modelId"
+            );
             // completionSurfaceId only disambiguates the openai-chat dialect; for single-surface
             // kinds (anthropic, openai-responses) it is redundant, so default it from the kind when
             // omitted instead of forcing every connection to spell it out.
             string completionSurfaceId = ResolveCompletionSurfaceId(connection.Kind, connection.CompletionSurfaceId);
+            RequireConfigBound(
+                completionSurfaceId,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumIdentifierUtf8Bytes,
+                "Completion connection completionSurfaceId"
+            );
 
             string baseAddress = connection.BaseAddress;
             string? apiKey = connection.ApiKey;
 
+            if (!string.IsNullOrWhiteSpace(connection.BaseAddress)) {
+                RequireConfigBound(
+                    connection.BaseAddress,
+                    CompletionConnectionsManifestV1Reader
+                        .MaximumEndpointUtf8Bytes,
+                    "Completion connection baseAddress"
+                );
+            }
+            if (connection.ApiKey is not null) {
+                RequireConfigBound(
+                    connection.ApiKey,
+                    CompletionConnectionsManifestV1Reader
+                        .MaximumSecretUtf8Bytes,
+                    "Completion connection apiKey"
+                );
+            }
+
             if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)) {
-                string? resolved = Environment.GetEnvironmentVariable(connection.BaseAddressEnv);
+                RequireConfigBound(
+                    connection.BaseAddressEnv,
+                    CompletionConnectionsManifestV1Reader
+                        .MaximumIdentifierUtf8Bytes,
+                    "Completion connection baseAddressEnv"
+                );
+                string? resolved = ResolveEnvironmentVariable(
+                    connection.BaseAddressEnv,
+                    "baseAddressEnv"
+                );
                 if (string.IsNullOrWhiteSpace(resolved)) {
                     throw new InvalidOperationException(
                         $"Completion connection '{connection.Id}' baseAddressEnv references environment variable "
@@ -114,7 +198,16 @@ public static class CompletionConnectionConfigLoader {
             }
 
             if (!string.IsNullOrWhiteSpace(connection.ApiKeyEnv)) {
-                string? resolved = Environment.GetEnvironmentVariable(connection.ApiKeyEnv);
+                RequireConfigBound(
+                    connection.ApiKeyEnv,
+                    CompletionConnectionsManifestV1Reader
+                        .MaximumIdentifierUtf8Bytes,
+                    "Completion connection apiKeyEnv"
+                );
+                string? resolved = ResolveEnvironmentVariable(
+                    connection.ApiKeyEnv,
+                    "apiKeyEnv"
+                );
                 if (string.IsNullOrWhiteSpace(resolved)) {
                     throw new InvalidOperationException(
                         $"Completion connection '{connection.Id}' apiKeyEnv references environment variable "
@@ -125,6 +218,20 @@ public static class CompletionConnectionConfigLoader {
             }
 
             RequireNonBlank(baseAddress, $"Completion connection '{connection.Id}' must have a non-empty baseAddress.");
+            RequireConfigBound(
+                baseAddress,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumEndpointUtf8Bytes,
+                "Resolved Completion connection baseAddress"
+            );
+            if (apiKey is not null) {
+                RequireConfigBound(
+                    apiKey,
+                    CompletionConnectionsManifestV1Reader
+                        .MaximumSecretUtf8Bytes,
+                    "Resolved Completion connection apiKey"
+                );
+            }
             if (!Enum.IsDefined(connection.ReasoningEffort)) {
                 throw new InvalidOperationException(
                     $"Completion connection '{connection.Id}' has unsupported reasoningEffort value '{connection.ReasoningEffort}'."
@@ -140,13 +247,49 @@ public static class CompletionConnectionConfigLoader {
             ? config.DefaultConnectionId!
             : resolvedConnections[0].Id;
 
+        RequireConfigBound(
+            defaultConnectionId,
+            CompletionConnectionsManifestV1Reader.MaximumIdentifierUtf8Bytes,
+            "Completion defaultConnectionId"
+        );
+
         if (!connectionIds.Contains(defaultConnectionId)) { throw new InvalidOperationException($"Completion defaultConnectionId '{defaultConnectionId}' does not match any connection id."); }
 
-        return new CompletionConnectionsFileConfig(resolvedConnections, defaultConnectionId);
+        return CompletionConnectionsManifestV1Reader.Freeze(
+            new CompletionConnectionsFileConfig(
+                resolvedConnections,
+                defaultConnectionId
+            )
+        );
     }
 
     private static void RequireNonBlank(string? value, string message) {
         if (string.IsNullOrWhiteSpace(value)) { throw new InvalidOperationException(message); }
+    }
+
+    private static void RequireConfigBound(
+        string value,
+        int maximumUtf8Bytes,
+        string field
+    ) => CompletionConnectionsManifestV1Reader.RequireUtf8Bounded(
+        value,
+        maximumUtf8Bytes,
+        field
+    );
+
+    private static string? ResolveEnvironmentVariable(
+        string locator,
+        string field
+    ) {
+        try {
+            return Environment.GetEnvironmentVariable(locator);
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidOperationException(
+                $"Completion connection {field} is not a usable environment locator.",
+                exception
+            );
+        }
     }
 
     private static string ResolveCompletionSurfaceId(string kind, string? explicitSurfaceId) {
@@ -520,8 +663,3 @@ public sealed class CompletionConnectionRegistry : IDisposable,
             or StackOverflowException
             or AccessViolationException;
 }
-
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(CompletionConnectionsFileConfig))]
-[JsonSerializable(typeof(CompletionConnectionConfig))]
-internal sealed partial class CompletionJsonContext : JsonSerializerContext;

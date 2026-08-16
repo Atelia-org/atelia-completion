@@ -1,3 +1,4 @@
+using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Xunit;
@@ -6,296 +7,482 @@ namespace Atelia.Completion.Tests;
 
 public sealed class CompletionConnectionConfigLoaderTests {
     [Fact]
-    public void LoadFile_DefaultsAnthropicPromptCacheTtlToProviderDefault() {
-        string tempDirectory = CreateTempDirectory();
-        try {
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                """
-                {
-                  "connections": [{
-                    "id": "anthropic",
-                    "kind": "anthropic",
-                    "modelId": "claude-opus-4-6",
-                    "completionSurfaceId": "anthropic",
-                    "baseAddress": "https://api.anthropic.com/"
-                  }]
-                }
-                """
-            );
+    public void Decode_AcceptsStrictV1AndFreezesResult() {
+        CompletionConnectionsFileConfig config = Decode(
+            Connection(
+                kind: "anthropic",
+                surface: "anthropic",
+                extra: "\"apiKey\":\"secret\",\"maxTokens\":2048,"
+                    + "\"reasoningEffort\":\"high\","
+                    + "\"anthropicPromptCacheTtl\":\"1h\""
+            )
+        );
 
-            CompletionConnectionConfig connection = Assert.Single(
-                CompletionConnectionConfigLoader.LoadFile(path).Connections
-            );
+        CompletionConnectionConfig item = Assert.Single(config.Connections);
+        Assert.Equal("main", config.DefaultConnectionId);
+        Assert.Equal("secret", item.ApiKey);
+        Assert.Equal(2048, item.MaxTokens);
+        Assert.Equal(CompletionReasoningEffort.High, item.ReasoningEffort);
+        Assert.Equal(
+            AnthropicPromptCacheTtl.OneHour,
+            item.AnthropicPromptCacheTtl
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<CompletionConnectionConfig>)config.Connections)[0] = item
+        );
+    }
 
-            Assert.Equal(
-                AnthropicPromptCacheTtl.ProviderDefault,
-                connection.AnthropicPromptCacheTtl
-            );
-        }
-        finally {
-            Directory.Delete(tempDirectory, recursive: true);
-        }
+    [Fact]
+    public void Decode_DefaultsOptionalFieldsAndKeepsKindAndSurfaceOpen() {
+        CompletionConnectionConfig item = Assert.Single(
+            Decode(Connection(kind: "custom-kind", surface: "custom-v7"))
+                .Connections
+        );
+
+        Assert.Null(item.MaxTokens);
+        Assert.Equal(
+            CompletionReasoningEffort.ProviderDefault,
+            item.ReasoningEffort
+        );
+        Assert.Equal(
+            AnthropicPromptCacheTtl.ProviderDefault,
+            item.AnthropicPromptCacheTtl
+        );
+        Assert.Equal("custom-kind", item.Kind);
+        Assert.Equal("custom-v7", item.CompletionSurfaceId);
     }
 
     [Theory]
-    [InlineData("provider-default", AnthropicPromptCacheTtl.ProviderDefault)]
-    [InlineData("5m", AnthropicPromptCacheTtl.FiveMinutes)]
-    [InlineData("1h", AnthropicPromptCacheTtl.OneHour)]
-    public void LoadFile_ParsesAnthropicPromptCacheTtlByStableStringName(
-        string jsonValue,
-        AnthropicPromptCacheTtl expected
-    ) {
-        string tempDirectory = CreateTempDirectory();
-        try {
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                $$"""
-                {
-                  "connections": [{
-                    "id": "anthropic",
-                    "kind": "anthropic",
-                    "modelId": "claude-opus-4-6",
-                    "completionSurfaceId": "anthropic",
-                    "baseAddress": "https://api.anthropic.com/",
-                    "anthropicPromptCacheTtl": "{{jsonValue}}"
-                  }]
-                }
-                """
-            );
+    [InlineData(null)]
+    [InlineData("null")]
+    [InlineData("\"1\"")]
+    [InlineData("0")]
+    [InlineData("2")]
+    [InlineData("1.0")]
+    [InlineData("1e0")]
+    public void Decode_RequiresExactIntegerV1(string? version) {
+        string document = version is null
+            ? "{\"connections\":[" + Connection()
+                + "],\"defaultConnectionId\":\"main\"}"
+            : Root(Connection(), version);
 
-            CompletionConnectionConfig connection = Assert.Single(
-                CompletionConnectionConfigLoader.LoadFile(path).Connections
-            );
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => CompletionConnectionConfigLoader.Decode(
+                Encoding.UTF8.GetBytes(document)
+            )
+        );
+        Assert.Contains("migrate", exception.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
 
-            Assert.Equal(expected, connection.AnthropicPromptCacheTtl);
-        }
-        finally {
-            Directory.Delete(tempDirectory, recursive: true);
-        }
+    public static TheoryData<byte[]> StructuralFailures => new() {
+        Encoding.UTF8.GetBytes(
+            "{\"v\":1,\"v\":1,\"connections\":[],\"defaultConnectionId\":\"main\"}"
+        ),
+        Encoding.UTF8.GetBytes(
+            "{\"v\":1,\"connections\":[],\"defaultConnectionId\":\"main\",\"unknown\":1}"
+        ),
+        Encoding.UTF8.GetBytes(
+            "{\"V\":1,\"connections\":[],\"defaultConnectionId\":\"main\"}"
+        ),
+        Encoding.UTF8.GetBytes(Root(Connection()) + " trailing"),
+        Encoding.UTF8.GetBytes(Root(Connection()).Replace("}", "},", StringComparison.Ordinal)),
+        Encoding.UTF8.GetBytes("/*comment*/" + Root(Connection())),
+        Encoding.UTF8.GetBytes(
+            Root(Connection(id: "\\ud800"))
+        ),
+        Encoding.UTF8.GetBytes(
+            Root(Connection())[..^1] + ",\"unknown\":[[[[[[[[[]]]]]]]]]}"
+        ),
+        new byte[] { 0xef, 0xbb, 0xbf }
+            .Concat(Encoding.UTF8.GetBytes(Root(Connection())))
+            .ToArray(),
+        new byte[] { 0xff }
+    };
+
+    [Theory]
+    [MemberData(nameof(StructuralFailures))]
+    public void Decode_RejectsAmbiguousOrNonStrictBytes(byte[] bytes) {
+        Assert.Throws<InvalidDataException>(() =>
+            CompletionConnectionConfigLoader.Decode(bytes)
+        );
     }
 
     [Theory]
+    [InlineData("{\"id\":\"main\",\"kind\":\"test\",\"modelId\":\"model\",\"completionSurfaceId\":\"test-v1\"}")]
+    [InlineData("{\"id\":\"main\",\"kind\":\"test\",\"modelId\":\"model\",\"completionSurfaceId\":\"test-v1\",\"baseAddress\":\"a\",\"baseAddressEnv\":\"B\"}")]
+    [InlineData("{\"id\":\"main\",\"kind\":\"test\",\"modelId\":\"model\",\"completionSurfaceId\":\"test-v1\",\"baseAddress\":null}")]
+    [InlineData("{\"id\":\"main\",\"kind\":\"test\",\"modelId\":\"model\",\"completionSurfaceId\":\"test-v1\",\"baseAddress\":\"   \"}")]
+    [InlineData("{\"id\":\"main\",\"kind\":\"test\",\"modelId\":\"model\",\"completionSurfaceId\":\"test-v1\",\"baseAddress\":\"a\",\"apiKey\":\"k\",\"apiKeyEnv\":\"K\"}")]
+    [InlineData("{\"id\":\"main\",\"kind\":\"test\",\"modelId\":\"model\",\"completionSurfaceId\":\"test-v1\",\"baseAddress\":\"a\",\"apiKey\":null}")]
+    [InlineData("{\"id\":\"main\",\"kind\":\"test\",\"modelId\":\"model\",\"completionSurfaceId\":\"test-v1\",\"baseAddress\":\"a\",\"apiKeyEnv\":\"\"}")]
+    public void Decode_EnforcesWireSourceSyntax(string item) {
+        Assert.Throws<InvalidDataException>(() => Decode(item));
+    }
+
+    [Fact]
+    public void Decode_AllowsEnvironmentOnlySources() {
+        string endpointEnv = EnvName("ENDPOINT");
+        string keyEnv = EnvName("KEY");
+        try {
+            Environment.SetEnvironmentVariable(endpointEnv, "endpoint");
+            Environment.SetEnvironmentVariable(keyEnv, "secret");
+            string item = Connection(
+                source: $"\"baseAddressEnv\":\"{endpointEnv}\"",
+                extra: $"\"apiKeyEnv\":\"{keyEnv}\""
+            );
+
+            CompletionConnectionConfig decoded = Assert.Single(
+                Decode(item).Connections
+            );
+
+            Assert.Equal("endpoint", decoded.BaseAddress);
+            Assert.Equal("secret", decoded.ApiKey);
+            Assert.Equal(endpointEnv, decoded.BaseAddressEnv);
+            Assert.Equal(keyEnv, decoded.ApiKeyEnv);
+        }
+        finally {
+            Environment.SetEnvironmentVariable(endpointEnv, null);
+            Environment.SetEnvironmentVariable(keyEnv, null);
+        }
+    }
+
+    [Fact]
+    public void Decode_ReportsUnavailableEnvironmentAsInvalidOperation() {
+        string endpointEnv = EnvName("MISSING_ENDPOINT");
+        try {
+            Environment.SetEnvironmentVariable(endpointEnv, null);
+            Assert.Throws<InvalidOperationException>(() => Decode(Connection(
+                source: $"\"baseAddressEnv\":\"{endpointEnv}\""
+            )));
+
+            Environment.SetEnvironmentVariable(endpointEnv, "   ");
+            Assert.Throws<InvalidOperationException>(() => Decode(Connection(
+                source: $"\"baseAddressEnv\":\"{endpointEnv}\""
+            )));
+
+            Assert.Throws<InvalidOperationException>(() => Decode(Connection(
+                source: "\"baseAddressEnv\":\"invalid=locator\""
+            )));
+        }
+        finally {
+            Environment.SetEnvironmentVariable(endpointEnv, null);
+        }
+    }
+
+    [Fact]
+    public void Decode_RechecksResolvedEndpointAndSecretCapsWithoutLeakingValues() {
+        string endpointEnv = EnvName("ENDPOINT_CAP");
+        string keyEnv = EnvName("KEY_CAP");
+        string endpoint = new('e', 4 * 1024 + 1);
+        string secret = "DO_NOT_LEAK_" + new string('s', 64 * 1024);
+        try {
+            Environment.SetEnvironmentVariable(endpointEnv, endpoint);
+            Environment.SetEnvironmentVariable(keyEnv, "key");
+            InvalidOperationException endpointFailure = Assert.Throws<
+                InvalidOperationException>(() => Decode(Connection(
+                    source: $"\"baseAddressEnv\":\"{endpointEnv}\""
+                )));
+            Assert.DoesNotContain(endpoint, endpointFailure.ToString(),
+                StringComparison.Ordinal);
+
+            Environment.SetEnvironmentVariable(endpointEnv, "endpoint");
+            Environment.SetEnvironmentVariable(keyEnv, secret);
+            InvalidOperationException secretFailure = Assert.Throws<
+                InvalidOperationException>(() => Decode(Connection(
+                    source: $"\"baseAddressEnv\":\"{endpointEnv}\"",
+                    extra: $"\"apiKeyEnv\":\"{keyEnv}\""
+                )));
+            Assert.DoesNotContain("DO_NOT_LEAK_", secretFailure.ToString(),
+                StringComparison.Ordinal);
+        }
+        finally {
+            Environment.SetEnvironmentVariable(endpointEnv, null);
+            Environment.SetEnvironmentVariable(keyEnv, null);
+        }
+    }
+
+    [Fact]
+    public void Decode_AcceptsResolvedValuesAtExactCaps() {
+        string endpointEnv = EnvName("ENDPOINT_EXACT");
+        string keyEnv = EnvName("KEY_EXACT");
+        try {
+            Environment.SetEnvironmentVariable(endpointEnv,
+                new string('e', 4 * 1024));
+            Environment.SetEnvironmentVariable(keyEnv,
+                new string('s', 64 * 1024));
+
+            CompletionConnectionConfig item = Assert.Single(Decode(Connection(
+                source: $"\"baseAddressEnv\":\"{endpointEnv}\"",
+                extra: $"\"apiKeyEnv\":\"{keyEnv}\""
+            )).Connections);
+
+            Assert.Equal(4 * 1024, Encoding.UTF8.GetByteCount(item.BaseAddress));
+            Assert.Equal(64 * 1024,
+                Encoding.UTF8.GetByteCount(item.ApiKey!));
+        }
+        finally {
+            Environment.SetEnvironmentVariable(endpointEnv, null);
+            Environment.SetEnvironmentVariable(keyEnv, null);
+        }
+    }
+
+    [Fact]
+    public void Decode_EnforcesCountAndInputByteBounds() {
+        Assert.Throws<InvalidDataException>(() => DecodeMany(0));
+        Assert.Single(DecodeMany(1).Connections);
+        Assert.Equal(256, DecodeMany(256).Connections.Count);
+        Assert.Throws<InvalidDataException>(() => DecodeMany(257));
+
+        byte[] compact = Encoding.UTF8.GetBytes(Root(Connection()));
+        byte[] exact = GC.AllocateUninitializedArray<byte>(
+            CompletionConnectionConfigLoader.MaximumInputUtf8Bytes
+        );
+        compact.CopyTo(exact, 0);
+        exact.AsSpan(compact.Length).Fill((byte)' ');
+        Assert.Single(CompletionConnectionConfigLoader.Decode(exact)
+            .Connections);
+        Assert.Throws<InvalidDataException>(() =>
+            CompletionConnectionConfigLoader.Decode(
+                new byte[
+                    CompletionConnectionConfigLoader.MaximumInputUtf8Bytes + 1
+                ]
+            )
+        );
+    }
+
+    [Fact]
+    public void Decode_EnforcesRequiredIdentityAndDefaultRules() {
+        Assert.Throws<InvalidDataException>(() => Decode(
+            Connection(id: " ")
+        ));
+        Assert.Throws<InvalidDataException>(() => Decode(
+            Connection().Replace("\"kind\":\"test\",", string.Empty,
+                StringComparison.Ordinal)
+        ));
+        Assert.Throws<InvalidDataException>(() => Decode(
+            Connection().Replace("\"completionSurfaceId\":\"test-v1\",",
+                string.Empty, StringComparison.Ordinal)
+        ));
+        Assert.Throws<InvalidDataException>(() => Decode(
+            Connection(), defaultId: "MAIN"
+        ));
+        Assert.Throws<InvalidDataException>(() =>
+            CompletionConnectionConfigLoader.Decode(Encoding.UTF8.GetBytes(
+                "{\"v\":1,\"connections\":[" + Connection() + ","
+                + Connection() + "],\"defaultConnectionId\":\"main\"}"
+            ))
+        );
+    }
+
+    [Fact]
+    public void Decode_EnforcesUtf8FieldCapsIncludingMultibyteText() {
+        string identifierExact = new string('界', 42) + "aa";
+        string identifierTooLong = identifierExact + "a";
+        Assert.Equal(128, Encoding.UTF8.GetByteCount(identifierExact));
+        Assert.Single(Decode(Connection(id: identifierExact), identifierExact)
+            .Connections);
+        Assert.Throws<InvalidDataException>(() => Decode(
+            Connection(id: identifierTooLong),
+            identifierTooLong
+        ));
+
+        Assert.Single(Decode(Connection(
+            source: "\"baseAddress\":\"" + new string('e', 4 * 1024)
+                + "\"",
+            extra: "\"apiKey\":\"" + new string('s', 64 * 1024) + "\""
+        )).Connections);
+        Assert.Throws<InvalidDataException>(() => Decode(Connection(
+            source: "\"baseAddress\":\"" + new string('e', 4 * 1024 + 1)
+                + "\""
+        )));
+        string secret = "DO_NOT_LEAK_" + new string('s', 64 * 1024);
+        InvalidDataException failure = Assert.Throws<InvalidDataException>(() =>
+            Decode(Connection(extra: "\"apiKey\":\"" + secret + "\""))
+        );
+        Assert.DoesNotContain("DO_NOT_LEAK_", failure.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("null")]
     [InlineData("1")]
-    [InlineData("\"30m\"")]
-    public void LoadFile_RejectsNumericOrUnknownAnthropicPromptCacheTtl(
-        string jsonValue
-    ) {
-        string tempDirectory = CreateTempDirectory();
-        try {
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                $$"""
-                {
-                  "connections": [{
-                    "id": "anthropic",
-                    "kind": "anthropic",
-                    "modelId": "claude-opus-4-6",
-                    "completionSurfaceId": "anthropic",
-                    "baseAddress": "https://api.anthropic.com/",
-                    "anthropicPromptCacheTtl": {{jsonValue}}
-                  }]
-                }
-                """
-            );
-
-            Assert.Throws<System.Text.Json.JsonException>(
-                () => CompletionConnectionConfigLoader.LoadFile(path)
-            );
-        }
-        finally {
-            Directory.Delete(tempDirectory, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void LoadFile_RejectsAnthropicPromptCacheTtlForOtherKinds() {
-        string tempDirectory = CreateTempDirectory();
-        try {
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                """
-                {
-                  "connections": [{
-                    "id": "openai",
-                    "kind": "openai-responses",
-                    "modelId": "gpt-5",
-                    "completionSurfaceId": "openai-responses",
-                    "baseAddress": "https://api.openai.com/",
-                    "anthropicPromptCacheTtl": "1h"
-                  }]
-                }
-                """
-            );
-
-            InvalidOperationException exception = Assert.Throws<
-                InvalidOperationException
-            >(() => CompletionConnectionConfigLoader.LoadFile(path));
-
-            Assert.Contains(
-                "kind 'openai-responses' is not 'anthropic'",
-                exception.Message,
-                StringComparison.Ordinal
-            );
-        }
-        finally {
-            Directory.Delete(tempDirectory, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void LoadFile_AllowsBaseAddressAndApiKeyFromEnvironment() {
-        string baseAddressEnv = CreateEnvName(nameof(LoadFile_AllowsBaseAddressAndApiKeyFromEnvironment), "BASE");
-        string apiKeyEnv = CreateEnvName(nameof(LoadFile_AllowsBaseAddressAndApiKeyFromEnvironment), "KEY");
-        string tempDirectory = CreateTempDirectory();
-
-        try {
-            Environment.SetEnvironmentVariable(baseAddressEnv, "http://localhost:8888/");
-            Environment.SetEnvironmentVariable(apiKeyEnv, "sk-test");
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                $$"""
-                {
-                  "defaultConnectionId": "local-qwen",
-                  "connections": [
-                    {
-                      "id": "local-qwen",
-                      "kind": "openai-chat",
-                      "modelId": "unsloth/qwen3.6",
-                      "completionSurfaceId": "openai-chat/sglang-compatible",
-                      "baseAddressEnv": "{{baseAddressEnv}}",
-                      "apiKeyEnv": "{{apiKeyEnv}}"
-                    }
-                  ]
-                }
-                """
-            );
-
-            var config = CompletionConnectionConfigLoader.LoadFile(path);
-
-            var connection = Assert.Single(config.Connections);
-            Assert.Equal("local-qwen", config.DefaultConnectionId);
-            Assert.Equal("http://localhost:8888/", connection.BaseAddress);
-            Assert.Equal("sk-test", connection.ApiKey);
-            Assert.Equal(baseAddressEnv, connection.BaseAddressEnv);
-            Assert.Equal(apiKeyEnv, connection.ApiKeyEnv);
-        }
-        finally {
-            Environment.SetEnvironmentVariable(baseAddressEnv, null);
-            Environment.SetEnvironmentVariable(apiKeyEnv, null);
-            Directory.Delete(tempDirectory, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void LoadFile_ReportsMissingBaseAddressEnvironmentVariable() {
-        string baseAddressEnv = CreateEnvName(nameof(LoadFile_ReportsMissingBaseAddressEnvironmentVariable), "BASE");
-        string tempDirectory = CreateTempDirectory();
-
-        try {
-            Environment.SetEnvironmentVariable(baseAddressEnv, null);
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                $$"""
-                {
-                  "connections": [
-                    {
-                      "id": "local-qwen",
-                      "kind": "openai-chat",
-                      "modelId": "unsloth/qwen3.6",
-                      "completionSurfaceId": "openai-chat/sglang-compatible",
-                      "baseAddressEnv": "{{baseAddressEnv}}"
-                    }
-                  ]
-                }
-                """
-            );
-
-            var ex = Assert.Throws<InvalidOperationException>(() => CompletionConnectionConfigLoader.LoadFile(path));
-            Assert.Contains($"baseAddressEnv references environment variable '{baseAddressEnv}'", ex.Message, StringComparison.Ordinal);
-        }
-        finally {
-            Environment.SetEnvironmentVariable(baseAddressEnv, null);
-            Directory.Delete(tempDirectory, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void LoadFile_ParsesReasoningEffortByStableStringName() {
-        string tempDirectory = CreateTempDirectory();
-        try {
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                """
-                {
-                  "connections": [{
-                    "id": "openai",
-                    "kind": "openai-responses",
-                    "modelId": "gpt-5",
-                    "completionSurfaceId": "openai-responses",
-                    "baseAddress": "https://api.openai.com/",
-                    "reasoningEffort": "high"
-                  }]
-                }
-                """
-            );
-
-            var connection = Assert.Single(
-                CompletionConnectionConfigLoader.LoadFile(path).Connections
-            );
-
-            Assert.Equal(CompletionReasoningEffort.High, connection.ReasoningEffort);
-        }
-        finally {
-            Directory.Delete(tempDirectory, recursive: true);
-        }
+    [InlineData("2147483647")]
+    public void Decode_AcceptsSupportedMaxTokens(string token) {
+        string extra = token.Length == 0
+            ? string.Empty
+            : $"\"maxTokens\":{token}";
+        Assert.Single(Decode(Connection(extra: extra)).Connections);
     }
 
     [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("2147483648")]
+    [InlineData("1.0")]
+    [InlineData("1e0")]
+    [InlineData("\"1\"")]
+    public void Decode_RejectsUnsupportedMaxTokens(string token) {
+        Assert.Throws<InvalidDataException>(() => Decode(Connection(
+            extra: $"\"maxTokens\":{token}"
+        )));
+    }
+
+    [Theory]
+    [InlineData("provider-default")]
+    [InlineData("disabled")]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    [InlineData("max")]
+    public void Decode_AcceptsExactReasoningNames(string value) {
+        Assert.Single(Decode(Connection(
+            extra: $"\"reasoningEffort\":\"{value}\""
+        )).Connections);
+    }
+
+    [Theory]
+    [InlineData("null")]
     [InlineData("1")]
+    [InlineData("\"High\"")]
     [InlineData("\"turbo\"")]
-    public void LoadFile_RejectsNumericOrUnknownReasoningEffort(string jsonValue) {
-        string tempDirectory = CreateTempDirectory();
-        try {
-            string path = Path.Combine(tempDirectory, "connections.json");
-            File.WriteAllText(
-                path,
-                $$"""
-                {
-                  "connections": [{
-                    "id": "openai",
-                    "kind": "openai-responses",
-                    "modelId": "gpt-5",
-                    "completionSurfaceId": "openai-responses",
-                    "baseAddress": "https://api.openai.com/",
-                    "reasoningEffort": {{jsonValue}}
-                  }]
-                }
-                """
-            );
+    public void Decode_RejectsOtherReasoningTokens(string value) {
+        Assert.Throws<InvalidDataException>(() => Decode(Connection(
+            extra: $"\"reasoningEffort\":{value}"
+        )));
+    }
 
-            Assert.Throws<System.Text.Json.JsonException>(
-                () => CompletionConnectionConfigLoader.LoadFile(path)
+    [Theory]
+    [InlineData("provider-default")]
+    [InlineData("5m")]
+    [InlineData("1h")]
+    public void Decode_AcceptsExactAnthropicTtlNames(string value) {
+        Assert.Single(Decode(Connection(
+            kind: "anthropic",
+            surface: "anthropic",
+            extra: $"\"anthropicPromptCacheTtl\":\"{value}\""
+        )).Connections);
+    }
+
+    [Fact]
+    public void Decode_RejectsTtlForOtherKinds() {
+        Assert.Throws<InvalidDataException>(() => Decode(Connection(
+            extra: "\"anthropicPromptCacheTtl\":\"1h\""
+        )));
+    }
+
+    [Fact]
+    public void LoadFile_IsBoundedAndDelegatesToDecode() {
+        string root = CreateTempDirectory();
+        try {
+            string path = Path.Combine(root, "connections.json");
+            File.WriteAllText(path, Root(Connection()));
+            Assert.Single(CompletionConnectionConfigLoader.LoadFile(path)
+                .Connections);
+
+            File.WriteAllBytes(path, new byte[
+                CompletionConnectionConfigLoader.MaximumInputUtf8Bytes + 1
+            ]);
+            Assert.Throws<InvalidDataException>(() =>
+                CompletionConnectionConfigLoader.LoadFile(path)
+            );
+            Assert.Throws<FileNotFoundException>(() =>
+                CompletionConnectionConfigLoader.LoadFile(
+                    Path.Combine(root, "missing.json")
+                )
             );
         }
         finally {
-            Directory.Delete(tempDirectory, recursive: true);
+            Directory.Delete(root, recursive: true);
         }
     }
 
-    private static string CreateEnvName(string testName, string suffix)
-        => $"ATELIA_TEST_{testName}_{suffix}_{Guid.NewGuid():N}";
+    [Fact]
+    public void NormalizeAndValidate_RetainsFlexibleProgrammaticSemantics() {
+        string endpointEnv = EnvName("PROGRAMMATIC_ENDPOINT");
+        string keyEnv = EnvName("PROGRAMMATIC_KEY");
+        try {
+            Environment.SetEnvironmentVariable(endpointEnv, "env-endpoint");
+            Environment.SetEnvironmentVariable(keyEnv, "env-key");
+            CompletionConnectionsFileConfig normalized =
+                CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                    [new CompletionConnectionConfig(
+                        "main",
+                        "custom",
+                        "model",
+                        string.Empty,
+                        "inline-endpoint",
+                        "inline-key",
+                        endpointEnv,
+                        keyEnv
+                    )]
+                ));
+
+            CompletionConnectionConfig item = Assert.Single(
+                normalized.Connections
+            );
+            Assert.Equal("main", normalized.DefaultConnectionId);
+            Assert.Equal("custom", item.CompletionSurfaceId);
+            Assert.Equal("env-endpoint", item.BaseAddress);
+            Assert.Equal("env-key", item.ApiKey);
+        }
+        finally {
+            Environment.SetEnvironmentVariable(endpointEnv, null);
+            Environment.SetEnvironmentVariable(keyEnv, null);
+        }
+    }
+
+    private static CompletionConnectionsFileConfig Decode(
+        string item,
+        string defaultId = "main"
+    ) => CompletionConnectionConfigLoader.Decode(
+        Encoding.UTF8.GetBytes(Root(item, defaultId: defaultId))
+    );
+
+    private static string Root(
+        string item,
+        string version = "1",
+        string defaultId = "main"
+    ) => $"{{\"v\":{version},\"connections\":[{item}],"
+        + $"\"defaultConnectionId\":\"{defaultId}\"}}";
+
+    private static string Connection(
+        string id = "main",
+        string kind = "test",
+        string surface = "test-v1",
+        string source = "\"baseAddress\":\"endpoint\"",
+        string extra = ""
+    ) {
+        string suffix = extra.Length == 0 ? string.Empty : "," + extra;
+        return $"{{\"id\":\"{id}\",\"kind\":\"{kind}\","
+            + $"\"modelId\":\"model\",\"completionSurfaceId\":\"{surface}\","
+            + source + suffix + "}";
+    }
+
+    private static CompletionConnectionsFileConfig DecodeMany(int count) {
+        string[] items = Enumerable.Range(0, count)
+            .Select(index => Connection(id: $"item-{index}"))
+            .ToArray();
+        string defaultId = count == 0 ? "none" : "item-0";
+        string document = "{\"v\":1,\"connections\":["
+            + string.Join(',', items)
+            + $"],\"defaultConnectionId\":\"{defaultId}\"}}";
+        return CompletionConnectionConfigLoader.Decode(
+            Encoding.UTF8.GetBytes(document)
+        );
+    }
+
+    private static string EnvName(string suffix)
+        => $"ATELIA_COMPLETION_V1_{suffix}_{Guid.NewGuid():N}";
 
     private static string CreateTempDirectory() {
-        string tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDirectory);
-        return tempDirectory;
+        string path = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-completion-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(path);
+        return path;
     }
 }

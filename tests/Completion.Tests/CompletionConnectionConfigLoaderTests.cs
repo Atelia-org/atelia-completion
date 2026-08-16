@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Xunit;
@@ -91,9 +92,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
         Encoding.UTF8.GetBytes(
             Root(Connection(id: "\\ud800"))
         ),
-        Encoding.UTF8.GetBytes(
-            Root(Connection())[..^1] + ",\"unknown\":[[[[[[[[[]]]]]]]]]}"
-        ),
         new byte[] { 0xef, 0xbb, 0xbf }
             .Concat(Encoding.UTF8.GetBytes(Root(Connection())))
             .ToArray(),
@@ -105,6 +103,25 @@ public sealed class CompletionConnectionConfigLoaderTests {
     public void Decode_RejectsAmbiguousOrNonStrictBytes(byte[] bytes) {
         Assert.Throws<InvalidDataException>(() =>
             CompletionConnectionConfigLoader.Decode(bytes)
+        );
+    }
+
+    [Fact]
+    public void Decode_RejectsDepthBeyondEightDuringJsonParsing() {
+        byte[] tooDeep = Encoding.UTF8.GetBytes(
+            Root(Connection())[..^1]
+                + ",\"unknown\":[[[[[[[[[0]]]]]]]]]}"
+        );
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => CompletionConnectionConfigLoader.Decode(tooDeep)
+        );
+
+        Assert.IsAssignableFrom<JsonException>(exception.InnerException);
+        Assert.DoesNotContain(
+            "unknown",
+            exception.Message,
+            StringComparison.OrdinalIgnoreCase
         );
     }
 
@@ -426,6 +443,90 @@ public sealed class CompletionConnectionConfigLoaderTests {
             Assert.Equal("custom", item.CompletionSurfaceId);
             Assert.Equal("env-endpoint", item.BaseAddress);
             Assert.Equal("env-key", item.ApiKey);
+        }
+        finally {
+            Environment.SetEnvironmentVariable(endpointEnv, null);
+            Environment.SetEnvironmentVariable(keyEnv, null);
+        }
+    }
+
+    [Fact]
+    public void V1EnvMigration_PreservesNormalizedNonSecretFingerprint() {
+        string endpointEnv = EnvName("MIGRATION_ENDPOINT");
+        string keyEnv = EnvName("MIGRATION_KEY");
+        try {
+            Environment.SetEnvironmentVariable(
+                endpointEnv,
+                "https://migration.example.invalid/v1"
+            );
+            Environment.SetEnvironmentVariable(
+                keyEnv,
+                "synthetic-secret-not-for-output"
+            );
+            CompletionConnectionsFileConfig oldEquivalent =
+                CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                    [new CompletionConnectionConfig(
+                        Id: "main",
+                        Kind: "openai-responses",
+                        ModelId: "model",
+                        CompletionSurfaceId: "openai-responses",
+                        BaseAddress: string.Empty,
+                        BaseAddressEnv: endpointEnv,
+                        ApiKeyEnv: keyEnv,
+                        MaxTokens: 4_096,
+                        ReasoningEffort: CompletionReasoningEffort.High
+                    )],
+                    DefaultConnectionId: "main"
+                ));
+            CompletionConnectionsFileConfig migrated = Decode(Connection(
+                kind: "openai-responses",
+                surface: "openai-responses",
+                source: $"\"baseAddressEnv\":\"{endpointEnv}\"",
+                extra: $"\"apiKeyEnv\":\"{keyEnv}\","
+                    + "\"maxTokens\":4096,\"reasoningEffort\":\"high\""
+            ));
+
+            CompletionConnectionConfig oldConnection = Assert.Single(
+                oldEquivalent.Connections
+            );
+            CompletionConnectionConfig migratedConnection = Assert.Single(
+                migrated.Connections
+            );
+            Assert.Equal(
+                oldEquivalent.DefaultConnectionId,
+                migrated.DefaultConnectionId
+            );
+            Assert.Equal(oldConnection.Id, migratedConnection.Id);
+            Assert.Equal(oldConnection.Kind, migratedConnection.Kind);
+            Assert.Equal(oldConnection.ModelId, migratedConnection.ModelId);
+            Assert.Equal(
+                oldConnection.CompletionSurfaceId,
+                migratedConnection.CompletionSurfaceId
+            );
+            Assert.Equal(
+                oldConnection.BaseAddress,
+                migratedConnection.BaseAddress
+            );
+            Assert.Equal(
+                oldConnection.BaseAddressEnv,
+                migratedConnection.BaseAddressEnv
+            );
+            Assert.Equal(oldConnection.ApiKeyEnv, migratedConnection.ApiKeyEnv);
+            Assert.Equal(oldConnection.MaxTokens, migratedConnection.MaxTokens);
+            Assert.Equal(
+                oldConnection.ReasoningEffort,
+                migratedConnection.ReasoningEffort
+            );
+            Assert.Equal(
+                oldConnection.AnthropicPromptCacheTtl,
+                migratedConnection.AnthropicPromptCacheTtl
+            );
+            Assert.Equal(
+                CompletionDispatchIdentityFactory
+                    .ComputeConnectionFingerprint(oldConnection),
+                CompletionDispatchIdentityFactory
+                    .ComputeConnectionFingerprint(migratedConnection)
+            );
         }
         finally {
             Environment.SetEnvironmentVariable(endpointEnv, null);

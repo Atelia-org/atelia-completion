@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Gemini;
 using Atelia.Completion.OpenAI;
@@ -53,6 +54,14 @@ public sealed class PromptCacheReuseHintProviderAcceptanceTests {
         CompletionResult hinted = await InvokeLegacyAndHintedAsync(client);
 
         Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
+        foreach (string requestBody in handler.RequestBodies) {
+            using JsonDocument request = JsonDocument.Parse(requestBody);
+            Assert.True(
+                request.RootElement.GetProperty("stream_options")
+                    .GetProperty("include_usage")
+                    .GetBoolean()
+            );
+        }
         AssertBestEffortNoGuarantee(hinted);
     }
 

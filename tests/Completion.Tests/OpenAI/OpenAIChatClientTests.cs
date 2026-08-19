@@ -103,6 +103,66 @@ public sealed class OpenAIChatClientTests {
     }
 
     [Fact]
+    public async Task DeepSeekV4Surface_RequestsAndMapsTerminalUsageSnapshot() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":null}
+
+                data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}
+
+                data: [DONE]
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new DeepSeekV4ChatClient(null, httpClient);
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            CreateRequest(),
+            new CompletionInvocationOptions {
+                PromptCacheReuseHint = PromptCacheReuseHint.ReuseExpectedSoon
+            },
+            observer: null,
+            CancellationToken.None
+        );
+
+        using JsonDocument request = JsonDocument.Parse(
+            Assert.Single(handler.RequestBodies)
+        );
+        Assert.True(
+            request.RootElement.GetProperty("stream_options")
+                .GetProperty("include_usage")
+                .GetBoolean()
+        );
+        Assert.Equal(20, result.Usage.UncachedInputTokens);
+        Assert.Null(result.Usage.CacheCreationInputTokens);
+        Assert.Equal(80, result.Usage.CacheReadInputTokens);
+        Assert.Equal(5, result.Usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheRequestStatus.Requested,
+            result.Usage.PromptCache.RequestStatus
+        );
+        Assert.Equal(
+            PromptCacheSupportStatus.Unknown,
+            result.Usage.PromptCache.SupportStatus
+        );
+        Assert.Equal(
+            PromptCacheObservationStatus.Partial,
+            result.Usage.PromptCache.ObservationStatus
+        );
+        Assert.Equal(
+            "implicit-best-effort",
+            result.Usage.PromptCache.ProviderDiagnostics!["mapping"]
+        );
+        Assert.Equal(
+            "true",
+            result.Usage.PromptCache.ProviderDiagnostics!["streamUsageRequested"]
+        );
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_IncludesConfiguredExtraBodyFieldsAtRequestRoot() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {

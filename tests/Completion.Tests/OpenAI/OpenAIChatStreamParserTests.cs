@@ -73,6 +73,158 @@ public sealed class OpenAIChatStreamParserTests {
     }
 
     [Fact]
+    public void ParseEvent_DeepSeekUsageMapsHitAndMissAsReadAndUncached() {
+        var parser = CreateDeepSeekUsageParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        ParseTerminalEvent(parser, aggregator);
+        parser.ParseEvent(
+            """
+            {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}
+            """,
+            aggregator
+        );
+
+        CompletionUsage usage = aggregator.Build().Usage;
+        Assert.Equal(20, usage.UncachedInputTokens);
+        Assert.Null(usage.CacheCreationInputTokens);
+        Assert.Equal(80, usage.CacheReadInputTokens);
+        Assert.Equal(5, usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Partial,
+            usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Theory]
+    [InlineData(100, 0, 100)]
+    [InlineData(100, 100, 0)]
+    [InlineData(long.MaxValue, long.MaxValue - 1, 1)]
+    public void ParseEvent_DeepSeekUsageAcceptsExactPromptPartition(
+        long promptTokens,
+        long cacheHitTokens,
+        long cacheMissTokens
+    ) {
+        var parser = CreateDeepSeekUsageParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        ParseTerminalEvent(parser, aggregator);
+        parser.ParseEvent(
+            $"{{\"choices\":[],\"usage\":{{\"prompt_tokens\":{promptTokens},\"prompt_cache_hit_tokens\":{cacheHitTokens},\"prompt_cache_miss_tokens\":{cacheMissTokens}}}}}",
+            aggregator
+        );
+
+        CompletionUsage usage = aggregator.Build().Usage;
+        Assert.Equal(cacheMissTokens, usage.UncachedInputTokens);
+        Assert.Equal(cacheHitTokens, usage.CacheReadInputTokens);
+        Assert.Null(usage.CacheCreationInputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Partial,
+            usage.PromptCache.ObservationStatus
+        );
+        Assert.False(usage.IsNoCacheIoObserved);
+    }
+
+    [Fact]
+    public void ParseEvent_DeepSeekUsageWithoutCacheFieldsDoesNotInventUncachedTokens() {
+        var parser = CreateDeepSeekUsageParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        ParseTerminalEvent(parser, aggregator);
+        parser.ParseEvent(
+            """
+            {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5}}
+            """,
+            aggregator
+        );
+
+        CompletionUsage usage = aggregator.Build().Usage;
+        Assert.Null(usage.UncachedInputTokens);
+        Assert.Null(usage.CacheCreationInputTokens);
+        Assert.Null(usage.CacheReadInputTokens);
+        Assert.Equal(5, usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Unavailable,
+            usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Theory]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":80}")]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_miss_tokens\":20}")]
+    [InlineData("{\"prompt_cache_hit_tokens\":80,\"prompt_cache_miss_tokens\":20}")]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":null,\"prompt_cache_miss_tokens\":20}")]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":80,\"prompt_cache_miss_tokens\":null}")]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":-1,\"prompt_cache_miss_tokens\":101}")]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":80.5,\"prompt_cache_miss_tokens\":19.5}")]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":80,\"prompt_cache_miss_tokens\":19}")]
+    [InlineData("{\"prompt_tokens\":100,\"prompt_cache_hit_tokens\":80,\"prompt_cache_miss_tokens\":21}")]
+    [InlineData("{\"prompt_tokens\":9223372036854775807,\"prompt_cache_hit_tokens\":9223372036854775807,\"prompt_cache_miss_tokens\":1}")]
+    public void ParseEvent_DeepSeekUsageRejectsPartialMalformedOrMismatchedCacheFields(
+        string usageJson
+    ) {
+        var parser = CreateDeepSeekUsageParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        ParseTerminalEvent(parser, aggregator);
+
+        Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                $"{{\"choices\":[],\"usage\":{usageJson}}}",
+                aggregator
+            )
+        );
+    }
+
+    [Fact]
+    public void ParseEvent_DeepSeekCumulativeUsageSnapshotsReplaceRatherThanAccumulate() {
+        var parser = CreateDeepSeekUsageParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        ParseTerminalEvent(parser, aggregator);
+        parser.ParseEvent(
+            """
+            {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":1,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":2}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}
+            """,
+            aggregator
+        );
+
+        CompletionUsage usage = aggregator.Build().Usage;
+        Assert.Equal(20, usage.UncachedInputTokens);
+        Assert.Equal(80, usage.CacheReadInputTokens);
+        Assert.Equal(5, usage.OutputTokens);
+    }
+
+    [Fact]
+    public void ParseEvent_OpenAIUsageShapeDoesNotInterpretDeepSeekCacheFields() {
+        var parser = new OpenAIChatStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        ParseTerminalEvent(parser, aggregator);
+        parser.ParseEvent(
+            """
+            {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}
+            """,
+            aggregator
+        );
+
+        CompletionUsage usage = aggregator.Build().Usage;
+        Assert.Null(usage.UncachedInputTokens);
+        Assert.Null(usage.CacheReadInputTokens);
+        Assert.Equal(5, usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Unavailable,
+            usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Fact]
     public void ParseEvent_StrictModePreservesWhitespaceContentDuringToolCalls() {
         var parser = new OpenAIChatStreamParser(
             OpenAIChatWhitespaceContentMode.Preserve
@@ -269,4 +421,18 @@ public sealed class OpenAIChatStreamParserTests {
 
         Assert.Same(expected, actual);
     }
+
+    private static OpenAIChatStreamParser CreateDeepSeekUsageParser() => new(
+        usageShape: OpenAIChatUsageShape.DeepSeekPromptCacheHitMiss
+    );
+
+    private static void ParseTerminalEvent(
+        OpenAIChatStreamParser parser,
+        CompletionAggregator aggregator
+    ) => parser.ParseEvent(
+        """
+        {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}
+        """,
+        aggregator
+    );
 }

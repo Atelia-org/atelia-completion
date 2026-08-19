@@ -15,6 +15,7 @@ internal sealed class OpenAIChatStreamParser {
 
     private readonly OpenAIChatWhitespaceContentMode _whitespaceContentMode;
     private readonly OpenAIChatReasoningMode _reasoningMode;
+    private readonly OpenAIChatUsageShape _usageShape;
     private readonly Dictionary<int, ToolCallState> _toolCalls = new();
     private readonly StringBuilder _reasoningContentBuilder = new();
     private bool _terminalEventObserved;
@@ -24,10 +25,12 @@ internal sealed class OpenAIChatStreamParser {
 
     public OpenAIChatStreamParser(
         OpenAIChatWhitespaceContentMode whitespaceContentMode = OpenAIChatWhitespaceContentMode.Preserve,
-        OpenAIChatReasoningMode reasoningMode = OpenAIChatReasoningMode.Ignore
+        OpenAIChatReasoningMode reasoningMode = OpenAIChatReasoningMode.Ignore,
+        OpenAIChatUsageShape usageShape = OpenAIChatUsageShape.OpenAIPromptTokenDetails
     ) {
         _whitespaceContentMode = whitespaceContentMode;
         _reasoningMode = reasoningMode;
+        _usageShape = usageShape;
     }
 
     public void ParseEvent(string json, CompletionAggregator aggregator) {
@@ -47,7 +50,7 @@ internal sealed class OpenAIChatStreamParser {
         ParseEventCore(node, aggregator);
     }
 
-    private static void ParsePostTerminalUsage(
+    private void ParsePostTerminalUsage(
         JsonNode? node,
         CompletionAggregator aggregator
     ) {
@@ -124,7 +127,7 @@ internal sealed class OpenAIChatStreamParser {
         }
     }
 
-    private static void MergeUsageIfPresent(
+    private void MergeUsageIfPresent(
         JsonObject envelope,
         CompletionAggregator aggregator
     ) {
@@ -138,6 +141,24 @@ internal sealed class OpenAIChatStreamParser {
             );
         }
 
+        switch (_usageShape) {
+            case OpenAIChatUsageShape.OpenAIPromptTokenDetails:
+                MergeOpenAIUsage(usage, aggregator);
+                break;
+            case OpenAIChatUsageShape.DeepSeekPromptCacheHitMiss:
+                MergeDeepSeekUsage(usage, aggregator);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown OpenAI chat usage shape '{_usageShape}'."
+                );
+        }
+    }
+
+    private static void MergeOpenAIUsage(
+        JsonObject usage,
+        CompletionAggregator aggregator
+    ) {
         long? promptTokens = GetOptionalNonNegativeLong(
             usage,
             "prompt_tokens",
@@ -194,6 +215,70 @@ internal sealed class OpenAIChatStreamParser {
                         : readObserved || writeObserved
                             ? PromptCacheObservationStatus.Partial
                             : PromptCacheObservationStatus.Unavailable
+                )
+            )
+        );
+    }
+
+    private static void MergeDeepSeekUsage(
+        JsonObject usage,
+        CompletionAggregator aggregator
+    ) {
+        long? promptTokens = GetOptionalNonNegativeLong(
+            usage,
+            "prompt_tokens",
+            "DeepSeek chat usage"
+        );
+        long? outputTokens = GetOptionalNonNegativeLong(
+            usage,
+            "completion_tokens",
+            "DeepSeek chat usage"
+        );
+
+        bool hasCacheHit = usage.ContainsKey("prompt_cache_hit_tokens");
+        bool hasCacheMiss = usage.ContainsKey("prompt_cache_miss_tokens");
+        if (!hasCacheHit && !hasCacheMiss) {
+            aggregator.MergeUsage(
+                new CompletionUsage(
+                    outputTokens: outputTokens,
+                    promptCache: new PromptCacheTelemetry(
+                        observationStatus: PromptCacheObservationStatus.Unavailable
+                    )
+                )
+            );
+            return;
+        }
+
+        long cacheHitTokens = GetRequiredNonNegativeLong(
+            usage,
+            "prompt_cache_hit_tokens",
+            "DeepSeek chat usage"
+        );
+        long cacheMissTokens = GetRequiredNonNegativeLong(
+            usage,
+            "prompt_cache_miss_tokens",
+            "DeepSeek chat usage"
+        );
+        if (promptTokens is null) {
+            throw new InvalidDataException(
+                "OpenAI DeepSeek chat usage requires non-null field 'prompt_tokens' when cache hit or miss tokens are reported."
+            );
+        }
+        if (cacheHitTokens > promptTokens.Value
+            || cacheMissTokens != promptTokens.Value - cacheHitTokens) {
+            throw new InvalidDataException(
+                "OpenAI DeepSeek chat usage requires prompt cache hit plus miss tokens to equal prompt tokens."
+            );
+        }
+
+        aggregator.MergeUsage(
+            new CompletionUsage(
+                uncachedInputTokens: cacheMissTokens,
+                cacheCreationInputTokens: null,
+                cacheReadInputTokens: cacheHitTokens,
+                outputTokens: outputTokens,
+                promptCache: new PromptCacheTelemetry(
+                    observationStatus: PromptCacheObservationStatus.Partial
                 )
             )
         );
@@ -360,6 +445,18 @@ internal sealed class OpenAIChatStreamParser {
         }
         throw new InvalidDataException(
             $"OpenAI {context} field '{propertyName}' must be a non-negative integer or null."
+        );
+    }
+
+    private static long GetRequiredNonNegativeLong(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        long? value = GetOptionalNonNegativeLong(obj, propertyName, context);
+        if (value is not null) { return value.Value; }
+        throw new InvalidDataException(
+            $"OpenAI {context} requires non-null field '{propertyName}'."
         );
     }
 

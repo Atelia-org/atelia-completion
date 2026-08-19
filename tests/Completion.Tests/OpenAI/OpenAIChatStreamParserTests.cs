@@ -339,18 +339,33 @@ public sealed class OpenAIChatStreamParserTests {
 
     [Fact]
     public void ParseEvent_TopLevelErrorIsFailedSemanticTerminal() {
+        const string providerErrorMessage =
+            "provider rejected stream: endpoint=https://provider.invalid secret=raw-detail";
         var parser = new OpenAIChatStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         parser.ParseEvent(
-            """{"error":{"message":"provider rejected stream"}}""",
+            """
+            {"error":{"message":"provider rejected stream: endpoint=https://provider.invalid secret=raw-detail"}}
+            """,
             aggregator
         );
 
         Assert.True(parser.TerminalEventObserved);
         var result = aggregator.Build();
         Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
-        Assert.Equal(["provider rejected stream"], result.Errors);
+        Assert.Equal([providerErrorMessage], result.Errors);
+    }
+
+    [Fact]
+    public void ProviderErrorDiagnostic_IsFixedAndContentFree() {
+        var diagnostic = OpenAIChatStreamParser.CreateProviderErrorDiagnostic();
+
+        Assert.Equal("Provider", diagnostic.Category);
+        Assert.Equal("[OpenAI] Provider error received.", diagnostic.Text);
+        Assert.Equal(Atelia.Diagnostics.DebugEventKind.Failure, diagnostic.EventKind);
+        Assert.DoesNotContain("provider.invalid", diagnostic.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("raw-detail", diagnostic.Text, StringComparison.Ordinal);
     }
 
     [Theory]

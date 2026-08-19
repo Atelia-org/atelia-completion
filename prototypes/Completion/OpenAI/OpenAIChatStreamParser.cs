@@ -93,7 +93,12 @@ internal sealed class OpenAIChatStreamParser {
             }
 
             var errorMessage = error["message"]?.GetValue<string>() ?? "Unknown error";
-            DebugUtil.Warning(DebugCategory, $"[OpenAI] API error: {errorMessage}");
+            var diagnostic = CreateProviderErrorDiagnostic();
+            DebugUtil.Warning(
+                diagnostic.Category,
+                diagnostic.Text,
+                eventKind: diagnostic.EventKind
+            );
             DiscardIncompleteStreamingState();
             aggregator.AbortIncompleteStreamingState();
             aggregator.AppendError(errorMessage);
@@ -126,6 +131,14 @@ internal sealed class OpenAIChatStreamParser {
             HandleChoice(choice, aggregator);
         }
     }
+
+    internal static (string Category, string Text, DebugEventKind EventKind)
+        CreateProviderErrorDiagnostic()
+        => (
+            DebugCategory,
+            "[OpenAI] Provider error received.",
+            DebugEventKind.Failure
+        );
 
     private void MergeUsageIfPresent(
         JsonObject envelope,

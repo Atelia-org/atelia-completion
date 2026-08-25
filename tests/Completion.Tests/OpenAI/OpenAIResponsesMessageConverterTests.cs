@@ -386,6 +386,43 @@ public sealed class OpenAIResponsesMessageConverterTests {
     }
 
     [Fact]
+    public void ConvertToApiRequest_OpaqueReasoningCarrierDoesNotAuthorizeReplay() {
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
+                new IHistoryMessage[] {
+                new ActionMessage(
+                    [
+                        new ActionBlock.OpaqueReasoningBlock(
+                            "atelia.openai-responses.reasoning-item-json.v1",
+                            System.Text.Encoding.UTF8.GetBytes(
+                                """{"type":"reasoning","id":"rs_1","encrypted_content":"enc_123"}"""
+                            ),
+                            new CompletionDescriptor(
+                                "openai",
+                                "openai-responses-v2",
+                                "gpt-4.1"
+                            )
+                        )
+                    ]
+                )
+            }
+            ),
+            tailMessages: []
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => OpenAIResponsesMessageConverter.ConvertToApiRequest(request)
+        );
+
+        Assert.Contains(nameof(OpenAIResponsesReasoningBlock), exception.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(ActionBlock.OpaqueReasoningBlock), exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Cross-provider reasoning replay is not supported", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ConvertToApiRequest_OpenAIResponsesReasoningWithMismatchedOriginFailsFast() {
         var request = new CompletionRequest(
             "gpt-4.1",

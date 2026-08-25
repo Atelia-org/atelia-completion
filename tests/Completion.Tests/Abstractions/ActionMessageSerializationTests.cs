@@ -159,6 +159,76 @@ public sealed class ActionMessageSerializationTests {
     }
 
     [Fact]
+    public void OpaqueReasoningBlock_EqualityUsesPayloadBytes() {
+        var left = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v1",
+            new byte[] { 1, 2, 3 },
+            Invocation,
+            "debug"
+        );
+        var equal = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v1",
+            new byte[] { 1, 2, 3 },
+            Invocation,
+            "debug"
+        );
+        var differentPayload = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v1",
+            new byte[] { 1, 2, 4 },
+            Invocation,
+            "debug"
+        );
+        var differentCodec = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v2",
+            new byte[] { 1, 2, 3 },
+            Invocation,
+            "debug"
+        );
+        var differentOrigin = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v1",
+            new byte[] { 1, 2, 3 },
+            new CompletionDescriptor("provider", "spec", "other-model"),
+            "debug"
+        );
+        var differentPlainText = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v1",
+            new byte[] { 1, 2, 3 },
+            Invocation,
+            "other-debug"
+        );
+
+        Assert.Equal(left, equal);
+        Assert.True(left == equal);
+        Assert.Equal(left.GetHashCode(), equal.GetHashCode());
+        Assert.NotEqual(left, differentPayload);
+        Assert.True(left != differentPayload);
+        Assert.NotEqual(left, differentCodec);
+        Assert.NotEqual(left, differentOrigin);
+        Assert.NotEqual(left, differentPlainText);
+    }
+
+    [Fact]
+    public void OpaqueReasoningBlock_SerializationRoundTripPreservesValueEquality() {
+        var original = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v1",
+            new byte[] { 0, 127, 128, 255 },
+            Invocation,
+            "debug"
+        );
+        var message = new ActionMessage([original]);
+
+        ActionMessage restored = ActionMessageSerialization.Deserialize(
+            ActionMessageSerialization.Serialize(message)
+        );
+        var roundTripped = Assert.IsType<ActionBlock.OpaqueReasoningBlock>(
+            Assert.Single(restored.Blocks)
+        );
+
+        Assert.Equal(original, roundTripped);
+        Assert.Equal(original.GetHashCode(), roundTripped.GetHashCode());
+    }
+
+    [Fact]
     public void ProviderReasoningCodec_RejectsForgedPlainTextView() {
         var registry = ReasoningBlockCodecRegistry.CreateDefault();
         ReasoningBlockCodecs.RegisterAll(registry);

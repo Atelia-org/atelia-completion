@@ -104,6 +104,25 @@ public abstract record ActionBlock {
 
         /// <summary>尚未由当前进程解释的 provider-native serialized bytes。</summary>
         public ReadOnlyMemory<byte> OpaquePayload => _opaquePayload;
+
+        /// <inheritdoc />
+        public bool Equals(OpaqueReasoningBlock? other)
+            => ReferenceEquals(this, other)
+               || (other is not null
+                   && base.Equals(other)
+                   && string.Equals(CodecId, other.CodecId, StringComparison.Ordinal)
+                   && _opaquePayload.AsSpan().SequenceEqual(other._opaquePayload));
+
+        /// <inheritdoc />
+        public override int GetHashCode() {
+            var hash = new HashCode();
+            hash.Add(base.GetHashCode());
+            hash.Add(CodecId, StringComparer.Ordinal);
+            foreach (byte value in _opaquePayload) {
+                hash.Add(value);
+            }
+            return hash.ToHashCode();
+        }
     }
 }
 

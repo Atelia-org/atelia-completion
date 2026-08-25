@@ -197,7 +197,7 @@ public sealed class CompletionDispatchIdentityTests {
         };
         var client = new IdentityCompletionClient(
             "chatgpt.com",
-            "openai-codex-responses-v1"
+            "openai-codex-responses-v2"
         );
 
         string fingerprint = CompletionDispatchIdentityFactory
@@ -205,8 +205,8 @@ public sealed class CompletionDispatchIdentityTests {
 
         Assert.Equal(
             "sha256:"
-            + "0f306953ea7fc34b57805794ef74cccc"
-            + "e50aeac1f2847af8934c179e3f8ebf9b",
+            + "5d819bda701fc325fdef17c260140a7e7"
+            + "59156440fe6ea5ccdc63dccfa54f8f2",
             fingerprint
         );
     }

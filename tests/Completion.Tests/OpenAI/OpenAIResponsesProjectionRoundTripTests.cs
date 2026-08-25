@@ -8,7 +8,7 @@ namespace Atelia.Completion.OpenAI.Tests;
 public sealed class OpenAIResponsesProjectionRoundTripTests {
     private static readonly CompletionDescriptor OpenAIInvocation = new(
         "openai",
-        "openai-responses-v1",
+        "openai-responses-v2",
         "gpt-5"
     );
 

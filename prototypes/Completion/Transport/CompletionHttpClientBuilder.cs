@@ -36,6 +36,23 @@ public sealed class CompletionHttpClientBuilder {
     }
 
     public HttpClient Build() {
+        HttpMessageHandler pipeline = BuildHandler();
+
+        return new HttpClient(pipeline, disposeHandler: true) {
+            // Completion streams may legitimately stay silent while a
+            // provider is computing. Lifetime is controlled only by caller
+            // cancellation or a concrete transport failure.
+            Timeout = Timeout.InfiniteTimeSpan
+        };
+    }
+
+    /// <summary>
+    /// Builds the owned handler pipeline for a provider client that constructs
+    /// its own <see cref="HttpClient"/>. This is intentionally internal: raw
+    /// exchange sinks capture complete prompts and provider responses and must
+    /// only be enabled by an explicit diagnostic harness.
+    /// </summary>
+    internal HttpMessageHandler BuildHandler() {
         if (_primaryHandler is not null && _replayResponder is not null) {
             throw new InvalidOperationException("Primary handler and replay responder cannot both be configured at the same time.");
         }
@@ -50,12 +67,7 @@ public sealed class CompletionHttpClientBuilder {
             };
         }
 
-        return new HttpClient(pipeline, disposeHandler: true) {
-            // Completion streams may legitimately stay silent while a
-            // provider is computing. Lifetime is controlled only by caller
-            // cancellation or a concrete transport failure.
-            Timeout = Timeout.InfiniteTimeSpan
-        };
+        return pipeline;
     }
 
     private sealed class CompletionHttpCaptureHandler : DelegatingHandler {

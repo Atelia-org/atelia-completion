@@ -206,7 +206,7 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
     );
 
     public string Name => "chatgpt.com";
-    public string ApiSpecId => "openai-codex-responses-v1";
+    public string ApiSpecId => "openai-codex-responses-v2";
 }
 ```
 
@@ -372,6 +372,22 @@ Codex profile 固定：
 - reasoning config；
 - encrypted reasoning item replay。
 
+Responses function tool 的 provider projection 采用以下 code-owned 规则：
+
+- function name 必须匹配 ASCII `[A-Za-z0-9_-]{1,64}`；像
+  `recap_grid.control` 这样的 dotted name 在任何 credential/network side effect 前拒绝。RecapGrid Agent Control
+  的 canonical name 已 hard-cut 为 `recap_grid_control`，不保留 alias；
+- 只有整棵 `ToolSchema` 都满足 strict compatibility 才发送 `strict:true`：每个 object 必须非空、
+  `additionalProperties:false`，且它的每个 property 都是 required；object/array 内的嵌套节点递归使用同一规则；
+- 任一 optional property、empty object 或 `additionalProperties:true` 会使该 tool 发送 `strict:false`。原始 JSON Schema
+  与运行时 exact validation 保持不变，不能为了迎合 strict wire 而把 optional 字段伪装成 required/null。
+
+这套投影由 public Responses 与 Codex sibling 共用。2026-08-26 的真实 `gpt-5.6-sol` direct-backend matrix 证明：
+无 tool 成功；underscore required tool（包括 string constraints）成功；dotted required tool 返回 HTTP 400；underscore
+optional tool 在旧的无条件 `strict:true` 投影下返回 HTTP 400。因此这不是 reasoning Max、constraints 或
+Responses Lite profile 导致的本次故障。投影变化同时把 public/Codex `ApiSpecId` 分别 bump 为
+`openai-responses-v2` / `openai-codex-responses-v2`，使旧 frozen request 不会绑定到新的 request adapter。
+
 Codex options 不暴露 `Store`、`IncludeEncryptedReasoning` 或 arbitrary `ExtraBody`。新增 body field 必须进入
 Codex-specific allowlist、tests 和 request-adapter fingerprint review。
 
@@ -389,7 +405,7 @@ failure 暴露；public OpenAI model catalog 不能作为 subscription backend �
 ```text
 connection kind:             openai-codex-responses
 completionSurfaceId:         openai-codex-responses
-client ApiSpecId:            openai-codex-responses-v1
+client ApiSpecId:            openai-codex-responses-v2
 reasoning mapping id:        openai-codex-responses-effort-v1
 ```
 
@@ -397,14 +413,14 @@ reasoning mapping id:        openai-codex-responses-effort-v1
 `ApiSpecId` 可防止 public `OpenAIResponsesReasoningBlock` 被误认为可在 Codex route replay，反向亦然。
 
 shared converter 应由 profile 传入 expected ApiSpecId 与 reasoning mapping，而不是继续把
-`openai-responses-v1` 写死。reasoning replay 仍必须满足完整 `Origin == targetInvocation`。
+`openai-responses-v2` 写死。reasoning replay 仍必须满足完整 `Origin == targetInvocation`。
 
 初始 effort mapping 可以由当前 pinned Codex source校准后实现；即使 wire 值与 public Responses 当前相同，也使用独立
 mapping id，避免未来一边变化时 silent drift。
 
 identity 仍保持单一 owner：`CompletionDispatchIdentityFactory.ResolveReasoningMappingId(connection)` 新增 exact kind case，
 返回 `openai-codex-responses-effort-v1`；profile 只实现 wire mapping，并以成对测试锁住二者一致，不引入第二套 runtime
-identity source。`openai-codex-responses-v1` 代表整套 request/replay/SSE adapter contract：route、body policy、headers、
+identity source。`openai-codex-responses-v2` 代表整套 request/replay/SSE adapter contract：route、body policy、headers、
 provider-native replay 或 accepted terminal 的语义变化需要 bump `ApiSpecId`；纯 effort mapping 变化只 bump mapping id。
 
 ## 7. 错误、重读与重试
@@ -429,9 +445,11 @@ first slice 把“HTTP 401 且尚未收到任何 SSE payload”视为当前 pinn
 因此仅在 credential generation 确实变化后允许一次 byte-identical retry。这是未文档化 backend 的受控假设，不是公开
 协议证明；任何已收到 SSE payload 的调用都绝不重试，第二个 401 也立即 terminal。
 
-non-2xx exception 不附 raw response body或 header dump；最多保留 status、allowlisted provider code、request-id 与
-retry/reset metadata。现有 generic `CompletionHttpRequestUtility` 会把截断 response body 写入 exception，Codex profile
-不得直接复用这条错误文本路径。
+non-2xx exception 不附 raw response body或 header dump。client 最多读取 16 KiB 的 strict UTF-8 JSON，并且只从
+exact `error` object 保留经过 ASCII token allowlist 与字段长度上限验证的 `code`、`type`、`param`；recognized response
+header 只保留单值、同样 bounded 的 request id。raw `message`、未知字段、超限/非法 UTF-8/过深 JSON 与不安全 token
+全部丢弃。现有 generic `CompletionHttpRequestUtility` 会把截断 response body 写入 exception，Codex profile 不得直接
+复用这条错误文本路径。
 
 同一 redaction boundary 也必须覆盖 HTTP 200 SSE 内的 `error`、`response.failed` 与 nested provider message。现有
 `OpenAIResponsesStreamParser` 会把部分 provider message 放入 `CompletionResult.Errors`，随后可能由
@@ -506,7 +524,10 @@ user 中只有一个能选择 subscription connection”；只要存在该 kind�
   `DebuggerBrowsable(Never)`，serialization/structured-log/debugger canary tests 必须证明不会展开 token/account。
 - `Authorization`、access/refresh/id token、raw account id、auth path 不进入 `DebugUtil`、Completion call log、golden
   log、exception 或 HTTP API response。
-- 当前 golden HTTP capture 不记录 request headers，这是可复用的安全性质；仍需 canary test 防止未来回归。
+- HTTP raw exchange capture 不记录 request headers，这是可复用的安全性质；但它会完整记录 request body 中的 system
+  prompt、history、tool schema 与已消费的 provider response，因此不是普通应用日志。它只能由显式 diagnostic harness
+  选择一个新的 absolute ephemeral path 来启用；Unix sink 以 `0600` 创建文件，并拒绝追加到非 `0600` 或 symlink 的
+  既有路径。诊断结束后 operator 必须删除该文件；不得把 raw capture 挂到 Galatea production composition。
 - future OAuth exchange/refresh 必须使用独立 auth transport，永远不挂 Completion golden capture，因为 refresh token
   会出现在 request body。
 - call log 可以记录固定 `credentialSource=codex-auth-file`、client kind 和非 secret generation；不记录 token
@@ -568,7 +589,7 @@ fingerprint 不变。
 - registry 复用 client，但不同 invocation 会取得新 credential snapshot；
 - dispose exactly once。
 
-### WP-4：opt-in live smoke（已实现测试入口）
+### WP-4：opt-in live acceptance（已实现测试入口）
 
 目标：只验证当前 pinned backend compatibility，不把 live test 作为普通测试依赖。
 
@@ -579,14 +600,26 @@ ATELIA_RUN_CODEX_SUBSCRIPTION_LIVE=1
 ATELIA_CODEX_SUBSCRIPTION_LIVE_AUTH_FILE=<explicit operator-selected real Codex auth file>
 ```
 
+tool-shape acceptance 使用独立开关，普通测试套件同样为零调用：
+
+```text
+ATELIA_RUN_CODEX_SUBSCRIPTION_AGENT_CONTROL_LIVE=1
+ATELIA_CODEX_SUBSCRIPTION_LIVE_AUTH_FILE=<explicit operator-selected real Codex auth file>
+ATELIA_CODEX_SUBSCRIPTION_LIVE_MODEL=gpt-5.6-sol
+```
+
 规则：
 
 - 不回退真实默认 auth path；
 - 只读 operator 明确指定的真实 file-backed Codex auth file；不复制整份 `auth.json`，尤其不复制 refresh token；
-- 不启用 golden/call log；
+- 默认不启用 raw/call log；
 - 只发送一次小型请求并要求 semantic terminal；
 - 不故意制造 401、429、refresh、token rotation 或封禁风险；
 - live failure 只说明当前兼容性，不据此推断账号状态。
+
+只有需要诊断 provider wire 时，tool-shape test 才接受
+`ATELIA_CODEX_SUBSCRIPTION_LIVE_RAW_LOG=<fresh absolute .jsonl path>`。该文件含完整 prompt/response，Unix mode 固定
+`0600`，不得复用已有路径；诊断后立即删除。此开关不属于 Galatea 或 Completion production configuration。
 
 若以后需要 disposable fixture，必须另行定义 access-token-only live fixture schema、`0600` 创建与可靠销毁规则；不能把
 真实 `auth.json` 的副本称作 disposable fixture。
@@ -629,14 +662,20 @@ publish。
 13. caller cancellation 在 gate、credential read、HTTP 与 SSE 阶段保持 caller token identity；
 14. synthetic Codex SSE text/tool/reasoning/terminal end-to-end；
 15. metadata/unknown well-formed events 保持 forward-compatible，terminal 前 EOF/[DONE] 仍 fail closed；
-16. SSE `error` 与 `response.failed` 中的 raw message canary 被 Codex sanitizer 移除；
+16. non-2xx 与 SSE `error` / `response.failed` 中的 raw message/account/token canary 被 Codex sanitizer 移除；
+    non-2xx 只保留 bounded safe `code/type/param/request-id`，超限 body 与不安全 token 全部丢弃；
 17. public/Codex reasoning cross-replay 拒绝；
 18. golden/call-log/exception/API response 全文扫描不包含 access/refresh/id/account canary；
 19. manifest/factory/fingerprint/registry lifetime/dispose contract；account fingerprint 跨重启 mismatch；
 20. Linux `0400`/`0600` 接受，`0644`/`0660`/execute/symlink/non-regular 拒绝；relative `$CODEX_HOME`、ancestor
     symlink 与 unsafe directory owner/mode 拒绝；
 21. loopback classifier exact 覆盖 `127.0.0.1`、`::1`、wildcard、`0.0.0.0` 与 LAN address；
-22. live smoke 只读 explicit authority file，验证没有复制或 materialize refresh token。
+22. live smoke 只读 explicit authority file，验证没有复制或 materialize refresh token；Agent Control live acceptance
+    锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；
+23. Responses strict capability 递归覆盖 root/nested/array optional、empty object 与
+    `additionalProperties:true`；dotted function name 在 credential/network 前拒绝；
+24. raw exchange JSONL 在 Unix 上以 `0600` 创建，拒绝非 private existing path，且 non-2xx body 被 client 消费后
+    transport tee 可观察。
 
 现有 public Responses converter/parser 的完整矩阵不应复制；新测试只覆盖 Codex profile 的差异与一个端到端复用证明。
 
@@ -712,11 +751,18 @@ Codex 0.147.0 证据表明它们不是 one-shot HTTP SSE 的认证/协议最低�
 - `Galatea.Server.Tests`：201 passed；
 - `git diff --check`：通过。
 
-opt-in live smoke 位于 `OpenAICodexResponsesLiveTests`，必须同时提供 enable switch 与显式 absolute auth file；
-它不会复制 auth file、不会启用 HTTP golden/call log，也不会触发 refresh/故意制造 401。
+opt-in live acceptance 位于 `OpenAICodexResponsesLiveTests`，必须同时提供对应 enable switch 与显式 absolute auth file；
+它不会复制 auth file，默认不会启用 HTTP raw/call log，也不会触发 refresh/故意制造 401。Agent Control shape 使用独立
+enable switch；raw JSONL 还需要显式 fresh absolute path，且只用于短期诊断。
 
 2026-08-25 live acceptance：将 operator 选定的 `/root/.codex/auth.json` 从历史遗留 `0755` 收紧为 `0600` 后，
 以 `originator=atelia`、model `gpt-5.4` 发出一次小请求，收到 semantic `response.completed`，聚合文本精确为 `OK`。
 前两次诊断请求只暴露出成功响应缺失 `Content-Type` 的兼容差异，未读取/打印 response body；加入上述窄兼容和离线
 回归后第三次通过。整个 acceptance 未调用 refresh endpoint、未写回 auth file 内容、未复制 credential，也未输出
 token/account id。
+
+2026-08-26 的 `gpt-5.6-sol` tool probe matrix 使用 `CompletionReasoningEffort.Max`：无 tool、required underscore、
+required constrained underscore 均成功；required dotted 与 `strict:true` optional underscore 均稳定返回 HTTP 400。
+据此将 Agent Control canonical name 改为 `recap_grid_control`，并把 shared Responses strict projection 改为递归 capability
+判定。长期 opt-in acceptance 只保留真实 Agent Control shape（underscore + optional properties，wire
+`strict:false`）；历史故障 matrix 沉淀为离线 regression 与本节事实，不进入默认测试调用面。

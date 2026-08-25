@@ -137,6 +137,12 @@ public sealed class CompletionHttpTransportTests {
 
             Assert.Equal("hello", result.Message.GetFlattenedText());
             Assert.True(File.Exists(filePath));
+            if (!OperatingSystem.IsWindows()) {
+                Assert.Equal(
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                    File.GetUnixFileMode(filePath)
+                );
+            }
 
             var lines = await File.ReadAllLinesAsync(filePath, CancellationToken.None);
             var line = Assert.Single(lines);
@@ -146,6 +152,94 @@ public sealed class CompletionHttpTransportTests {
             Assert.Equal("http://localhost:8000/v1/chat/completions", root.GetProperty("requestUri").GetString());
             Assert.Contains("gpt-4.1", root.GetProperty("requestText").GetString(), StringComparison.Ordinal);
             Assert.Contains("data: [DONE]", root.GetProperty("responseText").GetString(), StringComparison.Ordinal);
+        }
+        finally {
+            if (Directory.Exists(tempDirectory)) {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void JsonLinesGoldenLogSink_RejectsExistingNonPrivateUnixFile() {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        var tempDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-completion-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        var filePath = Path.Combine(tempDirectory, "raw.jsonl");
+        try {
+            Directory.CreateDirectory(tempDirectory);
+            File.WriteAllText(filePath, string.Empty);
+            File.SetUnixFileMode(
+                filePath,
+                UnixFileMode.UserRead
+                    | UnixFileMode.UserWrite
+                    | UnixFileMode.GroupRead
+            );
+            var sink = new JsonLinesCompletionHttpExchangeFileSink(filePath);
+
+            InvalidOperationException exception = Assert.Throws<
+                InvalidOperationException
+            >(() => sink.OnExchange(new CompletionHttpExchange(
+                "POST",
+                "https://example.invalid/",
+                "prompt",
+                400,
+                "response",
+                null
+            )));
+
+            Assert.Contains("0600", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(string.Empty, File.ReadAllText(filePath));
+        }
+        finally {
+            if (Directory.Exists(tempDirectory)) {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void JsonLinesGoldenLogSink_RejectsUnixSymbolicLink() {
+        if (OperatingSystem.IsWindows()) { return; }
+
+        var tempDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-completion-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        var targetPath = Path.Combine(tempDirectory, "target.jsonl");
+        var linkPath = Path.Combine(tempDirectory, "raw.jsonl");
+        try {
+            Directory.CreateDirectory(tempDirectory);
+            File.WriteAllText(targetPath, string.Empty);
+            File.SetUnixFileMode(
+                targetPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite
+            );
+            File.CreateSymbolicLink(linkPath, targetPath);
+            var sink = new JsonLinesCompletionHttpExchangeFileSink(linkPath);
+
+            InvalidOperationException exception = Assert.Throws<
+                InvalidOperationException
+            >(() => sink.OnExchange(new CompletionHttpExchange(
+                "POST",
+                "https://example.invalid/",
+                "prompt",
+                400,
+                "response",
+                null
+            )));
+
+            Assert.Contains(
+                "symbolic link",
+                exception.Message,
+                StringComparison.Ordinal
+            );
+            Assert.Equal(string.Empty, File.ReadAllText(targetPath));
         }
         finally {
             if (Directory.Exists(tempDirectory)) {

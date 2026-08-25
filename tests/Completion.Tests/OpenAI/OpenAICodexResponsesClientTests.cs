@@ -4,6 +4,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Transport;
 using Xunit;
 
 namespace Atelia.Completion.OpenAI.Tests;
@@ -214,6 +215,190 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
+    public async Task StreamCompletionAsync_NonSuccessRetainsOnlyBoundedSafeDiagnosticsAndConsumesBodyForRawTee() {
+        const string rawBody =
+            "{\"error\":{\"message\":\"PROMPT_OR_ACCOUNT_CANARY\","
+            + "\"code\":\"invalid_tool_schema\","
+            + "\"type\":\"invalid_request_error\","
+            + "\"param\":\"tools[0].parameters\"},"
+            + "\"access_token\":\"ACCESS_TOKEN_CANARY\"}";
+        CodexSubscriptionCredential credential = Credential(
+            "token",
+            "account",
+            1
+        );
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var backend = new CapturingHandler(_ => {
+            var response = new HttpResponseMessage(
+                HttpStatusCode.BadRequest
+            ) {
+                Content = new StringContent(
+                    rawBody,
+                    Encoding.UTF8,
+                    "application/json"
+                )
+            };
+            response.Headers.TryAddWithoutValidation(
+                "x-request-id",
+                "req_safe-123"
+            );
+            return response;
+        });
+        var rawSink = new InMemoryCompletionHttpExchangeSink();
+        HttpMessageHandler pipeline = new CompletionHttpClientBuilder()
+            .UsePrimaryHandler(backend)
+            .AddExchangeSink(rawSink)
+            .BuildHandler();
+        using var client = CreateClient(
+            provider,
+            pipeline,
+            credential.AccountFingerprint
+        );
+
+        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
+            OpenAICodexResponsesException
+        >(() => client.StreamCompletionAsync(
+            Request(),
+            observer: null,
+            CancellationToken.None
+        ));
+
+        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal("invalid_tool_schema", exception.ProviderErrorCode);
+        Assert.Equal("invalid_request_error", exception.ProviderErrorType);
+        Assert.Equal("tools[0].parameters", exception.ProviderErrorParameter);
+        Assert.Equal("req_safe-123", exception.ProviderRequestId);
+        Assert.Contains(
+            "code=invalid_tool_schema",
+            exception.Message,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "PROMPT_OR_ACCOUNT_CANARY",
+            exception.ToString(),
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "ACCESS_TOKEN_CANARY",
+            exception.ToString(),
+            StringComparison.Ordinal
+        );
+
+        CompletionHttpExchange exchange = Assert.Single(
+            rawSink.GetSnapshot()
+        );
+        Assert.Equal(rawBody, exchange.ResponseText);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_NonSuccessDropsOversizedBodyDiagnostics() {
+        string oversizedBody =
+            "{\"error\":{\"message\":\"SECRET_CANARY\","
+            + "\"code\":\"unsafe\\ncode\"},\"padding\":\""
+            + new string('x', 17 * 1024)
+            + "\"}";
+        CodexSubscriptionCredential credential = Credential(
+            "token",
+            "account",
+            1
+        );
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => {
+            var response = new HttpResponseMessage(
+                HttpStatusCode.BadRequest
+            ) {
+                Content = new StringContent(
+                    oversizedBody,
+                    Encoding.UTF8,
+                    "application/json"
+                )
+            };
+            response.Headers.TryAddWithoutValidation(
+                "x-request-id",
+                "unsafe@request"
+            );
+            return response;
+        });
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+
+        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
+            OpenAICodexResponsesException
+        >(() => client.StreamCompletionAsync(
+            Request(),
+            observer: null,
+            CancellationToken.None
+        ));
+
+        Assert.Null(exception.ProviderErrorCode);
+        Assert.Null(exception.ProviderErrorType);
+        Assert.Null(exception.ProviderErrorParameter);
+        Assert.Null(exception.ProviderRequestId);
+        Assert.DoesNotContain(
+            "SECRET_CANARY",
+            exception.ToString(),
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_NonSuccessDropsUnsafeDiagnosticTokens() {
+        const string rawBody =
+            "{\"error\":{\"message\":\"MESSAGE_CANARY\","
+            + "\"code\":\"UNSAFE CODE CANARY\","
+            + "\"type\":\"unsafe\\ntype\","
+            + "\"param\":\"unsafe@param\"}}";
+        CodexSubscriptionCredential credential = Credential(
+            "token",
+            "account",
+            1
+        );
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => {
+            var response = new HttpResponseMessage(
+                HttpStatusCode.BadRequest
+            ) {
+                Content = new StringContent(
+                    rawBody,
+                    Encoding.UTF8,
+                    "application/json"
+                )
+            };
+            response.Headers.TryAddWithoutValidation(
+                "x-request-id",
+                "unsafe@request"
+            );
+            return response;
+        });
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+
+        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
+            OpenAICodexResponsesException
+        >(() => client.StreamCompletionAsync(
+            Request(),
+            observer: null,
+            CancellationToken.None
+        ));
+
+        Assert.Null(exception.ProviderErrorCode);
+        Assert.Null(exception.ProviderErrorType);
+        Assert.Null(exception.ProviderErrorParameter);
+        Assert.Null(exception.ProviderRequestId);
+        Assert.DoesNotContain(
+            "CANARY",
+            exception.ToString(),
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_SanitizesSseProviderErrorMessage() {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
@@ -261,7 +446,7 @@ public sealed class OpenAICodexResponsesClientTests {
             """{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"opaque"}""",
             new CompletionDescriptor(
                 "openai",
-                "openai-responses-v1",
+                "openai-responses-v2",
                 "gpt-test"
             )
         );

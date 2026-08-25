@@ -495,7 +495,10 @@ public sealed class CodexCliAuthFileCredentialProviderTests {
     [Fact]
     public async Task DefaultProvider_UsesAbsoluteCodexHomeAndRejectsRelativeValue() {
         using var fixture = new AuthFixture();
-        string token = CreateAccessToken(Now.AddHours(1), "account-default");
+        string token = CreateAccessToken(
+            DateTimeOffset.UtcNow.AddHours(1),
+            "account-default"
+        );
         fixture.WriteAuth(token, "account-default");
         string? original = Environment.GetEnvironmentVariable("CODEX_HOME");
         try {

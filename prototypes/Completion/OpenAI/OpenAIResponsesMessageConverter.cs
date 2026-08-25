@@ -366,17 +366,42 @@ internal static class OpenAIResponsesMessageConverter {
 
         var list = new List<OpenAIResponsesTool>(tools.Length);
         foreach (var definition in tools) {
+            EnsureResponsesFunctionName(definition.Name);
             list.Add(
                 new OpenAIResponsesTool {
                     Name = definition.Name,
                     Description = definition.Description,
                     Parameters = JsonToolSchemaBuilder.BuildSchema(definition),
-                    Strict = true
+                    Strict = IsStrictCompatible(definition.InputSchema)
                 }
             );
         }
 
         return list;
+    }
+
+    private static bool IsStrictCompatible(ToolSchema schema) => schema switch {
+        ToolSchema.Object value => value.Properties.Length > 0
+            && !value.AdditionalProperties
+            && value.Properties.All(static property =>
+                property.IsRequired
+                && IsStrictCompatible(property.Schema)),
+        ToolSchema.Array value => IsStrictCompatible(value.ItemSchema),
+        ToolSchema.Value => true,
+        _ => false
+    };
+
+    private static void EnsureResponsesFunctionName(string name) {
+        if (name.Length is < 1 or > 64
+            || name.Any(static character =>
+                !char.IsAsciiLetterOrDigit(character)
+                && character is not '_' and not '-')) {
+            throw new InvalidOperationException(
+                "OpenAI Responses function names must contain only ASCII "
+                + "letters, digits, underscores, or hyphens and be at most "
+                + "64 characters."
+            );
+        }
     }
 
     private static void EnsureMatchingToolName(ToolResult result, PendingToolCall pendingToolCall) {

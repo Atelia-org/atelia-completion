@@ -20,6 +20,10 @@ namespace Atelia.Completion.OpenAI;
 public sealed class OpenAICodexResponsesClient : ICompletionClient,
     IDisposable {
     private const string DebugCategory = "Provider";
+    private const int MaximumNonSuccessBodyBytes = 16 * 1024;
+    private const int MaximumErrorTokenCharacters = 64;
+    private const int MaximumErrorParameterCharacters = 128;
+    private const int MaximumRequestIdCharacters = 128;
 
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -200,7 +204,10 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
 
             if (!response.IsSuccessStatusCode) {
                 try {
-                    throw ClassifyNonSuccess(response);
+                    throw await ClassifyNonSuccessAsync(
+                        response,
+                        cancellationToken
+                    ).ConfigureAwait(false);
                 }
                 finally {
                     response.Dispose();
@@ -349,45 +356,228 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         );
     }
 
-    private static OpenAICodexResponsesException ClassifyNonSuccess(
-        HttpResponseMessage response
-    ) {
+    private static async Task<OpenAICodexResponsesException>
+        ClassifyNonSuccessAsync(
+            HttpResponseMessage response,
+            CancellationToken cancellationToken
+        ) {
         HttpStatusCode status = response.StatusCode;
+        BackendFailureDiagnostics diagnostics =
+            await CaptureBackendFailureDiagnosticsAsync(
+                response,
+                cancellationToken
+            ).ConfigureAwait(false);
+        string diagnosticSuffix = FormatDiagnosticSuffix(diagnostics);
         if ((int)status is >= 300 and < 400) {
             return Failure(
                 OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect,
-                "ChatGPT Codex returned an unexpected redirect; redirects are disabled.",
-                status
+                "ChatGPT Codex returned an unexpected redirect; redirects are disabled."
+                    + diagnosticSuffix,
+                status,
+                diagnostics: diagnostics
             );
         }
         if (status is HttpStatusCode.Unauthorized) {
             return Failure(
                 OpenAICodexResponsesFailureReason
                     .CodexReauthenticationRequired,
-                "ChatGPT Codex rejected the reloaded access-token snapshot.",
-                status
+                "ChatGPT Codex rejected the reloaded access-token snapshot."
+                    + diagnosticSuffix,
+                status,
+                diagnostics: diagnostics
             );
         }
         if (status is HttpStatusCode.Forbidden) {
             return Failure(
                 OpenAICodexResponsesFailureReason.CodexAccessDenied,
-                "ChatGPT Codex denied this request.",
-                status
+                "ChatGPT Codex denied this request."
+                    + diagnosticSuffix,
+                status,
+                diagnostics: diagnostics
             );
         }
         if ((int)status == 429) {
             return Failure(
                 OpenAICodexResponsesFailureReason.CodexRateLimited,
-                "ChatGPT Codex rate-limited this client.",
+                "ChatGPT Codex rate-limited this client."
+                    + diagnosticSuffix,
                 status,
-                ParseRetryAfter(response.Headers.RetryAfter)
+                ParseRetryAfter(response.Headers.RetryAfter),
+                diagnostics
             );
         }
         return Failure(
             OpenAICodexResponsesFailureReason.BackendFailure,
-            $"ChatGPT Codex request failed with HTTP status {(int)status}.",
-            status
+            $"ChatGPT Codex request failed with HTTP status {(int)status}."
+                + diagnosticSuffix,
+            status,
+            diagnostics: diagnostics
         );
+    }
+
+    private static async Task<BackendFailureDiagnostics>
+        CaptureBackendFailureDiagnosticsAsync(
+            HttpResponseMessage response,
+            CancellationToken cancellationToken
+        ) {
+        string? requestId = ReadSafeRequestId(response);
+        if (response.Content is null
+            || response.Content.Headers.ContentLength
+                is > MaximumNonSuccessBodyBytes) {
+            return new BackendFailureDiagnostics(null, null, null, requestId);
+        }
+
+        byte[] buffer = new byte[MaximumNonSuccessBodyBytes + 1];
+        try {
+            int length = 0;
+            try {
+                using Stream stream = await response.Content
+                    .ReadAsStreamAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                while (length < buffer.Length) {
+                    int read = await stream.ReadAsync(
+                        buffer.AsMemory(length, buffer.Length - length),
+                        cancellationToken
+                    ).ConfigureAwait(false);
+                    if (read == 0) { break; }
+                    length += read;
+                }
+            }
+            catch (OperationCanceledException) {
+                throw;
+            }
+            catch (Exception exception) when (!IsFatal(exception)) {
+                return new BackendFailureDiagnostics(
+                    null,
+                    null,
+                    null,
+                    requestId
+                );
+            }
+
+            if (length > MaximumNonSuccessBodyBytes) {
+                return new BackendFailureDiagnostics(
+                    null,
+                    null,
+                    null,
+                    requestId
+                );
+            }
+
+            using JsonDocument document = JsonDocument.Parse(
+                buffer.AsMemory(0, length),
+                new JsonDocumentOptions {
+                    AllowTrailingCommas = false,
+                    CommentHandling = JsonCommentHandling.Disallow,
+                    MaxDepth = 8
+                }
+            );
+            if (document.RootElement.ValueKind is not JsonValueKind.Object
+                || !document.RootElement.TryGetProperty(
+                    "error",
+                    out JsonElement error)
+                || error.ValueKind is not JsonValueKind.Object) {
+                return new BackendFailureDiagnostics(
+                    null,
+                    null,
+                    null,
+                    requestId
+                );
+            }
+            return new BackendFailureDiagnostics(
+                ReadSafeJsonToken(
+                    error,
+                    "code",
+                    MaximumErrorTokenCharacters
+                ),
+                ReadSafeJsonToken(
+                    error,
+                    "type",
+                    MaximumErrorTokenCharacters
+                ),
+                ReadSafeJsonToken(
+                    error,
+                    "param",
+                    MaximumErrorParameterCharacters
+                ),
+                requestId
+            );
+        }
+        catch (JsonException) {
+            return new BackendFailureDiagnostics(null, null, null, requestId);
+        }
+        finally {
+            CryptographicOperations.ZeroMemory(buffer);
+        }
+    }
+
+    private static string? ReadSafeJsonToken(
+        JsonElement owner,
+        string propertyName,
+        int maximumLength
+    ) {
+        if (!owner.TryGetProperty(propertyName, out JsonElement value)
+            || value.ValueKind is not JsonValueKind.String) {
+            return null;
+        }
+        string? text = value.GetString();
+        return IsSafeDiagnosticToken(text, maximumLength) ? text : null;
+    }
+
+    private static string? ReadSafeRequestId(
+        HttpResponseMessage response
+    ) {
+        foreach (string headerName in new[] {
+            "x-request-id",
+            "request-id",
+            "openai-request-id"
+        }) {
+            if (!response.Headers.TryGetValues(
+                    headerName,
+                    out IEnumerable<string>? values)) {
+                continue;
+            }
+            string[] exactValues = values.Take(2).ToArray();
+            if (exactValues.Length == 1
+                && IsSafeDiagnosticToken(
+                    exactValues[0],
+                    MaximumRequestIdCharacters
+                )) {
+                return exactValues[0];
+            }
+        }
+        return null;
+    }
+
+    private static bool IsSafeDiagnosticToken(
+        string? value,
+        int maximumLength
+    ) {
+        if (value is not { Length: > 0 }
+            || value.Length > maximumLength) {
+            return false;
+        }
+        return value.All(static character =>
+            char.IsAsciiLetterOrDigit(character)
+            || character is '_' or '-' or '.' or ':' or '/'
+                or '[' or ']' or '$');
+    }
+
+    private static string FormatDiagnosticSuffix(
+        BackendFailureDiagnostics diagnostics
+    ) {
+        var fields = new List<string>(4);
+        Add("code", diagnostics.Code);
+        Add("type", diagnostics.Type);
+        Add("param", diagnostics.Parameter);
+        Add("requestId", diagnostics.RequestId);
+        return fields.Count == 0
+            ? string.Empty
+            : " Safe diagnostics: " + string.Join(", ", fields) + ".";
+
+        void Add(string name, string? value) {
+            if (value is not null) { fields.Add($"{name}={value}"); }
+        }
     }
 
     private static TimeSpan? ParseRetryAfter(
@@ -422,10 +612,20 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         OpenAICodexResponsesFailureReason reason,
         string message,
         HttpStatusCode? statusCode = null,
-        TimeSpan? retryAfter = null
-    ) => new(reason, message, statusCode, retryAfter);
+        TimeSpan? retryAfter = null,
+        BackendFailureDiagnostics? diagnostics = null
+    ) => new(
+        reason,
+        message,
+        statusCode,
+        retryAfter,
+        diagnostics?.Code,
+        diagnostics?.Type,
+        diagnostics?.Parameter,
+        diagnostics?.RequestId
+    );
 
-    private static HttpMessageHandler CreateProductionHandler() =>
+    internal static HttpMessageHandler CreateProductionHandler() =>
         new HttpClientHandler {
             AllowAutoRedirect = false,
             UseCookies = false,
@@ -570,6 +770,13 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
     private sealed record UnauthorizedReloadResolution(
         long RejectedGeneration,
         CodexSubscriptionCredential? Replacement
+    );
+
+    private sealed record BackendFailureDiagnostics(
+        string? Code,
+        string? Type,
+        string? Parameter,
+        string? RequestId
     );
 
     public void Dispose() {

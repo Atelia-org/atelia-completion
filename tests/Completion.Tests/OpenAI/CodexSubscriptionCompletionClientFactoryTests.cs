@@ -20,7 +20,7 @@ public sealed class CodexSubscriptionCompletionClientFactoryTests {
         );
 
         Assert.Equal("chatgpt.com", client.Name);
-        Assert.Equal("openai-codex-responses-v1", client.ApiSpecId);
+        Assert.Equal("openai-codex-responses-v2", client.ApiSpecId);
         Assert.Equal(0, provider.CallCount);
         Assert.Equal(0, fallback.CallCount);
     }

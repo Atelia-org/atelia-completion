@@ -100,6 +100,119 @@ public sealed class OpenAIResponsesToolSchemaProjectionTests {
         );
     }
 
+    [Theory]
+    [InlineData("root-optional")]
+    [InlineData("nested-object-optional")]
+    [InlineData("array-item-optional")]
+    [InlineData("nested-additional-properties")]
+    public void ConvertToApiRequest_PreservesSchemaButDisablesStrictWhenAnyNodeIsIncompatible(
+        string incompatibleNode
+    ) {
+        ToolSchema nestedObject = new ToolSchema.Object(
+            properties: [
+                new ToolSchema.Property(
+                    "value",
+                    new ToolSchema.Value(ToolParamType.String),
+                    isRequired: incompatibleNode is not "nested-object-optional"
+                )
+            ],
+            additionalProperties: incompatibleNode is "nested-additional-properties"
+        );
+        var properties = new List<ToolSchema.Property> {
+            new(
+                "direct",
+                new ToolSchema.Value(ToolParamType.String),
+                isRequired: incompatibleNode is not "root-optional"
+            ),
+            new("nested", nestedObject, isRequired: true),
+            new(
+                "items",
+                new ToolSchema.Array(
+                    new ToolSchema.Object([
+                        new ToolSchema.Property(
+                            "itemValue",
+                            new ToolSchema.Value(ToolParamType.String),
+                            isRequired: incompatibleNode is not "array-item-optional"
+                        )
+                    ])
+                ),
+                isRequired: true
+            )
+        };
+        ToolDefinition definition = new(
+            "recursive_tool",
+            "Exercise recursive strict compatibility.",
+            new ToolSchema.Object(properties)
+        );
+
+        OpenAIResponsesApiRequest apiRequest = Convert(definition);
+
+        OpenAIResponsesTool tool = Assert.Single(apiRequest.Tools!);
+        Assert.False(tool.Strict);
+        JsonElement root = tool.Parameters;
+        Assert.Equal(
+            incompatibleNode is not "root-optional",
+            root.GetProperty("required")
+                .EnumerateArray()
+                .Any(static item => item.GetString() == "direct")
+        );
+        JsonElement nested = root.GetProperty("properties")
+            .GetProperty("nested");
+        Assert.Equal(
+            incompatibleNode is "nested-additional-properties",
+            nested.GetProperty("additionalProperties").GetBoolean()
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_RejectsProviderIncompatibleFunctionName() {
+        ToolDefinition definition = new(
+            "recap_grid.control",
+            "Invalid dotted Responses function name.",
+            new ToolSchema.Object()
+        );
+
+        InvalidOperationException exception = Assert.Throws<
+            InvalidOperationException
+        >(() => Convert(definition));
+
+        Assert.Contains(
+            "letters, digits, underscores, or hyphens",
+            exception.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_DisablesStrictForEmptyObjectSchema() {
+        ToolDefinition definition = new(
+            "no_arguments",
+            "No arguments.",
+            new ToolSchema.Object()
+        );
+
+        OpenAIResponsesTool tool = Assert.Single(Convert(definition).Tools!);
+
+        Assert.False(tool.Strict);
+    }
+
+    private static OpenAIResponsesApiRequest Convert(
+        ToolDefinition definition
+    ) => OpenAIResponsesMessageConverter.ConvertToApiRequest(
+        new CompletionRequest(
+            "gpt-5",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([definition]),
+                [new ObservationMessage("Use the tool.")]
+            ),
+            tailMessages: []
+        ),
+        new OpenAIResponsesClientOptions {
+            IncludeEncryptedReasoning = false
+        }
+    );
+
     private static ToolDefinition CreateRecursiveToolDefinition() {
         return new ToolDefinition(
             name: "search_docs",

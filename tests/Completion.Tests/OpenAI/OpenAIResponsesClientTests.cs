@@ -203,7 +203,7 @@ public sealed class OpenAIResponsesClientTests {
                     [
                         new OpenAIResponsesReasoningBlock(
                             """{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Need tool."}],"encrypted_content":"enc_123"}""",
-                            new CompletionDescriptor("localhost", "openai-responses-v1", "gpt-5"),
+                            new CompletionDescriptor("localhost", "openai-responses-v2", "gpt-5"),
                             "Need tool."
                         ),
                         new ActionBlock.ToolCall(new RawToolCall("get_weather", "call_123", """{"city":"Paris"}"""))

@@ -6,7 +6,7 @@ internal delegate OpenAIResponsesReasoningConfig?
     OpenAIResponsesReasoningMapper(CompletionReasoningEffort effort);
 
 internal static class PublicOpenAIResponsesProfile {
-    public const string ApiSpecId = "openai-responses-v1";
+    public const string ApiSpecId = "openai-responses-v2";
 
     public static OpenAIResponsesReasoningConfig? MapReasoningEffort(
         CompletionReasoningEffort effort

@@ -4,7 +4,7 @@ using Xunit;
 namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIResponsesStreamParserTests {
-    private static CompletionDescriptor DummyInvocation => new("openai", "openai-responses-v1", "gpt-5");
+    private static CompletionDescriptor DummyInvocation => new("openai", "openai-responses-v2", "gpt-5");
 
     [Fact]
     public void TerminalUsage_ProjectsIndependentReadAndWriteCounters() {

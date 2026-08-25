@@ -294,7 +294,7 @@ public sealed class OpenAIResponsesMessageConverterTests {
                     [
                         new OpenAIResponsesReasoningBlock(
                             """{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Need tool."}],"encrypted_content":"enc_123"}""",
-                            new CompletionDescriptor("openai", "openai-responses-v1", "gpt-4.1"),
+                            new CompletionDescriptor("openai", "openai-responses-v2", "gpt-4.1"),
                             "Need tool."
                         )
                     ]
@@ -367,19 +367,19 @@ public sealed class OpenAIResponsesMessageConverterTests {
         );
 
         Assert.Contains("Origin.ApiSpecId", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("openai-responses-v1", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("openai-responses-v2", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void ConvertToApiRequest_ReasoningOriginMustMatchFullTargetInvocation() {
         var source = new CompletionDescriptor(
             "old-host",
-            "openai-responses-v1",
+            "openai-responses-v2",
             "gpt-5"
         );
         var target = new CompletionDescriptor(
             "new-host",
-            "openai-responses-v1",
+            "openai-responses-v2",
             "gpt-5"
         );
         var request = new CompletionRequest(
@@ -412,7 +412,7 @@ public sealed class OpenAIResponsesMessageConverterTests {
     public void ConvertToApiRequest_RejectsPlainTextThatDivergesFromReasoningItem() {
         var origin = new CompletionDescriptor(
             "openai",
-            "openai-responses-v1",
+            "openai-responses-v2",
             "gpt-5"
         );
         var request = new CompletionRequest(

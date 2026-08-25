@@ -304,6 +304,488 @@ public sealed class OpenAIResponsesStreamParserTests {
     }
 
     [Fact]
+    public void ParseEvent_RefusalDeltaAndDoneWaitForResponseTerminalThenMarkIncomplete() {
+        var parser = new OpenAIResponsesStreamParser();
+        var observer = new CompletionStreamObserver();
+        var deltas = new List<string>();
+        observer.ReceivedTextDelta += deltas.Add;
+        var aggregator = new CompletionAggregator(DummyInvocation, observer);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"I can"}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"I cannot help."}
+            """,
+            aggregator
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+
+        parser.ParseEvent(
+            """{"type":"response.completed"}""",
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(result, "OpenAI Responses returned a typed refusal.");
+        Assert.Equal("I cannot help.", result.Message.GetFlattenedText());
+        Assert.Equal(["I can", "not help."], deltas);
+        Assert.Null(result.Errors);
+    }
+
+    [Fact]
+    public void ParseEvent_RefusalFinalWitnessesDeduplicateAndOnlyAppendMissingSuffix() {
+        var parser = new OpenAIResponsesStreamParser();
+        var observer = new CompletionStreamObserver();
+        var deltas = new List<string>();
+        observer.ReceivedTextDelta += deltas.Add;
+        var aggregator = new CompletionAggregator(DummyInvocation, observer);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"No"}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"No thanks"}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"No thanks"}]}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.completed","response":{"output":[{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"No thanks"}]}]}}
+            """,
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(result, "OpenAI Responses returned a typed refusal.");
+        Assert.Equal("No thanks", result.Message.GetFlattenedText());
+        Assert.Equal(["No", " thanks"], deltas);
+    }
+
+    [Fact]
+    public void ParseEvent_RefusalCoordinationSeparatesContentIndexesWithinOneItem() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"First."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"First."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":1,"delta":"Second."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":1,"refusal":"Second."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"First."},{"type":"refusal","refusal":"Second."}]}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """{"type":"response.completed"}""",
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(result, "OpenAI Responses returned a typed refusal.");
+        Assert.Equal("First.Second.", result.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public void ParseEvent_CompletedEarlierContentCanRepeatBeforeFinalizingActiveContent() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"First."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"First."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":1,"delta":"Sec"}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"First."},{"type":"refusal","refusal":"Second."}]}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """{"type":"response.completed"}""",
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(result, "OpenAI Responses returned a typed refusal.");
+        Assert.Equal("First.Second.", result.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public void ParseEvent_InterleavedRefusalContentFailsClosedWithoutBodyInException() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"REFUSAL_FIRST_BODY_CANARY"}
+            """,
+            aggregator
+        );
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """
+                {"type":"response.refusal.delta","item_id":"msg_1","content_index":1,"delta":"REFUSAL_SECOND_BODY_CANARY"}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+        Assert.DoesNotContain("CANARY", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_RefusalFinalForDifferentActiveContentFailsClosedWithoutBodyInException() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"REFUSAL_ACTIVE_BODY_CANARY"}
+            """,
+            aggregator
+        );
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """
+                {"type":"response.refusal.done","item_id":"msg_1","content_index":1,"refusal":"REFUSAL_OTHER_BODY_CANARY"}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+        Assert.DoesNotContain("CANARY", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_CompletedFinalOutputRefusalFallbackMarksIncomplete() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.completed","response":{"output":[{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"Cannot comply."}]}]}}
+            """,
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(result, "OpenAI Responses returned a typed refusal.");
+        Assert.Equal("Cannot comply.", result.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public void ParseEvent_OrdinaryTextThatSoundsLikeRefusalRemainsCompleted() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.output_text.delta","delta":"I refuse to guess from plain text."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """{"type":"response.completed"}""",
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        Assert.Equal(
+            CompletionTerminationKind.Completed,
+            result.Termination.Kind
+        );
+        Assert.Equal(
+            "I refuse to guess from plain text.",
+            result.Message.GetFlattenedText()
+        );
+    }
+
+    [Fact]
+    public void ParseEvent_MixedTextToolAndRefusalRemainsIncomplete() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """{"type":"response.output_text.delta","delta":"Visible text."}""",
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"Refused."}]}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """{"type":"response.completed"}""",
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(result, "OpenAI Responses returned a typed refusal.");
+        Assert.Contains(
+            result.Message.Blocks,
+            static block => block is ActionBlock.ToolCall
+        );
+        Assert.Equal("Visible text.Refused.", result.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public void ParseEvent_RefusalFinalConflictFailsClosedWithoutBodyInException() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"REFUSAL_PREFIX_CANARY"}
+            """,
+            aggregator
+        );
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """
+                {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"REFUSAL_CONFLICT_CANARY"}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+        Assert.DoesNotContain("CANARY", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_ConflictingRepeatedRefusalFinalFailsClosedWithoutBodyInException() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"REFUSAL_FINAL_ONE_CANARY"}
+            """,
+            aggregator
+        );
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """
+                {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"REFUSAL_FINAL_TWO_CANARY"}]}}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+        Assert.DoesNotContain("CANARY", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_RefusalDeltaAfterFinalWitnessFailsClosedWithoutBodyInException() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"Final refusal."}
+            """,
+            aggregator
+        );
+
+        InvalidDataException exception = Assert.Throws<InvalidDataException>(
+            () => parser.ParseEvent(
+                """
+                {"type":"response.refusal.delta","item_id":"msg_1","content_index":0,"delta":"REFUSAL_LATE_CANARY"}
+                """,
+                aggregator
+            )
+        );
+
+        Assert.False(parser.TerminalEventObserved);
+        Assert.DoesNotContain("REFUSAL_LATE_CANARY", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ParseEvent_ResponseFailedOverridesPriorRefusalEvidence() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"Transient refusal."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.failed","response":{"error":{"message":"provider failed"}}}
+            """,
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal("response.failed", result.Termination.ProviderReason);
+        Assert.Equal(["provider failed"], result.Errors);
+        Assert.Equal("Transient refusal.", result.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public void ParseEvent_OfficialErrorOverridesPriorRefusalEvidence() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"Transient refusal."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"error","message":"provider failed"}
+            """,
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        Assert.Equal(CompletionTerminationKind.Failed, result.Termination.Kind);
+        Assert.Equal("error", result.Termination.ProviderReason);
+        Assert.Equal(["provider failed"], result.Errors);
+        Assert.Equal("Transient refusal.", result.Message.GetFlattenedText());
+    }
+
+    [Fact]
+    public void ParseEvent_ResponseIncompleteWithRefusalUsesRefusalReason() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"Cannot comply."}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"}}}
+            """,
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(result, "OpenAI Responses returned a typed refusal.");
+    }
+
+    [Fact]
+    public void ParseEvent_ResponseIncompleteFinalOnlyRefusalUsesSanitizedMetadataAndTransientText() {
+        const string refusalBody = "INCOMPLETE_REFUSAL_BODY_ASCII_SECRET_CANARY";
+        var parser = new OpenAIResponsesStreamParser(
+            sanitizeProviderErrors: true
+        );
+        var aggregator = new CompletionAggregator(DummyInvocation);
+        string terminalEvent = System.Text.Json.JsonSerializer.Serialize(new {
+            type = "response.incomplete",
+            response = new {
+                incomplete_details = new { reason = "content_filter" },
+                output = new[] {
+                    new {
+                        id = "msg_1",
+                        type = "message",
+                        content = new[] {
+                            new { type = "refusal", refusal = refusalBody }
+                        }
+                    }
+                }
+            }
+        });
+
+        parser.ParseEvent(
+            terminalEvent,
+            aggregator
+        );
+
+        CompletionResult result = aggregator.Build();
+        AssertRefusalTermination(
+            result,
+            "ChatGPT Codex returned a typed refusal."
+        );
+        Assert.Equal(refusalBody, result.Message.GetFlattenedText());
+        Assert.Null(result.Errors);
+        string terminationMetadata = string.Join(
+            "\n",
+            result.Termination.ProviderReason,
+            result.Termination.Detail
+        );
+        Assert.DoesNotContain(
+            refusalBody,
+            terminationMetadata,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public void ParseEvent_UnknownWellFormedEventIsForwardCompatible() {
         var parser = new OpenAIResponsesStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
@@ -323,6 +805,31 @@ public sealed class OpenAIResponsesStreamParserTests {
 
         Assert.True(parser.TerminalEventObserved);
         Assert.Equal(CompletionTerminationKind.Completed, aggregator.Build().Termination.Kind);
+    }
+
+    [Fact]
+    public void ParseEvent_UnknownWellFormedOutputAndMessagePartTypesAreForwardCompatible() {
+        var parser = new OpenAIResponsesStreamParser();
+        var aggregator = new CompletionAggregator(DummyInvocation);
+
+        parser.ParseEvent(
+            """
+            {"type":"response.output_item.done","item":{"id":"msg_1","type":"message","content":[{"type":"future_content","value":42}]}}
+            """,
+            aggregator
+        );
+        parser.ParseEvent(
+            """
+            {"type":"response.completed","response":{"output":[{"type":"future_item","value":42},{"id":"msg_2","type":"message","content":[{"type":"future_content","value":43}]}]}}
+            """,
+            aggregator
+        );
+
+        Assert.True(parser.TerminalEventObserved);
+        Assert.Equal(
+            CompletionTerminationKind.Completed,
+            aggregator.Build().Termination.Kind
+        );
     }
 
     [Theory]
@@ -382,11 +889,40 @@ public sealed class OpenAIResponsesStreamParserTests {
     [InlineData("{\"type\":\"response.function_call_arguments.done\",\"arguments\":\"{}\"}")]
     [InlineData("{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\"}")]
     [InlineData("{\"type\":\"response.output_item.done\"}")]
+    [InlineData("{\"type\":\"response.refusal.delta\",\"content_index\":0,\"delta\":\"no\"}")]
+    [InlineData("{\"type\":\"response.refusal.delta\",\"item_id\":\"msg_1\",\"delta\":\"no\"}")]
+    [InlineData("{\"type\":\"response.refusal.delta\",\"item_id\":\"msg_1\",\"content_index\":-1,\"delta\":\"no\"}")]
+    [InlineData("{\"type\":\"response.refusal.done\",\"content_index\":0,\"refusal\":\"no\"}")]
+    [InlineData("{\"type\":\"response.refusal.done\",\"item_id\":\"msg_1\",\"refusal\":\"no\"}")]
+    [InlineData("{\"type\":\"response.refusal.done\",\"item_id\":\"msg_1\",\"content_index\":0}")]
+    [InlineData("{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\"}}")]
+    [InlineData("{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"content\":{}}}")]
+    [InlineData("{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"content\":[7]}}")]
+    [InlineData("{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"content\":[{}]}}")]
+    [InlineData("{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"content\":[{\"type\":7}]}}")]
+    [InlineData("{\"type\":\"response.completed\",\"response\":{\"output\":null}}")]
+    [InlineData("{\"type\":\"response.completed\",\"response\":{\"output\":{}}}")]
+    [InlineData("{\"type\":\"response.completed\",\"response\":{\"output\":[7]}}")]
+    [InlineData("{\"type\":\"response.completed\",\"response\":{\"output\":[{}]}}")]
+    [InlineData("{\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":7}]}}")]
+    [InlineData("{\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"msg_1\",\"type\":\"message\"}]}}")]
     public void ParseEvent_KnownEventMissingRequiredShapeFailsClosed(string json) {
         var parser = new OpenAIResponsesStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
 
         Assert.Throws<InvalidDataException>(() => parser.ParseEvent(json, aggregator));
         Assert.False(parser.TerminalEventObserved);
+    }
+
+    private static void AssertRefusalTermination(
+        CompletionResult result,
+        string expectedDetail
+    ) {
+        Assert.Equal(
+            CompletionTerminationKind.Incomplete,
+            result.Termination.Kind
+        );
+        Assert.Equal("response.refusal", result.Termination.ProviderReason);
+        Assert.Equal(expectedDetail, result.Termination.Detail);
     }
 }

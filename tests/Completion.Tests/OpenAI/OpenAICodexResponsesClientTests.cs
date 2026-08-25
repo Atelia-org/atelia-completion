@@ -698,6 +698,61 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
+    public async Task StreamCompletionAsync_TypedRefusalKeepsBodyOutOfCodexTerminationMetadata() {
+        const string refusalBody = "REFUSAL_BODY_ASCII_SECRET_CANARY";
+        CodexSubscriptionCredential credential = Credential(
+            "token",
+            "account",
+            1
+        );
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => EventStreamResponse(
+            $$"""
+            event: response.refusal.done
+            data: {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":{{JsonSerializer.Serialize(refusalBody)}}}
+
+            event: response.completed
+            data: {"type":"response.completed"}
+
+            """
+        ));
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            Request(),
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            CompletionTerminationKind.Incomplete,
+            result.Termination.Kind
+        );
+        Assert.Equal("response.refusal", result.Termination.ProviderReason);
+        Assert.Equal(
+            "ChatGPT Codex returned a typed refusal.",
+            result.Termination.Detail
+        );
+        Assert.Equal(refusalBody, result.Message.GetFlattenedText());
+        Assert.Null(result.Errors);
+        string terminationMetadata = string.Join(
+            "\n",
+            result.Termination.ProviderReason,
+            result.Termination.Detail,
+            result.Errors is null ? string.Empty : string.Join("\n", result.Errors)
+        );
+        Assert.DoesNotContain(
+            refusalBody,
+            terminationMetadata,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_RejectsPublicResponsesReasoningBeforeCredentialRead() {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);

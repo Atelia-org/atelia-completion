@@ -290,6 +290,64 @@ public sealed class OpenAIResponsesClientTests {
     }
 
     [Fact]
+    public async Task StreamCompletionAsync_RefusalDoneBeforeTerminalEventIsUncertainInterruption() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: response.refusal.done
+                data: {"type":"response.refusal.done","item_id":"msg_1","content_index":0,"refusal":"Cannot comply."}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+
+        await Assert.ThrowsAsync<CompletionStreamInterruptedException>(
+            () => client.StreamCompletionAsync(
+                CreateRequest(),
+                observer: null,
+                CancellationToken.None
+            )
+        );
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_CompletedFinalRefusalReturnsIncompleteTransientText() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                event: response.completed
+                data: {"type":"response.completed","response":{"output":[{"id":"msg_1","type":"message","content":[{"type":"refusal","refusal":"Cannot comply."}]}]}}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            CreateRequest(),
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            CompletionTerminationKind.Incomplete,
+            result.Termination.Kind
+        );
+        Assert.Equal("response.refusal", result.Termination.ProviderReason);
+        Assert.Equal(
+            "OpenAI Responses returned a typed refusal.",
+            result.Termination.Detail
+        );
+        Assert.Equal("Cannot comply.", result.Message.GetFlattenedText());
+        Assert.Null(result.Errors);
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_ExplicitTerminalReturnsWithoutReadingLaterFrames() {
         var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(

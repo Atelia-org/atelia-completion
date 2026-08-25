@@ -535,6 +535,12 @@ Gemini 路径的特殊点是：
   `message_delta.stop_reason`后的无pending-frame clean EOF可按该reason结束；read exception、取消、pending frame
   和active block均不适用。完整矩阵见
   [`prototypes/Completion/README.md`](../../prototypes/Completion/README.md)。
+- OpenAI Responses只按typed `response.refusal.delta/done`、message refusal content或最终response output fallback
+  识别模型拒答，不从普通文本猜测。refusal正文仍可作为transient text/observer delta显示，但必须等最终
+  `response.completed` / `response.incomplete` 后才收口为`Incomplete(response.refusal)`；正文不进入errors或termination
+  metadata。同一时刻只允许一个未finalized refusal content；已知message/output容器shape malformed或content交错会
+  fail closed，合法unknown string type仍forward-compatible。refusal done不是terminal，terminal前EOF仍是outcome
+  uncertain；`response.failed` / `error`仍优先为Failed。
 
 ---
 

@@ -421,7 +421,10 @@ mapping id，避免未来一边变化时 silent drift。
 identity 仍保持单一 owner：`CompletionDispatchIdentityFactory.ResolveReasoningMappingId(connection)` 新增 exact kind case，
 返回 `openai-codex-responses-effort-v1`；profile 只实现 wire mapping，并以成对测试锁住二者一致，不引入第二套 runtime
 identity source。`openai-codex-responses-v2` 代表整套 request/replay/SSE adapter contract：route、body policy、headers、
-provider-native replay 或 accepted terminal 的语义变化需要 bump `ApiSpecId`；纯 effort mapping 变化只 bump mapping id。
+provider-native replay、新增 protocol event/wire shape，或改变哪些 event 构成 terminal evidence，都需要 bump `ApiSpecId`；
+纯 effort mapping 变化只 bump mapping id。已经属于 pinned Responses schema 的 typed content 若被错误计入 success，收紧其
+success eligibility、让既有 `response.completed` terminal 收口为 conservative Incomplete，属于 fail-closed bug fix，不改变
+terminal evidence set，因此不 bump public/Codex v2。
 
 ## 7. 错误、重读与重试
 
@@ -594,6 +597,8 @@ fingerprint 不变。
 - 两个 `ICompletionClient` overload 都显式实现；合法 prompt-cache hints 为 validated no-op；non-null `MaxTokens` fail fast；
 - 401 generation-change retry 至多一次；403/429/3xx/5xx 无透明 retry；
 - non-2xx 与 SSE terminal error 都经过 Codex-specific sanitizer；
+- typed refusal 只在最终 `response.completed` / `response.incomplete` terminal 后收口为
+  `Incomplete(response.refusal)`；refusal body 只作为 transient text，不进入 termination metadata / errors；
 - public/Codex reasoning payload cross-replay fail fast。
 
 ### WP-3：factory、dispatch identity 与 Galatea composition（已实施）
@@ -701,6 +706,9 @@ publish。
     credential/network 前形成 typed local rejection，observer/credential/network 均为零；
 24. raw exchange JSONL 在 Unix 上以 `0600` 创建，拒绝非 private existing path，且 non-2xx body 被 client 消费后
     transport tee 可观察。
+25. typed refusal 的 delta/done/final fallback 按 `(item_id, content_index)` 去重与 prefix reconciliation；同一时刻只
+    允许一个未finalized key；已知message/output容器shape缺失或冲突fail closed，合法unknown string type保持
+    forward-compatible；refusal done不是terminal，terminal前EOF仍uncertain，`response.failed` / `error`覆盖为Failed。
 
 现有 public Responses converter/parser 的完整矩阵不应复制；新测试只覆盖 Codex profile 的差异与一个端到端复用证明。
 

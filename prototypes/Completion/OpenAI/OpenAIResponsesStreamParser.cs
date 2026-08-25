@@ -16,9 +16,13 @@ internal sealed class OpenAIResponsesStreamParser {
 
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _completedFunctionCallItemIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<RefusalContentKey, RefusalContentState>
+        _refusalContents = new();
     private readonly bool _sanitizeProviderErrors;
     private string? _activeReasoningItemId;
     private StringBuilder? _activeReasoningSummary;
+    private RefusalContentKey? _activeRefusalContentKey;
+    private bool _refusalObserved;
     private bool _terminalEventObserved;
 
     public bool TerminalEventObserved => _terminalEventObserved;
@@ -48,8 +52,11 @@ internal sealed class OpenAIResponsesStreamParser {
     public void DiscardIncompleteStreamingState() {
         _functionCalls.Clear();
         _completedFunctionCallItemIds.Clear();
+        _refusalContents.Clear();
         _activeReasoningItemId = null;
         _activeReasoningSummary = null;
+        _activeRefusalContentKey = null;
+        _refusalObserved = false;
     }
 
     private void ParseEventCore(
@@ -109,29 +116,51 @@ internal sealed class OpenAIResponsesStreamParser {
                 HandleOutputItemDone(obj, aggregator);
                 break;
 
+            case "response.refusal.delta":
+                HandleRefusalDelta(obj, aggregator);
+                break;
+
+            case "response.refusal.done":
+                HandleRefusalDone(obj, aggregator);
+                break;
+
             case "response.reasoning_summary_text.delta":
                 HandleReasoningSummaryDelta(obj, aggregator);
                 break;
 
             case "response.completed":
                 MergeTerminalUsageIfPresent(obj, aggregator);
-                aggregator.MarkCompleted("response.completed");
+                HandleTerminalResponseRefusalFallback(obj, aggregator);
+                bool completedWithRefusal = _refusalObserved;
                 FinalizeTerminalStreamingState(aggregator);
+                if (completedWithRefusal) {
+                    MarkRefusalIncomplete(aggregator);
+                }
+                else {
+                    aggregator.MarkCompleted("response.completed");
+                }
                 _terminalEventObserved = true;
                 break;
 
             case "response.incomplete":
                 MergeTerminalUsageIfPresent(obj, aggregator);
+                HandleTerminalResponseRefusalFallback(obj, aggregator);
                 var incompleteReason = _sanitizeProviderErrors
                     ? null
                     : ExtractIncompleteReason(obj);
+                bool incompleteWithRefusal = _refusalObserved;
                 FinalizeTerminalStreamingState(aggregator);
-                aggregator.MarkIncomplete(
-                    incompleteReason ?? "response.incomplete",
-                    incompleteReason is null
-                        ? "OpenAI Responses returned response.incomplete."
-                        : $"OpenAI Responses returned response.incomplete: {incompleteReason}."
-                );
+                if (incompleteWithRefusal) {
+                    MarkRefusalIncomplete(aggregator);
+                }
+                else {
+                    aggregator.MarkIncomplete(
+                        incompleteReason ?? "response.incomplete",
+                        incompleteReason is null
+                            ? "OpenAI Responses returned response.incomplete."
+                            : $"OpenAI Responses returned response.incomplete: {incompleteReason}."
+                    );
+                }
                 _terminalEventObserved = true;
                 break;
 
@@ -330,7 +359,213 @@ internal sealed class OpenAIResponsesStreamParser {
             case "reasoning":
                 FinalizeReasoningItem(item, aggregator);
                 break;
+
+            case "message":
+                HandleMessageRefusalContent(
+                    item,
+                    aggregator,
+                    "response.output_item.done message"
+                );
+                break;
         }
+    }
+
+    private void HandleRefusalDelta(
+        JsonObject obj,
+        CompletionAggregator aggregator
+    ) {
+        RefusalContentKey key = GetRefusalContentKey(
+            obj,
+            "response.refusal.delta"
+        );
+        string delta = GetRequiredString(
+            obj,
+            "delta",
+            "response.refusal.delta",
+            allowEmpty: true
+        );
+        if (_activeRefusalContentKey is { } activeKey
+            && activeKey != key) {
+            throw new InvalidDataException(
+                "OpenAI Responses refusal content switched before the active content was finalized."
+            );
+        }
+        RefusalContentState state = GetOrCreateRefusalState(key);
+        if (state.HasFinalWitness) {
+            throw new InvalidDataException(
+                "OpenAI Responses refusal delta arrived after final refusal evidence."
+            );
+        }
+
+        _activeRefusalContentKey ??= key;
+        _refusalObserved = true;
+        if (delta.Length > 0) {
+            state.Text.Append(delta);
+            aggregator.AppendContent(delta);
+        }
+    }
+
+    private void HandleRefusalDone(
+        JsonObject obj,
+        CompletionAggregator aggregator
+    ) {
+        RefusalContentKey key = GetRefusalContentKey(
+            obj,
+            "response.refusal.done"
+        );
+        string refusal = GetRequiredString(
+            obj,
+            "refusal",
+            "response.refusal.done",
+            allowEmpty: true
+        );
+        ReconcileFinalRefusal(key, refusal, aggregator);
+    }
+
+    private void HandleTerminalResponseRefusalFallback(
+        JsonObject envelope,
+        CompletionAggregator aggregator
+    ) {
+        if (envelope["response"] is not JsonObject response
+            || !response.TryGetPropertyValue("output", out JsonNode? outputNode)) {
+            return;
+        }
+        if (outputNode is not JsonArray output) {
+            throw new InvalidDataException(
+                "OpenAI Responses terminal response field 'output' must be an array when present."
+            );
+        }
+
+        foreach (JsonNode? itemNode in output) {
+            if (itemNode is not JsonObject item) {
+                throw new InvalidDataException(
+                    "OpenAI Responses terminal response output entries must be objects."
+                );
+            }
+            string itemType = GetRequiredString(
+                item,
+                "type",
+                "terminal response output item"
+            );
+            if (!string.Equals(itemType, "message", StringComparison.Ordinal)) {
+                continue;
+            }
+            HandleMessageRefusalContent(
+                item,
+                aggregator,
+                "terminal response output message"
+            );
+        }
+    }
+
+    private void HandleMessageRefusalContent(
+        JsonObject item,
+        CompletionAggregator aggregator,
+        string context
+    ) {
+        if (item["content"] is not JsonArray content) {
+            throw new InvalidDataException(
+                $"OpenAI {context} requires array field 'content'."
+            );
+        }
+
+        for (int contentIndex = 0; contentIndex < content.Count; contentIndex++) {
+            if (content[contentIndex] is not JsonObject part) {
+                throw new InvalidDataException(
+                    $"OpenAI {context} content entries must be objects."
+                );
+            }
+            string partType = GetRequiredString(
+                part,
+                "type",
+                $"{context} content part"
+            );
+            if (!string.Equals(partType, "refusal", StringComparison.Ordinal)) {
+                continue;
+            }
+
+            string itemId = GetRequiredString(item, "id", context);
+            string refusal = GetRequiredString(
+                part,
+                "refusal",
+                $"{context} refusal content",
+                allowEmpty: true
+            );
+            ReconcileFinalRefusal(
+                new RefusalContentKey(itemId, contentIndex),
+                refusal,
+                aggregator
+            );
+        }
+    }
+
+    private void ReconcileFinalRefusal(
+        RefusalContentKey key,
+        string finalText,
+        CompletionAggregator aggregator
+    ) {
+        RefusalContentState state = GetOrCreateRefusalState(key);
+        string observedText = state.Text.ToString();
+        if (state.HasFinalWitness) {
+            if (!string.Equals(observedText, finalText, StringComparison.Ordinal)) {
+                throw new InvalidDataException(
+                    "OpenAI Responses refusal final evidence was internally inconsistent."
+                );
+            }
+            _refusalObserved = true;
+            return;
+        }
+
+        if (_activeRefusalContentKey is { } activeKey
+            && activeKey != key) {
+            throw new InvalidDataException(
+                "OpenAI Responses refusal final evidence did not match the active content."
+            );
+        }
+
+        if (!finalText.StartsWith(observedText, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "OpenAI Responses refusal final evidence did not extend the streamed prefix."
+            );
+        }
+
+        string suffix = finalText[observedText.Length..];
+        if (suffix.Length > 0) {
+            state.Text.Append(suffix);
+            aggregator.AppendContent(suffix);
+        }
+        state.HasFinalWitness = true;
+        if (_activeRefusalContentKey == key) {
+            _activeRefusalContentKey = null;
+        }
+        _refusalObserved = true;
+    }
+
+    private RefusalContentState GetOrCreateRefusalState(
+        RefusalContentKey key
+    ) {
+        if (!_refusalContents.TryGetValue(key, out RefusalContentState? state)) {
+            state = new RefusalContentState();
+            _refusalContents.Add(key, state);
+        }
+        return state;
+    }
+
+    private static RefusalContentKey GetRefusalContentKey(
+        JsonObject obj,
+        string context
+    ) => new(
+        GetRequiredString(obj, "item_id", context),
+        GetRequiredNonNegativeInt(obj, "content_index", context)
+    );
+
+    private void MarkRefusalIncomplete(CompletionAggregator aggregator) {
+        aggregator.MarkIncomplete(
+            "response.refusal",
+            _sanitizeProviderErrors
+                ? "ChatGPT Codex returned a typed refusal."
+                : "OpenAI Responses returned a typed refusal."
+        );
     }
 
     private void HandleReasoningSummaryDelta(
@@ -533,6 +768,22 @@ internal sealed class OpenAIResponsesStreamParser {
         );
     }
 
+    private static int GetRequiredNonNegativeInt(
+        JsonObject obj,
+        string propertyName,
+        string context
+    ) {
+        if (obj[propertyName] is JsonValue value
+            && value.TryGetValue<int>(out int result)
+            && result >= 0) {
+            return result;
+        }
+
+        throw new InvalidDataException(
+            $"OpenAI {context} requires non-negative integer field '{propertyName}'."
+        );
+    }
+
     private static long? GetOptionalNonNegativeLong(
         JsonObject obj,
         string propertyName,
@@ -581,5 +832,15 @@ internal sealed class OpenAIResponsesStreamParser {
             ArgumentsBuilder.Clear();
             ArgumentsBuilder.Append(arguments);
         }
+    }
+
+    private readonly record struct RefusalContentKey(
+        string ItemId,
+        int ContentIndex
+    );
+
+    private sealed class RefusalContentState {
+        public StringBuilder Text { get; } = new();
+        public bool HasFinalWitness { get; set; }
     }
 }

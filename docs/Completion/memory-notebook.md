@@ -134,6 +134,22 @@ active block绝不被salvage。
 
 strict 路径默认保留所有 `delta.content`；`SgLangCompatible` 与 `QwenSgLang` 会忽略“工具调用已开始后夹带的纯空白 content noise”。
 
+`OpenAIResponsesStreamParser` 对typed refusal采用单独的success-eligibility边界：
+
+| typed evidence | 动作 | terminal语义 |
+|---|---|---|
+| `response.refusal.delta/done` | 按`(item_id, content_index)`累积，final只补streamed prefix的后缀 | 非terminal |
+| `response.output_item.done` message refusal content | 作为final witness去重/核对 | 非response terminal |
+| `response.completed/incomplete.response.output` message refusal | 作为缺失增量时的final fallback | 仍由外层response event提供terminal evidence |
+| `response.completed` / `response.incomplete`且已有refusal witness | refusal正文保留为transient `Text`，metadata使用固定code-owned文案 | `Incomplete(response.refusal)` |
+| `response.failed` / `error` | 覆盖既有refusal evidence | `Failed` |
+
+parser绝不从普通output text猜refusal。同一时刻只允许一个未finalized refusal key，切换key、final witness与active key
+冲突、final正文冲突或final后delta都会fail closed，异常不带正文。已知message/output容器必须是array，entries必须是
+带string `type`的object；合法的unknown string type仍forward-compatible。refusal done后若terminal前EOF，仍抛
+`CompletionStreamInterruptedException`。因此SessionJournal只会沿既有known non-success路径落
+`CompletionAttemptFailed`，不会把refusal正文持久化为成功Action。
+
 `GeminiStreamParser` 则直接消费 `streamGenerateContent?alt=sse` 的 `data: {GenerateContentResponse}`：
 
 | 字段 | 动作 | 喂给聚合器的结果 |

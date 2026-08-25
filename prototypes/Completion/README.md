@@ -25,9 +25,20 @@
 | Provider surface | 权威成功/不完整terminal | 权威provider失败 | 非terminal或特殊规则 |
 |---|---|---|---|
 | OpenAI Chat Completions | 单一choice的非空`finish_reason`；`stop`/`tool_calls`为Completed，其他值为Incomplete | 顶层`error` | `[DONE]`只是传输哨兵；若它先于`finish_reason`到达，结果仍不确定。当前明确拒绝`n > 1`与多choice stream |
-| OpenAI Responses | `response.completed`、`response.incomplete` | `response.failed`、`error` | `event:`与JSON `type`必须一致；`[DONE]`不能替代Responses terminal event |
+| OpenAI Responses | `response.completed`、`response.incomplete`；若已观察到typed refusal，两者均收口为`Incomplete(response.refusal)` | `response.failed`、`error` | `response.refusal.delta/done`与message refusal content不是terminal；`event:`与JSON `type`必须一致；`[DONE]`不能替代Responses terminal event |
 | Anthropic Messages | 首选`message_stop`，并要求`message_start -> content blocks -> message_delta(stop_reason)`；兼容缺尾帧relay时，blocks全关且已有非空`stop_reason`后的无pending-frame clean EOF也是降级terminal evidence | `error` | `ping`与合法unknown named event只表示收到frame，不代表成功或失败；Anthropic没有`[DONE]`；read failure/cancellation/protocol error绝不走clean-EOF兼容 |
 | Gemini `streamGenerateContent` | `candidate.finishReason`；`STOP`为Completed，其他值为Incomplete；无candidate时`promptFeedback.blockReason`为Incomplete | 顶层`error` envelope | Gemini没有文档化的`[DONE]`、named terminal或heartbeat；`responseId`只用于关联，不是resume cursor |
+
+OpenAI Responses refusal 只按typed wire evidence识别，不从普通正文猜测。`response.refusal.delta/done`、
+`response.output_item.done` 的 message refusal content，以及terminal `response.output` fallback 使用
+`(item_id, content_index)`协调；streamed prefix只补final suffix，重复final不重复输出，冲突或final后delta抛protocol
+exception且不在异常中带refusal正文。同一时刻只允许一个未finalized key；message/output已知容器若缺失array shape、
+entry不是object或缺少string `type`也fail closed，而合法unknown string type仍forward-compatible。正文可以作为
+transient `ActionMessage.Text` / observer delta返回，但不会进入
+`Errors`、termination reason/detail，也不会被SessionJournal持久化为成功`AgentActionProduced`。只有最终权威response
+terminal到达后才产生non-success result；terminal前EOF、transport failure或cancellation仍是outcome uncertain，
+`response.failed` / `error`仍覆盖为`Failed`。没有typed refusal witness时，既有`response.incomplete`的
+`content_filter`等reason保持原语义；refusal始终使用独立`response.refusal`，不复用`content_filter`名称。
 
 ## 规格依据
 

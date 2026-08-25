@@ -435,15 +435,27 @@ provider-native replay 或 accepted terminal 的语义变化需要 bump `ApiSpec
 | unsafe mode/owner/symlink | `CredentialStorageUnsafe` |
 | token expired | `AuthOwnerRefreshRequired`，network 前失败 |
 | account mid-process changed | `AuthAccountChanged`，禁止自动切换 |
-| HTTP 401 | singleflight 重新读取一次；仅当 generation 已变化时，以 byte-identical body 最多重试一次；否则 `CodexReauthenticationRequired` |
-| HTTP 403 | `CodexAccessDenied`，不重试，也不声称“封号” |
-| HTTP 429 | `CodexRateLimited`，只保留 allowlisted retry/reset metadata，不立即重试、不换账号 |
+| HTTP 401 | singleflight 重新读取一次；仅当 generation 已变化时，以 byte-identical body 最多重试一次；unchanged generation 或第二个 401 是 typed pre-stream known rejection |
+| HTTP 403 | typed pre-stream known rejection，不重试，也不声称“封号” |
+| HTTP 429 | typed pre-stream known rejection，只保留 bounded safe diagnostics，不立即重试、不换账号 |
+| HTTP 400 | 当前 private backend 的 live envelope 只有 free-form `detail`；不解析、不升级为 known rejection |
 | HTTP 3xx | `UnexpectedBackendRedirect`，不 follow |
-| transport/5xx/terminal 前断流 | 沿用 outcome-uncertain/recovery 边界，不透明重试 |
+| 408/409/其它未验证 4xx、transport/5xx、2xx non-SSE、SSE malformed/EOF/terminal 前断流 | 沿用 outcome-uncertain/recovery 边界，不透明重试 |
 
 first slice 把“HTTP 401 且尚未收到任何 SSE payload”视为当前 pinned adapter 下的 pre-stream authentication rejection，
 因此仅在 credential generation 确实变化后允许一次 byte-identical retry。这是未文档化 backend 的受控假设，不是公开
 协议证明；任何已收到 SSE payload 的调用都绝不重试，第二个 401 也立即 terminal。
+
+exhausted 401、403 与 429 在 request callback 尚未把 response 交给 SSE parser、observer 零 delta 的位置，翻译为
+provider-neutral `CompletionRequestRejectedException`。它只携带 `CompletionTerminationKind.Failed`、稳定 provider reason
+以及 caller 构造的 printable-ASCII bounded diagnostics，不保留 `InnerException`。SessionJournal 可以据此把现有 Started
+attempt 精确提交为既有 `CompletionAttemptFailed`；若 Failed append 自身失败则仍保留 Started uncertain。该翻译没有改变
+Codex request/replay/SSE adapter wire，也没有新增 SessionJournal event/body schema，因此不额外 bump `ApiSpecId`。
+
+2026-08-26 的真实 invalid-model probe 表明 HTTP 400 body root exact keys 只有 `detail`，没有 `error.code/type/param`。
+`detail` 是 provider free-form message，既不能穿过 redaction boundary，也不足以构成稳定 allowlist，所以当前所有 400
+继续抛 adapter exception，由 SessionJournal fail closed 为 Started uncertain。未来只有新的 live 校准同时给出严格、安全、
+稳定的 machine envelope，并由离线 tests 锁住 exact tuple 后，才可窄化某一类 400；不得把“全部 400”视为 known rejection。
 
 non-2xx exception 不附 raw response body或 header dump。client 最多读取 16 KiB 的 strict UTF-8 JSON，并且只从
 exact `error` object 保留经过 ASCII token allowlist 与字段长度上限验证的 `code`、`type`、`param`；recognized response

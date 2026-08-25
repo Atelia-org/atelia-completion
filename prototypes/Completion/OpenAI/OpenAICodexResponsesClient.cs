@@ -24,6 +24,12 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
     private const int MaximumErrorTokenCharacters = 64;
     private const int MaximumErrorParameterCharacters = 128;
     private const int MaximumRequestIdCharacters = 128;
+    private const string AuthenticationRejectedReason =
+        "openai.codex.authentication-rejected";
+    private const string AccessDeniedReason =
+        "openai.codex.access-denied";
+    private const string RateLimitedReason =
+        "openai.codex.rate-limited";
 
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -188,11 +194,15 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
                         cancellationToken
                     ).ConfigureAwait(false);
                 if (reloaded is null) {
-                    throw Failure(
-                        OpenAICodexResponsesFailureReason
-                            .CodexReauthenticationRequired,
-                        "ChatGPT Codex rejected the current access-token snapshot. Run Codex login/refresh and retry.",
-                        HttpStatusCode.Unauthorized
+                    throw RequestRejected(
+                        HttpStatusCode.Unauthorized,
+                        AuthenticationRejectedReason,
+                        new BackendFailureDiagnostics(
+                            null,
+                            null,
+                            null,
+                            null
+                        )
                     );
                 }
                 response = await SendAttemptAsync(
@@ -356,7 +366,7 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         );
     }
 
-    private static async Task<OpenAICodexResponsesException>
+    private static async Task<Exception>
         ClassifyNonSuccessAsync(
             HttpResponseMessage response,
             CancellationToken cancellationToken
@@ -378,32 +388,25 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
             );
         }
         if (status is HttpStatusCode.Unauthorized) {
-            return Failure(
-                OpenAICodexResponsesFailureReason
-                    .CodexReauthenticationRequired,
-                "ChatGPT Codex rejected the reloaded access-token snapshot."
-                    + diagnosticSuffix,
+            return RequestRejected(
                 status,
-                diagnostics: diagnostics
+                AuthenticationRejectedReason,
+                diagnostics
             );
         }
         if (status is HttpStatusCode.Forbidden) {
-            return Failure(
-                OpenAICodexResponsesFailureReason.CodexAccessDenied,
-                "ChatGPT Codex denied this request."
-                    + diagnosticSuffix,
+            return RequestRejected(
                 status,
-                diagnostics: diagnostics
+                AccessDeniedReason,
+                diagnostics
             );
         }
         if ((int)status == 429) {
-            return Failure(
-                OpenAICodexResponsesFailureReason.CodexRateLimited,
-                "ChatGPT Codex rate-limited this client."
-                    + diagnosticSuffix,
+            return RequestRejected(
                 status,
-                ParseRetryAfter(response.Headers.RetryAfter),
-                diagnostics
+                RateLimitedReason,
+                diagnostics,
+                ParseRetryAfter(response.Headers.RetryAfter)
             );
         }
         return Failure(
@@ -624,6 +627,45 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         diagnostics?.Parameter,
         diagnostics?.RequestId
     );
+
+    /// <summary>
+    /// Translates only response statuses that the pinned direct backend has
+    /// authoritatively completed as a pre-stream rejection. This method is
+    /// called before the protocol parser can emit an observer delta. In
+    /// particular, HTTP 400 is intentionally excluded: the calibrated private
+    /// backend currently returns only an unsafe free-form <c>detail</c> field,
+    /// which is insufficient to prove a stable rejection category.
+    /// </summary>
+    private static CompletionRequestRejectedException RequestRejected(
+        HttpStatusCode status,
+        string providerReason,
+        BackendFailureDiagnostics diagnostics,
+        TimeSpan? retryAfter = null
+    ) {
+        var errors = new List<string>(6) {
+            $"http-status={(int)status}"
+        };
+        Add("code", diagnostics.Code);
+        Add("type", diagnostics.Type);
+        Add("param", diagnostics.Parameter);
+        Add("request-id", diagnostics.RequestId);
+        if (retryAfter is { } delay) {
+            errors.Add(
+                "retry-after-seconds="
+                + delay.TotalSeconds.ToString(CultureInfo.InvariantCulture)
+            );
+        }
+        string detail =
+            $"ChatGPT Codex rejected the request before streaming with HTTP status {(int)status}.";
+        return new CompletionRequestRejectedException(
+            CompletionTermination.Failed(providerReason, detail),
+            errors
+        );
+
+        void Add(string name, string? value) {
+            if (value is not null) { errors.Add($"{name}={value}"); }
+        }
+    }
 
     internal static HttpMessageHandler CreateProductionHandler() =>
         new HttpClientHandler {

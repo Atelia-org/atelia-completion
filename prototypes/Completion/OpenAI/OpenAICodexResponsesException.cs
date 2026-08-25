@@ -3,9 +3,6 @@ using System.Net;
 namespace Atelia.Completion.OpenAI;
 
 public enum OpenAICodexResponsesFailureReason {
-    CodexReauthenticationRequired,
-    CodexAccessDenied,
-    CodexRateLimited,
     UnexpectedBackendRedirect,
     TransportOutcomeUnknown,
     BackendFailure,

@@ -123,19 +123,28 @@ public sealed class OpenAICodexResponsesClientTests {
             handler,
             credential.AccountFingerprint
         );
+        var observer = new CompletionStreamObserver();
+        var observerEventCount = 0;
+        observer.ReceivedTextDelta += _ => observerEventCount++;
+        observer.ReceivedReasoningDelta += _ => observerEventCount++;
+        observer.ReceivedThinkingBegin += () => observerEventCount++;
+        observer.ReceivedThinkingEnd += () => observerEventCount++;
+        observer.ReceivedToolCall += _ => observerEventCount++;
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
+            CompletionRequestRejectedException
         >(() => client.StreamCompletionAsync(
             Request(),
-            observer: null,
+            observer,
             CancellationToken.None
         ));
 
         Assert.Equal(
-            OpenAICodexResponsesFailureReason.CodexReauthenticationRequired,
-            exception.Reason
+            "openai.codex.authentication-rejected",
+            exception.Termination.ProviderReason
         );
+        Assert.Equal(["http-status=401"], exception.Errors);
+        Assert.Equal(0, observerEventCount);
         Assert.Equal(2, provider.CallCount);
         Assert.Single(handler.Requests);
     }
@@ -155,8 +164,8 @@ public sealed class OpenAICodexResponsesClientTests {
             first.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
+            CompletionRequestRejectedException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
@@ -164,16 +173,19 @@ public sealed class OpenAICodexResponsesClientTests {
         ));
 
         Assert.Equal(
-            OpenAICodexResponsesFailureReason.CodexReauthenticationRequired,
-            exception.Reason
+            "openai.codex.authentication-rejected",
+            exception.Termination.ProviderReason
         );
+        Assert.Equal(["http-status=401"], exception.Errors);
         Assert.Equal(2, provider.CallCount);
         Assert.Equal(2, handler.Requests.Count);
     }
 
     [Theory]
-    [InlineData(403, OpenAICodexResponsesFailureReason.CodexAccessDenied)]
-    [InlineData(429, OpenAICodexResponsesFailureReason.CodexRateLimited)]
+    [InlineData(400, OpenAICodexResponsesFailureReason.BackendFailure)]
+    [InlineData(408, OpenAICodexResponsesFailureReason.BackendFailure)]
+    [InlineData(409, OpenAICodexResponsesFailureReason.BackendFailure)]
+    [InlineData(422, OpenAICodexResponsesFailureReason.BackendFailure)]
     [InlineData(500, OpenAICodexResponsesFailureReason.BackendFailure)]
     [InlineData(301, OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect)]
     [InlineData(302, OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect)]
@@ -211,6 +223,86 @@ public sealed class OpenAICodexResponsesClientTests {
             exception.ToString(),
             StringComparison.Ordinal
         );
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(403, "openai.codex.access-denied")]
+    [InlineData(429, "openai.codex.rate-limited")]
+    public async Task StreamCompletionAsync_AuthoritativePreStreamStatusIsTypedKnownRejection(
+        int statusCode,
+        string expectedProviderReason
+    ) {
+        CodexSubscriptionCredential credential = Credential("token", "account", 1);
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => {
+            var response = new HttpResponseMessage(
+                (HttpStatusCode)statusCode
+            ) {
+                Content = new StringContent(
+                    "{\"error\":{\"message\":\"PROVIDER_MESSAGE_CANARY\","
+                    + "\"code\":\"safe_code\","
+                    + "\"type\":\"safe_type\","
+                    + "\"param\":\"safe[param]\"}}",
+                    Encoding.UTF8,
+                    "application/json"
+                )
+            };
+            response.Headers.TryAddWithoutValidation(
+                "x-request-id",
+                "req_safe-123"
+            );
+            if (statusCode == 429) {
+                response.Headers.RetryAfter = new(
+                    TimeSpan.FromSeconds(5)
+                );
+            }
+            return response;
+        });
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+        var observer = new CompletionStreamObserver();
+        var observerEventCount = 0;
+        observer.ReceivedTextDelta += _ => observerEventCount++;
+        observer.ReceivedReasoningDelta += _ => observerEventCount++;
+        observer.ReceivedThinkingBegin += () => observerEventCount++;
+        observer.ReceivedThinkingEnd += () => observerEventCount++;
+        observer.ReceivedToolCall += _ => observerEventCount++;
+
+        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
+            CompletionRequestRejectedException
+        >(() => client.StreamCompletionAsync(
+            Request(),
+            observer,
+            CancellationToken.None
+        ));
+
+        Assert.Equal(
+            CompletionTerminationKind.Failed,
+            exception.Termination.Kind
+        );
+        Assert.Equal(
+            expectedProviderReason,
+            exception.Termination.ProviderReason
+        );
+        Assert.Contains($"http-status={statusCode}", exception.Errors);
+        Assert.Contains("code=safe_code", exception.Errors);
+        Assert.Contains("type=safe_type", exception.Errors);
+        Assert.Contains("param=safe[param]", exception.Errors);
+        Assert.Contains("request-id=req_safe-123", exception.Errors);
+        if (statusCode == 429) {
+            Assert.Contains("retry-after-seconds=5", exception.Errors);
+        }
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain(
+            "PROVIDER_MESSAGE_CANARY",
+            exception.ToString(),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(0, observerEventCount);
         Assert.Single(handler.Requests);
     }
 
@@ -288,6 +380,52 @@ public sealed class OpenAICodexResponsesClientTests {
             rawSink.GetSnapshot()
         );
         Assert.Equal(rawBody, exchange.ResponseText);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_DetailOnlyBadRequestRemainsOutcomeUnknown() {
+        CodexSubscriptionCredential credential = Credential(
+            "token",
+            "account",
+            1
+        );
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => new HttpResponseMessage(
+            HttpStatusCode.BadRequest
+        ) {
+            Content = new StringContent(
+                "{\"detail\":\"PROVIDER_DETAIL_CANARY\"}",
+                Encoding.UTF8,
+                "application/json"
+            )
+        });
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+
+        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
+            OpenAICodexResponsesException
+        >(() => client.StreamCompletionAsync(
+            Request(),
+            observer: null,
+            CancellationToken.None
+        ));
+
+        Assert.Equal(
+            OpenAICodexResponsesFailureReason.BackendFailure,
+            exception.Reason
+        );
+        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Null(exception.ProviderErrorCode);
+        Assert.Null(exception.ProviderErrorType);
+        Assert.Null(exception.ProviderErrorParameter);
+        Assert.DoesNotContain(
+            "PROVIDER_DETAIL_CANARY",
+            exception.ToString(),
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]

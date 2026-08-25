@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text;
 using Atelia.Completion;
+using Atelia.Diagnostics;
 
 namespace Atelia.Completion.Transport;
 
@@ -116,9 +117,7 @@ public sealed class CompletionHttpClientBuilder {
                 ErrorText: null
             );
 
-            foreach (var sink in _sinks) {
-                sink.OnExchange(exchange);
-            }
+            PublishBestEffort(exchange);
         }
 
         private void PublishFailure(HttpRequestMessage request, string? requestText, Exception exception) {
@@ -131,8 +130,36 @@ public sealed class CompletionHttpClientBuilder {
                 ErrorText: CompletionHttpRequestUtility.FormatTransportFailureSummary(exception)
             );
 
+            PublishBestEffort(exchange);
+        }
+
+        private void PublishBestEffort(CompletionHttpExchange exchange) {
             foreach (var sink in _sinks) {
-                sink.OnExchange(exchange);
+                try {
+                    sink.OnExchange(exchange);
+                }
+                catch (Exception) {
+                    // A sink may fail at response EOF/Dispose, after the
+                    // provider outcome is already known. Never let a raw-log
+                    // path, quota, or sink cancellation rewrite that outcome.
+                    ReportSinkFailureBestEffort();
+                }
+            }
+        }
+
+        private static void ReportSinkFailureBestEffort() {
+            try {
+                // Deliberately omit the exception, sink type, path, request,
+                // and response. Raw-capture failures may contain secrets.
+                DebugUtil.Warning(
+                    "Completion.HttpCapture",
+                    "Completion HTTP exchange sink failed; provider outcome is preserved.",
+                    eventKind: DebugEventKind.Failure
+                );
+            }
+            catch {
+                // Diagnostics about a best-effort diagnostic must also stay
+                // outside the provider/transport outcome.
             }
         }
     }

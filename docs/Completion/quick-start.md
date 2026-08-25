@@ -196,6 +196,10 @@ Console.WriteLine(result.Message.GetFlattenedText());
 
 - provider 仍然只看普通 `HttpClient`
 - golden log capture 不会侵入 provider 代码
+- JSONL file sink 只支持 Linux x64/arm64，其他平台 fail closed；`O_NOFOLLOW` 只保护最后一个 path component，因此父目录必须由 operator 控制
+- JSONL 包含完整 prompt 与 provider response，应写入受控的短期诊断路径并在用后删除
+- capture sink 是 best-effort 诊断旁路；sink 失败只产生不含路径、异常文本或 provider data 的 code-owned warning，不会覆盖已成功的 response、原始 transport exception 或 caller cancellation
+- 因此 golden log 可能缺失，不能当作权威持久化、审计记录或远程调用成功回执
 - 后续想切到 replay，只需要替换 transport factory 的装配方式
 
 ### 2.2 用 builder 从 JSONL golden log 直接 replay

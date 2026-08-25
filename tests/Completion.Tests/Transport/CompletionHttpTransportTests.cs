@@ -86,6 +86,88 @@ public sealed class CompletionHttpTransportTests {
     }
 
     [Fact]
+    public async Task CapturePipeline_ResponseEof_IgnoresThrowingSinkAndContinuesOtherSinks() {
+        var captureSink = new InMemoryCompletionHttpExchangeSink();
+        using var httpClient = new CompletionHttpClientBuilder()
+            .UsePrimaryHandler(
+                new StubHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(
+                            "provider-response",
+                            Encoding.UTF8,
+                            "text/plain"
+                        )
+                    }
+                )
+            )
+            .AddExchangeSink(
+                new ThrowingCompletionHttpExchangeSink(
+                    new OperationCanceledException("sink-only cancellation")
+                )
+            )
+            .AddExchangeSink(captureSink)
+            .Build();
+        httpClient.BaseAddress = new Uri("http://localhost:8000/");
+
+        using HttpResponseMessage response = await httpClient.SendAsync(
+            new HttpRequestMessage(HttpMethod.Get, "response"),
+            HttpCompletionOption.ResponseHeadersRead,
+            CancellationToken.None
+        );
+        string responseText = await response.Content.ReadAsStringAsync(
+            CancellationToken.None
+        );
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("provider-response", responseText);
+        CompletionHttpExchange exchange = Assert.Single(
+            captureSink.GetSnapshot()
+        );
+        Assert.Equal(200, exchange.StatusCode);
+        Assert.Equal("provider-response", exchange.ResponseText);
+    }
+
+    [Fact]
+    public async Task CapturePipeline_ResponseDispose_IgnoresThrowingSink() {
+        var captureSink = new InMemoryCompletionHttpExchangeSink();
+        using var httpClient = new CompletionHttpClientBuilder()
+            .UsePrimaryHandler(
+                new StubHttpMessageHandler(
+                    new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(
+                            "unread-provider-response",
+                            Encoding.UTF8,
+                            "text/plain"
+                        )
+                    }
+                )
+            )
+            .AddExchangeSink(
+                new ThrowingCompletionHttpExchangeSink(
+                    new InvalidOperationException("sink-only failure")
+                )
+            )
+            .AddExchangeSink(captureSink)
+            .Build();
+        httpClient.BaseAddress = new Uri("http://localhost:8000/");
+
+        HttpResponseMessage response = await httpClient.SendAsync(
+            new HttpRequestMessage(HttpMethod.Get, "response"),
+            HttpCompletionOption.ResponseHeadersRead,
+            CancellationToken.None
+        );
+
+        Exception? disposeFailure = Record.Exception(response.Dispose);
+
+        Assert.Null(disposeFailure);
+        CompletionHttpExchange exchange = Assert.Single(
+            captureSink.GetSnapshot()
+        );
+        Assert.Equal(200, exchange.StatusCode);
+        Assert.Equal(string.Empty, exchange.ResponseText);
+    }
+
+    [Fact]
     public async Task ReplayPipeline_CanReplaceRemoteServer_ForAnthropicClient() {
         var captureSink = new InMemoryCompletionHttpExchangeSink();
         using var httpClient = new CompletionHttpClientBuilder()
@@ -646,6 +728,42 @@ public sealed class CompletionHttpTransportTests {
     }
 
     [Fact]
+    public async Task CapturePipeline_TransportFailure_IgnoresThrowingSinkAndPreservesOriginalException() {
+        var originalFailure = new HttpRequestException(
+            "original transport failure"
+        );
+        var captureSink = new InMemoryCompletionHttpExchangeSink();
+        using var httpClient = new CompletionHttpClientBuilder()
+            .UsePrimaryHandler(new ThrowingHttpMessageHandler(originalFailure))
+            .AddExchangeSink(
+                new ThrowingCompletionHttpExchangeSink(
+                    new OperationCanceledException("sink-only cancellation")
+                )
+            )
+            .AddExchangeSink(captureSink)
+            .Build();
+        httpClient.BaseAddress = new Uri("http://localhost:8000/");
+
+        HttpRequestException observedFailure = await Assert.ThrowsAsync<
+            HttpRequestException
+        >(() => httpClient.SendAsync(
+            new HttpRequestMessage(HttpMethod.Get, "failure"),
+            CancellationToken.None
+        ));
+
+        Assert.Same(originalFailure, observedFailure);
+        CompletionHttpExchange exchange = Assert.Single(
+            captureSink.GetSnapshot()
+        );
+        Assert.Null(exchange.StatusCode);
+        Assert.Null(exchange.ResponseText);
+        Assert.Equal(
+            "System.Net.Http.HttpRequestException: original transport failure",
+            exchange.ErrorText
+        );
+    }
+
+    [Fact]
     public void JsonLinesReplayResponder_ReplaysRecordedTransportFailureAsHttpRequestException() {
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "transport-failure.jsonl");
@@ -923,6 +1041,14 @@ public sealed class CompletionHttpTransportTests {
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
             return Task.FromException<HttpResponseMessage>(_exception);
+        }
+    }
+
+    private sealed class ThrowingCompletionHttpExchangeSink(
+        Exception exception
+    ) : ICompletionHttpExchangeSink {
+        public void OnExchange(CompletionHttpExchange exchange) {
+            throw exception;
         }
     }
 

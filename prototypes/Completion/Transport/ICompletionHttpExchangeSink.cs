@@ -5,6 +5,13 @@ namespace Atelia.Completion.Transport;
 /// <summary>
 /// 消费捕获到的 HTTP 文本交换。
 /// </summary>
+/// <remarks>
+/// <see cref="CompletionHttpClientBuilder"/> 将 sink 视为 best-effort 诊断旁路：
+/// 单个 sink 抛出的任何 <see cref="Exception"/> 都会被隔离，不会改变
+/// provider response、transport failure 或 caller cancellation 的结果。因此 sink
+/// 不得作为权威持久化或成功回执；诊断记录允许缺失。直接调用
+/// <see cref="OnExchange"/> 时仍会观察到具体 sink 自身的异常。
+/// </remarks>
 public interface ICompletionHttpExchangeSink {
     void OnExchange(CompletionHttpExchange exchange);
 }

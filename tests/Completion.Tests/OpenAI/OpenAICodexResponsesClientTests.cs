@@ -83,7 +83,7 @@ public sealed class OpenAICodexResponsesClientTests {
     [Theory]
     [InlineData("recap_grid.control")]
     [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
-    public async Task StreamCompletionAsync_InvalidHistoricalToolCallNameFailsBeforeCredentialAndNetwork(
+    public async Task StreamCompletionAsync_InvalidHistoricalToolCallNameIsKnownNoDispatchRejection(
         string toolName
     ) {
         CodexSubscriptionCredential credential = Credential(
@@ -116,15 +116,80 @@ public sealed class OpenAICodexResponsesClientTests {
                 ]
             )
         ]);
+        var observer = new CompletionStreamObserver();
+        var observerEventCount = 0;
+        observer.ReceivedTextDelta += _ => observerEventCount++;
+        observer.ReceivedReasoningDelta += _ => observerEventCount++;
+        observer.ReceivedThinkingBegin += () => observerEventCount++;
+        observer.ReceivedThinkingEnd += () => observerEventCount++;
+        observer.ReceivedToolCall += _ => observerEventCount++;
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
+            CompletionRequestRejectedException
+        >(() =>
             client.StreamCompletionAsync(
                 request,
-                observer: null,
+                observer,
                 CancellationToken.None
             )
         );
 
+        AssertInvalidFunctionNameRejection(exception);
+        Assert.Equal(0, observerEventCount);
+        Assert.Equal(0, provider.CallCount);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("recap_grid.control")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public async Task StreamCompletionAsync_InvalidCurrentToolNameIsKnownNoDispatchRejection(
+        string toolName
+    ) {
+        CodexSubscriptionCredential credential = Credential(
+            "token",
+            "account",
+            1
+        );
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => CompletedResponse("unused"));
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+        var invalidTool = new ToolDefinition(
+            toolName,
+            "Invalid Responses function name.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "gpt-test",
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([invalidTool]),
+                [new ObservationMessage("Use the tool.")]
+            ),
+            tailMessages: []
+        );
+        var observer = new CompletionStreamObserver();
+        var observerEventCount = 0;
+        observer.ReceivedTextDelta += _ => observerEventCount++;
+        observer.ReceivedReasoningDelta += _ => observerEventCount++;
+        observer.ReceivedThinkingBegin += () => observerEventCount++;
+        observer.ReceivedThinkingEnd += () => observerEventCount++;
+        observer.ReceivedToolCall += _ => observerEventCount++;
+
+        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
+            CompletionRequestRejectedException
+        >(() => client.StreamCompletionAsync(
+            request,
+            observer,
+            CancellationToken.None
+        ));
+
+        AssertInvalidFunctionNameRejection(exception);
+        Assert.Equal(0, observerEventCount);
         Assert.Equal(0, provider.CallCount);
         Assert.Empty(handler.Requests);
     }
@@ -1155,6 +1220,22 @@ public sealed class OpenAICodexResponsesClientTests {
         tailMessages: [],
         maxTokens: maxTokens
     );
+
+    private static void AssertInvalidFunctionNameRejection(
+        CompletionRequestRejectedException exception
+    ) {
+        Assert.Equal(
+            "openai.responses.invalid-function-name",
+            exception.Termination.ProviderReason
+        );
+        Assert.Contains(
+            "1-64 ASCII letters",
+            exception.Termination.Detail ?? string.Empty,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(["adapter-validation=function-name"], exception.Errors);
+        Assert.Null(exception.InnerException);
+    }
 
     private static HttpResponseMessage CompletedResponse(string text) =>
         EventStreamResponse($$"""

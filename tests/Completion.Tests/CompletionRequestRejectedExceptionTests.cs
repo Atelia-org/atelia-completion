@@ -27,6 +27,10 @@ public sealed class CompletionRequestRejectedExceptionTests {
             ["http-status=403", "request-id=req_safe-123"],
             exception.Errors
         );
+        Assert.Equal(
+            "The completion request was authoritatively rejected without a possible completion outcome.",
+            exception.Message
+        );
         Assert.Null(exception.InnerException);
     }
 

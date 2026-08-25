@@ -104,15 +104,20 @@ public sealed class OpenAIResponsesMessageConverterTests {
             tailMessages: []
         );
 
-        InvalidOperationException exception = Assert.Throws<
-            InvalidOperationException
+        CompletionRequestRejectedException exception = Assert.Throws<
+            CompletionRequestRejectedException
         >(() => OpenAIResponsesMessageConverter.ConvertToApiRequest(request));
 
+        Assert.Equal(
+            "openai.responses.invalid-function-name",
+            exception.Termination.ProviderReason
+        );
         Assert.Contains(
-            "letters, digits, underscores, or hyphens",
-            exception.Message,
+            "1-64 ASCII letters",
+            exception.Termination.Detail ?? string.Empty,
             StringComparison.Ordinal
         );
+        Assert.Equal(["adapter-validation=function-name"], exception.Errors);
     }
 
     [Fact]

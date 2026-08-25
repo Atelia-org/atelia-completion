@@ -401,10 +401,16 @@ internal static class OpenAIResponsesMessageConverter {
             || name.Any(static character =>
                 !char.IsAsciiLetterOrDigit(character)
                 && character is not '_' and not '-')) {
-            throw new InvalidOperationException(
-                "OpenAI Responses function names must contain only ASCII "
-                + "letters, digits, underscores, or hyphens and be at most "
-                + "64 characters."
+            // This exact validation is deterministic and runs before the
+            // protocol core asks the client callback for credentials or sends
+            // any bytes. Do not include the rejected name: it is caller input
+            // and this typed rejection may be persisted by SessionJournal.
+            throw new CompletionRequestRejectedException(
+                CompletionTermination.Failed(
+                    "openai.responses.invalid-function-name",
+                    "OpenAI Responses function names must use 1-64 ASCII letters, digits, underscores, or hyphens; the adapter rejected the request before dispatch."
+                ),
+                ["adapter-validation=function-name"]
             );
         }
     }

@@ -435,6 +435,7 @@ provider-native replay 或 accepted terminal 的语义变化需要 bump `ApiSpec
 | unsafe mode/owner/symlink | `CredentialStorageUnsafe` |
 | token expired | `AuthOwnerRefreshRequired`，network 前失败 |
 | account mid-process changed | `AuthAccountChanged`，禁止自动切换 |
+| current declaration / historical tool call 的 function name 不满足 Responses profile | converter 在 credential/network 前抛 typed local no-dispatch rejection；只分类这一 exact validator |
 | HTTP 401 | singleflight 重新读取一次；仅当 generation 已变化时，以 byte-identical body 最多重试一次；unchanged generation 或第二个 401 是 typed pre-stream known rejection |
 | HTTP 403 | typed pre-stream known rejection，不重试，也不声称“封号” |
 | HTTP 429 | typed pre-stream known rejection；durable payload 只保留 adapter-owned status/reason，不复制 `Retry-After` 或 provider metadata；不立即重试、不换账号 |
@@ -446,8 +447,15 @@ first slice 把“HTTP 401 且尚未收到任何 SSE payload”视为当前 pinn
 因此仅在 credential generation 确实变化后允许一次 byte-identical retry。这是未文档化 backend 的受控假设，不是公开
 协议证明；任何已收到 SSE payload 的调用都绝不重试，第二个 401 也立即 terminal。
 
-exhausted 401、403 与 429 在 request callback 尚未把 response 交给 SSE parser、observer 零 delta 的位置，翻译为
-provider-neutral `CompletionRequestRejectedException`。它只携带 `CompletionTerminationKind.Failed`、稳定 provider reason
+Responses function-name validator 在 protocol core 请求 credential 或执行 HTTP callback 前运行；current tool declaration 与
+historical `ActionBlock.ToolCall` 的 dotted、超长或其它 profile-invalid name 会抛 provider-neutral
+`CompletionRequestRejectedException`，携带 code-owned `openai.responses.invalid-function-name` 与
+`adapter-validation=function-name`，不复制 rejected name。这个 typed local rejection 证明 request 未 dispatch、observer 零
+delta；其它 converter、serialization 或 replay exception 不得被泛化 catch，仍保持 Started uncertain。
+
+同一 exception 也用于 remote known rejection：exhausted 401、403 与 429 在 request callback 尚未把 response 交给 SSE
+parser、observer 零 delta 的位置，翻译为 `CompletionRequestRejectedException`。它只携带
+`CompletionTerminationKind.Failed`、稳定 provider reason
 以及 adapter-owned HTTP status，不保留 `InnerException`。即使 provider 的 `code/type/param/request-id` 是 bounded printable
 ASCII，也可能包含 secret；字符集约束不是 taint sanitizer，因此这些字段与 `Retry-After` 均不得进入 durable rejection。
 SessionJournal 可以据此把现有 Started
@@ -690,7 +698,7 @@ publish。
     锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；
 23. Responses strict capability 递归覆盖 root/nested/array optional、empty object 与
     `additionalProperties:true`；current declaration 与 historical tool call 的 dotted/超长 function name 都在
-    credential/network 前拒绝；
+    credential/network 前形成 typed local rejection，observer/credential/network 均为零；
 24. raw exchange JSONL 在 Unix 上以 `0600` 创建，拒绝非 private existing path，且 non-2xx body 被 client 消费后
     transport tee 可观察。
 

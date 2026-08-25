@@ -1,14 +1,17 @@
 namespace Atelia.Completion.Abstractions;
 
 /// <summary>
-/// Reports an authoritative pre-stream rejection of a completion request.
+/// Reports an authoritative rejection that cannot still produce a completion
+/// outcome.
 /// </summary>
 /// <remarks>
-/// A provider adapter may throw this exception only after proving that the
-/// remote endpoint rejected the request before any observer delta was emitted
-/// and that the rejected request cannot still produce an <see cref="ActionMessage"/>.
-/// Transport failures, cancellation, redirects, server failures, malformed
-/// protocol data, or interrupted streams do not satisfy that proof.
+/// A provider adapter may throw this exception only after proving either that
+/// local deterministic validation rejected the request before credential or
+/// network dispatch, or that the remote endpoint authoritatively rejected the
+/// request before any observer delta was emitted. In both cases the request
+/// cannot still produce an <see cref="ActionMessage"/>. Transport failures,
+/// cancellation, redirects, server failures, malformed protocol data, or
+/// interrupted streams do not satisfy that proof.
 /// <para>
 /// The caller owns content safety: <paramref name="termination"/> detail and
 /// <paramref name="errors"/> must be bounded, content-free diagnostics, never
@@ -31,7 +34,7 @@ public sealed class CompletionRequestRejectedException : Exception {
     public CompletionRequestRejectedException(
         CompletionTermination termination,
         IReadOnlyList<string>? errors = null
-    ) : base("The completion request was authoritatively rejected before streaming.") {
+    ) : base("The completion request was authoritatively rejected without a possible completion outcome.") {
         ArgumentNullException.ThrowIfNull(termination);
         if (termination.Kind is not CompletionTerminationKind.Failed) {
             throw new ArgumentException(

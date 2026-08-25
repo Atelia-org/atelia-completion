@@ -768,7 +768,7 @@ Codex 0.147.0 证据表明它们不是 one-shot HTTP SSE 的认证/协议最低�
 - `Galatea.Server.Tests`：189 passed；
 - `git diff --check`：通过。
 
-后续改动应按 §13 的命令重跑相关 suite，以实际命令退出码为验收 authority，而不是沿用上述历史计数。
+后续改动应按 §11 的命令重跑相关 suite，以实际命令退出码为验收 authority，而不是沿用上述历史计数。
 
 opt-in live acceptance 位于 `OpenAICodexResponsesLiveTests`，必须同时提供对应 enable switch 与显式 absolute auth file；
 它不会复制 auth file，默认不会启用 HTTP raw/call log，也不会触发 refresh/故意制造 401。Agent Control shape 使用独立

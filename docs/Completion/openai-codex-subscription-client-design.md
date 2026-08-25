@@ -437,7 +437,7 @@ provider-native replay 或 accepted terminal 的语义变化需要 bump `ApiSpec
 | account mid-process changed | `AuthAccountChanged`，禁止自动切换 |
 | HTTP 401 | singleflight 重新读取一次；仅当 generation 已变化时，以 byte-identical body 最多重试一次；unchanged generation 或第二个 401 是 typed pre-stream known rejection |
 | HTTP 403 | typed pre-stream known rejection，不重试，也不声称“封号” |
-| HTTP 429 | typed pre-stream known rejection，只保留 bounded safe diagnostics，不立即重试、不换账号 |
+| HTTP 429 | typed pre-stream known rejection；durable payload 只保留 adapter-owned status/reason，不复制 `Retry-After` 或 provider metadata；不立即重试、不换账号 |
 | HTTP 400 | 当前 private backend 的 live envelope 只有 free-form `detail`；不解析、不升级为 known rejection |
 | HTTP 3xx | `UnexpectedBackendRedirect`，不 follow |
 | 408/409/其它未验证 4xx、transport/5xx、2xx non-SSE、SSE malformed/EOF/terminal 前断流 | 沿用 outcome-uncertain/recovery 边界，不透明重试 |
@@ -448,20 +448,23 @@ first slice 把“HTTP 401 且尚未收到任何 SSE payload”视为当前 pinn
 
 exhausted 401、403 与 429 在 request callback 尚未把 response 交给 SSE parser、observer 零 delta 的位置，翻译为
 provider-neutral `CompletionRequestRejectedException`。它只携带 `CompletionTerminationKind.Failed`、稳定 provider reason
-以及 caller 构造的 printable-ASCII bounded diagnostics，不保留 `InnerException`。SessionJournal 可以据此把现有 Started
-attempt 精确提交为既有 `CompletionAttemptFailed`；若 Failed append 自身失败则仍保留 Started uncertain。该翻译没有改变
-Codex request/replay/SSE adapter wire，也没有新增 SessionJournal event/body schema，因此不额外 bump `ApiSpecId`。
+以及 adapter-owned HTTP status，不保留 `InnerException`。即使 provider 的 `code/type/param/request-id` 是 bounded printable
+ASCII，也可能包含 secret；字符集约束不是 taint sanitizer，因此这些字段与 `Retry-After` 均不得进入 durable rejection。
+SessionJournal 可以据此把现有 Started
+attempt 精确提交为既有 `CompletionAttemptFailed`；若 Failed append 自身抛错，当前 engine 进入 reopen-required，重开后
+再由物理 HEAD 裁决为 Started 或 exact Failed。该翻译没有改变 Codex request/replay/SSE adapter wire，也没有新增
+SessionJournal event/body schema，因此不额外 bump `ApiSpecId`。
 
 2026-08-26 的真实 invalid-model probe 表明 HTTP 400 body root exact keys 只有 `detail`，没有 `error.code/type/param`。
 `detail` 是 provider free-form message，既不能穿过 redaction boundary，也不足以构成稳定 allowlist，所以当前所有 400
 继续抛 adapter exception，由 SessionJournal fail closed 为 Started uncertain。未来只有新的 live 校准同时给出严格、安全、
 稳定的 machine envelope，并由离线 tests 锁住 exact tuple 后，才可窄化某一类 400；不得把“全部 400”视为 known rejection。
 
-non-2xx exception 不附 raw response body或 header dump。client 最多读取 16 KiB 的 strict UTF-8 JSON，并且只从
-exact `error` object 保留经过 ASCII token allowlist 与字段长度上限验证的 `code`、`type`、`param`；recognized response
-header 只保留单值、同样 bounded 的 request id。raw `message`、未知字段、超限/非法 UTF-8/过深 JSON 与不安全 token
-全部丢弃。现有 generic `CompletionHttpRequestUtility` 会把截断 response body 写入 exception，Codex profile 不得直接
-复用这条错误文本路径。
+ordinary non-2xx exception 不附 raw response body或 header dump。client 最多读取 16 KiB 的 strict UTF-8 JSON；
+经过字符/长度约束的 `code/type/param/request-id` 只作为显式 opt-in 的 opaque operational properties 暂存，仍视为
+provider-controlled、可能敏感，禁止写入 `Message` / `ToString()`、durable journal 或普通日志。raw `message`、未知字段、
+超限/非法 UTF-8/过深 JSON 与不安全 token 全部丢弃。现有 generic `CompletionHttpRequestUtility` 会把截断 response body
+写入 exception，Codex profile 不得直接复用这条错误文本路径。
 
 同一 redaction boundary 也必须覆盖 HTTP 200 SSE 内的 `error`、`response.failed` 与 nested provider message。现有
 `OpenAIResponsesStreamParser` 会把部分 provider message 放入 `CompletionResult.Errors`，随后可能由
@@ -675,7 +678,8 @@ publish。
 14. synthetic Codex SSE text/tool/reasoning/terminal end-to-end；
 15. metadata/unknown well-formed events 保持 forward-compatible，terminal 前 EOF/[DONE] 仍 fail closed；
 16. non-2xx 与 SSE `error` / `response.failed` 中的 raw message/account/token canary 被 Codex sanitizer 移除；
-    non-2xx 只保留 bounded safe `code/type/param/request-id`，超限 body 与不安全 token 全部丢弃；
+    known rejection 只持久化 adapter-owned status/reason；ordinary exception 的 bounded opaque
+    `code/type/param/request-id` 不进入 `Message` / `ToString()`；
 17. public/Codex reasoning cross-replay 拒绝；
 18. golden/call-log/exception/API response 全文扫描不包含 access/refresh/id/account canary；
 19. manifest/factory/fingerprint/registry lifetime/dispose contract；account fingerprint 跨重启 mismatch；
@@ -685,7 +689,8 @@ publish。
 22. live smoke 只读 explicit authority file，验证没有复制或 materialize refresh token；Agent Control live acceptance
     锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；
 23. Responses strict capability 递归覆盖 root/nested/array optional、empty object 与
-    `additionalProperties:true`；dotted function name 在 credential/network 前拒绝；
+    `additionalProperties:true`；current declaration 与 historical tool call 的 dotted/超长 function name 都在
+    credential/network 前拒绝；
 24. raw exchange JSONL 在 Unix 上以 `0600` 创建，拒绝非 private existing path，且 non-2xx body 被 client 消费后
     transport tee 可观察。
 
@@ -757,11 +762,13 @@ ATELIA_CODEX_SUBSCRIPTION_AUTH_FILE=<optional absolute auth.json path>
 Codex 0.147.0 证据表明它们不是 one-shot HTTP SSE 的认证/协议最低要求。file-backed provider 也不从 JWT
 臆造 residency；只有自定义 credential provider 显式提供受控值时，client 才会发送 residency header。
 
-离线验收结果：
+离线验收计数是 commit-local evidence，不作为随代码自动更新的 current 总数。形成 `9860bc33` candidate 时：
 
-- `Completion.Tests`：625 passed；
-- `Galatea.Server.Tests`：201 passed；
+- `Completion.Tests`：645 passed；
+- `Galatea.Server.Tests`：189 passed；
 - `git diff --check`：通过。
+
+后续改动应按 §13 的命令重跑相关 suite，以实际命令退出码为验收 authority，而不是沿用上述历史计数。
 
 opt-in live acceptance 位于 `OpenAICodexResponsesLiveTests`，必须同时提供对应 enable switch 与显式 absolute auth file；
 它不会复制 auth file，默认不会启用 HTTP raw/call log，也不会触发 refresh/故意制造 401。Agent Control shape 使用独立

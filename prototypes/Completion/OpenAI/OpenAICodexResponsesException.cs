@@ -36,25 +36,30 @@ public sealed class OpenAICodexResponsesException : Exception {
     public TimeSpan? RetryAfter { get; }
 
     /// <summary>
-    /// Strictly bounded provider error token, when the non-success JSON body
-    /// contained a safe <c>error.code</c>. Provider messages are never retained.
+    /// Strictly bounded opaque provider error token, when the non-success JSON
+    /// body contained an <c>error.code</c> matching the transport character
+    /// policy. It remains provider-controlled and may be sensitive: do not log
+    /// or persist it. It is never included in <see cref="Exception.Message"/>
+    /// or <see cref="Exception.ToString"/>.
     /// </summary>
     public string? ProviderErrorCode { get; }
 
     /// <summary>
-    /// Strictly bounded provider error category, when available as a safe
-    /// <c>error.type</c> token.
+    /// Strictly bounded opaque provider error category. It remains
+    /// provider-controlled and may be sensitive; do not log or persist it.
     /// </summary>
     public string? ProviderErrorType { get; }
 
     /// <summary>
-    /// Strictly bounded provider parameter path, when available as a safe
-    /// <c>error.param</c> token.
+    /// Strictly bounded opaque provider parameter path. It remains
+    /// provider-controlled and may be sensitive; do not log or persist it.
     /// </summary>
     public string? ProviderErrorParameter { get; }
 
     /// <summary>
-    /// Strictly bounded request identifier from a recognized response header.
+    /// Strictly bounded opaque request identifier from a recognized response
+    /// header. It remains provider-controlled and may be sensitive; do not log
+    /// or persist it.
     /// </summary>
     public string? ProviderRequestId { get; }
 

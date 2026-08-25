@@ -80,6 +80,55 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Empty(handler.Requests);
     }
 
+    [Theory]
+    [InlineData("recap_grid.control")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public async Task StreamCompletionAsync_InvalidHistoricalToolCallNameFailsBeforeCredentialAndNetwork(
+        string toolName
+    ) {
+        CodexSubscriptionCredential credential = Credential(
+            "token",
+            "account",
+            1
+        );
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => CompletedResponse("unused"));
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+        CompletionRequest request = Request(sharedContext: [
+            new ActionMessage([
+                new ActionBlock.ToolCall(
+                    new RawToolCall(toolName, "call-1", "{}")
+                )
+            ]),
+            new ToolResultsMessage(
+                content: null,
+                results: [
+                    ToolResult.FromText(
+                        toolName,
+                        "call-1",
+                        ToolExecutionStatus.Success,
+                        "ok"
+                    )
+                ]
+            )
+        ]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.StreamCompletionAsync(
+                request,
+                observer: null,
+                CancellationToken.None
+            )
+        );
+
+        Assert.Equal(0, provider.CallCount);
+        Assert.Empty(handler.Requests);
+    }
+
     [Fact]
     public async Task StreamCompletionAsync_UnauthorizedReloadsChangedGenerationOnceWithIdenticalBody() {
         CodexSubscriptionCredential first = Credential("token-a", "account", 1);
@@ -241,16 +290,16 @@ public sealed class OpenAICodexResponsesClientTests {
             ) {
                 Content = new StringContent(
                     "{\"error\":{\"message\":\"PROVIDER_MESSAGE_CANARY\","
-                    + "\"code\":\"safe_code\","
-                    + "\"type\":\"safe_type\","
-                    + "\"param\":\"safe[param]\"}}",
+                    + "\"code\":\"ASCII_SECRET_CODE_CANARY\","
+                    + "\"type\":\"ASCII_SECRET_TYPE_CANARY\","
+                    + "\"param\":\"$ASCII_SECRET_PARAM_CANARY\"}}",
                     Encoding.UTF8,
                     "application/json"
                 )
             };
             response.Headers.TryAddWithoutValidation(
                 "x-request-id",
-                "req_safe-123"
+                "ASCII_SECRET_REQUEST_CANARY"
             );
             if (statusCode == 429) {
                 response.Headers.RetryAfter = new(
@@ -288,18 +337,26 @@ public sealed class OpenAICodexResponsesClientTests {
             expectedProviderReason,
             exception.Termination.ProviderReason
         );
-        Assert.Contains($"http-status={statusCode}", exception.Errors);
-        Assert.Contains("code=safe_code", exception.Errors);
-        Assert.Contains("type=safe_type", exception.Errors);
-        Assert.Contains("param=safe[param]", exception.Errors);
-        Assert.Contains("request-id=req_safe-123", exception.Errors);
-        if (statusCode == 429) {
-            Assert.Contains("retry-after-seconds=5", exception.Errors);
-        }
+        Assert.Equal([$"http-status={statusCode}"], exception.Errors);
         Assert.Null(exception.InnerException);
         Assert.DoesNotContain(
             "PROVIDER_MESSAGE_CANARY",
             exception.ToString(),
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "ASCII_SECRET",
+            exception.ToString(),
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "ASCII_SECRET",
+            exception.Termination.Detail ?? string.Empty,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "ASCII_SECRET",
+            string.Join("\n", exception.Errors),
             StringComparison.Ordinal
         );
         Assert.Equal(0, observerEventCount);
@@ -307,12 +364,12 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_NonSuccessRetainsOnlyBoundedSafeDiagnosticsAndConsumesBodyForRawTee() {
+    public async Task StreamCompletionAsync_NonSuccessKeepsProviderMetadataOutOfExceptionTextAndConsumesBodyForRawTee() {
         const string rawBody =
             "{\"error\":{\"message\":\"PROMPT_OR_ACCOUNT_CANARY\","
-            + "\"code\":\"invalid_tool_schema\","
-            + "\"type\":\"invalid_request_error\","
-            + "\"param\":\"tools[0].parameters\"},"
+            + "\"code\":\"ASCII_SECRET_CODE_CANARY\","
+            + "\"type\":\"ASCII_SECRET_TYPE_CANARY\","
+            + "\"param\":\"$ASCII_SECRET_PARAM_CANARY\"},"
             + "\"access_token\":\"ACCESS_TOKEN_CANARY\"}";
         CodexSubscriptionCredential credential = Credential(
             "token",
@@ -332,7 +389,7 @@ public sealed class OpenAICodexResponsesClientTests {
             };
             response.Headers.TryAddWithoutValidation(
                 "x-request-id",
-                "req_safe-123"
+                "ASCII_SECRET_REQUEST_CANARY"
             );
             return response;
         });
@@ -356,13 +413,18 @@ public sealed class OpenAICodexResponsesClientTests {
         ));
 
         Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
-        Assert.Equal("invalid_tool_schema", exception.ProviderErrorCode);
-        Assert.Equal("invalid_request_error", exception.ProviderErrorType);
-        Assert.Equal("tools[0].parameters", exception.ProviderErrorParameter);
-        Assert.Equal("req_safe-123", exception.ProviderRequestId);
-        Assert.Contains(
-            "code=invalid_tool_schema",
+        Assert.Equal("ASCII_SECRET_CODE_CANARY", exception.ProviderErrorCode);
+        Assert.Equal("ASCII_SECRET_TYPE_CANARY", exception.ProviderErrorType);
+        Assert.Equal("$ASCII_SECRET_PARAM_CANARY", exception.ProviderErrorParameter);
+        Assert.Equal("ASCII_SECRET_REQUEST_CANARY", exception.ProviderRequestId);
+        Assert.DoesNotContain(
+            "ASCII_SECRET",
             exception.Message,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "ASCII_SECRET",
+            exception.ToString(),
             StringComparison.Ordinal
         );
         Assert.DoesNotContain(

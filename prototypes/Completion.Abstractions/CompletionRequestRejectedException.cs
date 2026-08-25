@@ -13,8 +13,11 @@ namespace Atelia.Completion.Abstractions;
 /// The caller owns content safety: <paramref name="termination"/> detail and
 /// <paramref name="errors"/> must be bounded, content-free diagnostics, never
 /// raw provider messages, response bodies, credentials, account identifiers,
-/// prompts, or generated content. This type deliberately has no inner-exception
-/// constructor so an unsafe provider exception cannot be retained accidentally.
+/// prompts, or generated content. Printable-ASCII validation only constrains
+/// shape; it is not a taint sanitizer, so adapters must use code-owned values
+/// rather than copying even ASCII-only provider metadata. This type deliberately
+/// has no inner-exception constructor so an unsafe provider exception cannot be
+/// retained accidentally.
 /// </para>
 /// </remarks>
 public sealed class CompletionRequestRejectedException : Exception {

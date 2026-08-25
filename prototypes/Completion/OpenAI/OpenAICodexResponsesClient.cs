@@ -196,13 +196,7 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
                 if (reloaded is null) {
                     throw RequestRejected(
                         HttpStatusCode.Unauthorized,
-                        AuthenticationRejectedReason,
-                        new BackendFailureDiagnostics(
-                            null,
-                            null,
-                            null,
-                            null
-                        )
+                        AuthenticationRejectedReason
                     );
                 }
                 response = await SendAttemptAsync(
@@ -377,12 +371,10 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
                 response,
                 cancellationToken
             ).ConfigureAwait(false);
-        string diagnosticSuffix = FormatDiagnosticSuffix(diagnostics);
         if ((int)status is >= 300 and < 400) {
             return Failure(
                 OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect,
-                "ChatGPT Codex returned an unexpected redirect; redirects are disabled."
-                    + diagnosticSuffix,
+                "ChatGPT Codex returned an unexpected redirect; redirects are disabled.",
                 status,
                 diagnostics: diagnostics
             );
@@ -390,29 +382,24 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         if (status is HttpStatusCode.Unauthorized) {
             return RequestRejected(
                 status,
-                AuthenticationRejectedReason,
-                diagnostics
+                AuthenticationRejectedReason
             );
         }
         if (status is HttpStatusCode.Forbidden) {
             return RequestRejected(
                 status,
-                AccessDeniedReason,
-                diagnostics
+                AccessDeniedReason
             );
         }
         if ((int)status == 429) {
             return RequestRejected(
                 status,
-                RateLimitedReason,
-                diagnostics,
-                ParseRetryAfter(response.Headers.RetryAfter)
+                RateLimitedReason
             );
         }
         return Failure(
             OpenAICodexResponsesFailureReason.BackendFailure,
-            $"ChatGPT Codex request failed with HTTP status {(int)status}."
-                + diagnosticSuffix,
+            $"ChatGPT Codex request failed with HTTP status {(int)status}.",
             status,
             diagnostics: diagnostics
         );
@@ -566,32 +553,6 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
                 or '[' or ']' or '$');
     }
 
-    private static string FormatDiagnosticSuffix(
-        BackendFailureDiagnostics diagnostics
-    ) {
-        var fields = new List<string>(4);
-        Add("code", diagnostics.Code);
-        Add("type", diagnostics.Type);
-        Add("param", diagnostics.Parameter);
-        Add("requestId", diagnostics.RequestId);
-        return fields.Count == 0
-            ? string.Empty
-            : " Safe diagnostics: " + string.Join(", ", fields) + ".";
-
-        void Add(string name, string? value) {
-            if (value is not null) { fields.Add($"{name}={value}"); }
-        }
-    }
-
-    private static TimeSpan? ParseRetryAfter(
-        RetryConditionHeaderValue? retryAfter
-    ) {
-        if (retryAfter?.Delta is { } delta && delta >= TimeSpan.Zero) {
-            return delta;
-        }
-        return null;
-    }
-
     private static string ClassifyContentType(string? mediaType) {
         if (string.IsNullOrWhiteSpace(mediaType)) { return "missing"; }
         if (string.Equals(
@@ -638,33 +599,18 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
     /// </summary>
     private static CompletionRequestRejectedException RequestRejected(
         HttpStatusCode status,
-        string providerReason,
-        BackendFailureDiagnostics diagnostics,
-        TimeSpan? retryAfter = null
+        string providerReason
     ) {
-        var errors = new List<string>(6) {
-            $"http-status={(int)status}"
-        };
-        Add("code", diagnostics.Code);
-        Add("type", diagnostics.Type);
-        Add("param", diagnostics.Parameter);
-        Add("request-id", diagnostics.RequestId);
-        if (retryAfter is { } delay) {
-            errors.Add(
-                "retry-after-seconds="
-                + delay.TotalSeconds.ToString(CultureInfo.InvariantCulture)
-            );
-        }
+        // This exception is journaled. Character allowlists are not taint
+        // sanitizers: provider-controlled ASCII can still be a secret. Keep
+        // durable diagnostics strictly adapter-owned and deterministic.
+        string[] errors = [$"http-status={(int)status}"];
         string detail =
             $"ChatGPT Codex rejected the request before streaming with HTTP status {(int)status}.";
         return new CompletionRequestRejectedException(
             CompletionTermination.Failed(providerReason, detail),
             errors
         );
-
-        void Add(string name, string? value) {
-            if (value is not null) { errors.Add($"{name}={value}"); }
-        }
     }
 
     internal static HttpMessageHandler CreateProductionHandler() =>

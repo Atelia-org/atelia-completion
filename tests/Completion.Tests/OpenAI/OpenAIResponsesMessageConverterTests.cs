@@ -71,6 +71,50 @@ public sealed class OpenAIResponsesMessageConverterTests {
         );
     }
 
+    [Theory]
+    [InlineData("recap_grid.control")]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    public void ConvertToApiRequest_RejectsProviderIncompatibleHistoricalToolCallName(
+        string toolName
+    ) {
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(
+                            new RawToolCall(toolName, "call-1", "{}")
+                        )
+                    ]),
+                    new ToolResultsMessage(
+                        content: null,
+                        results: [
+                            ToolResult.FromText(
+                                toolName,
+                                "call-1",
+                                ToolExecutionStatus.Success,
+                                "ok"
+                            )
+                        ]
+                    )
+                ]
+            ),
+            tailMessages: []
+        );
+
+        InvalidOperationException exception = Assert.Throws<
+            InvalidOperationException
+        >(() => OpenAIResponsesMessageConverter.ConvertToApiRequest(request));
+
+        Assert.Contains(
+            "letters, digits, underscores, or hyphens",
+            exception.Message,
+            StringComparison.Ordinal
+        );
+    }
+
     [Fact]
     public void ConvertToApiRequest_ToolDependencyCanCrossPrefixTailBoundary() {
         var action = new ActionMessage([

@@ -238,6 +238,11 @@ internal static class OpenAIResponsesMessageConverter {
                     break;
 
                 case ActionBlock.ToolCall toolCallBlock:
+                    // Historical tool calls are provider input just like current
+                    // declarations. Validate them before request dispatch so a
+                    // replayed call from another naming profile cannot become a
+                    // remote HTTP 400 with an uncertain outcome.
+                    EnsureResponsesFunctionName(toolCallBlock.Call.ToolName);
                     FlushAssistantText();
                     inputItems.Add(
                         new OpenAIResponsesFunctionCallItem {

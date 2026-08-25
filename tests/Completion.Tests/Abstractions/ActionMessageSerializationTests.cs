@@ -111,7 +111,16 @@ public sealed class ActionMessageSerializationTests {
     }
 
     [Fact]
-    public void UnknownReasoningCodec_DecodesToTextReasoningFallback() {
+    public void UnknownReasoningCodec_RoundTripsExactlyThroughOpaqueCarrier() {
+        byte[] callerOwnedPayload = [0, 1, 2, 254, 255];
+        var unknown = new SerializedReasoningBlock(
+            "unknown.codec.v1",
+            Invocation.ProviderId,
+            Invocation.ApiSpecId,
+            Invocation.Model,
+            callerOwnedPayload,
+            "debug-only text"
+        );
         var serialized = new[] {
             new SerializedActionBlock(
                 ActionMessageSerialization.BlockKindReasoning,
@@ -119,21 +128,34 @@ public sealed class ActionMessageSerializationTests {
                 null,
                 null,
                 null,
-                SerializedReasoningBlock.Create(
-                    "unknown.codec.v1",
-                    Invocation,
-                    Encoding.UTF8.GetBytes("opaque"),
-                    "fallback text"
-                )
+                unknown
             )
         };
 
         var restored = ActionMessageSerialization.FromSerializedBlocks(serialized);
+        callerOwnedPayload[0] = 99;
 
-        var reasoning = Assert.IsType<ActionBlock.TextReasoningBlock>(Assert.Single(restored));
-        Assert.Equal("fallback text", reasoning.Content);
-        Assert.Equal("fallback text", reasoning.PlainText);
+        var reasoning = Assert.IsType<ActionBlock.OpaqueReasoningBlock>(Assert.Single(restored));
+        Assert.Equal("unknown.codec.v1", reasoning.CodecId);
+        Assert.Equal([0, 1, 2, 254, 255], reasoning.OpaquePayload.ToArray());
+        Assert.Equal("debug-only text", reasoning.PlainText);
         Assert.Equal(Invocation, reasoning.Origin);
+
+        SerializedReasoningBlock roundTripped = Assert.Single(
+            ActionMessageSerialization.ToSerializedBlocks(restored)
+        ).Reasoning!;
+        Assert.Equal(unknown.CodecId, roundTripped.CodecId);
+        Assert.Equal(unknown.OriginProviderId, roundTripped.OriginProviderId);
+        Assert.Equal(unknown.OriginApiSpecId, roundTripped.OriginApiSpecId);
+        Assert.Equal(unknown.OriginModel, roundTripped.OriginModel);
+        Assert.Equal([0, 1, 2, 254, 255], roundTripped.Payload);
+        Assert.Equal(unknown.PlainText, roundTripped.PlainText);
+
+        roundTripped.Payload[1] = 88;
+        SerializedReasoningBlock encodedAgain = Assert.Single(
+            ActionMessageSerialization.ToSerializedBlocks(restored)
+        ).Reasoning!;
+        Assert.Equal([0, 1, 2, 254, 255], encodedAgain.Payload);
     }
 
     [Fact]

@@ -37,8 +37,6 @@ public sealed record SerializedReasoningBlock(
         );
     }
 
-    internal ActionBlock.TextReasoningBlock ToFallbackTextReasoningBlock()
-        => new(PlainText ?? string.Empty, ToOrigin(), PlainText);
 }
 
 /// <summary>
@@ -99,6 +97,18 @@ public sealed class ReasoningBlockCodecRegistry {
     public SerializedReasoningBlock Encode(ActionBlock.ReasoningBlock block) {
         ArgumentNullException.ThrowIfNull(block);
 
+        // An offline reader may not load the assembly that owns a provider codec.
+        // Preserve that unknown payload exactly instead of manufacturing a lossy
+        // TextReasoningBlock from its optional debug view.
+        if (block is ActionBlock.OpaqueReasoningBlock opaque) {
+            return SerializedReasoningBlock.Create(
+                opaque.CodecId,
+                opaque.Origin,
+                opaque.OpaquePayload.ToArray(),
+                opaque.PlainText
+            );
+        }
+
         IReasoningBlockCodec[] snapshot;
         lock (_gate) {
             snapshot = _codecs.ToArray();
@@ -123,7 +133,12 @@ public sealed class ReasoningBlockCodecRegistry {
         }
 
         return codec is null
-            ? serialized.ToFallbackTextReasoningBlock()
+            ? new ActionBlock.OpaqueReasoningBlock(
+                serialized.CodecId,
+                serialized.Payload,
+                serialized.ToOrigin(),
+                serialized.PlainText
+            )
             : codec.Decode(serialized);
     }
 

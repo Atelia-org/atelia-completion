@@ -507,6 +507,8 @@ provider-specific `ActionBlock.ReasoningBlock`（例如 `AnthropicReasoningBlock
 
 `PlainText` 是统一的明文视图，供 UI 展示 / 日志 / 审计使用——**永远不要** 把它当成可回灌的 provider-native authority。provider 只给出加密负载时（如 Anthropic 的 `redacted_thinking`）它为 `null`；同时存在明文视图与原生 payload 时，provider codec 会校验两者一致。
 
+只依赖 `Completion.Abstractions` 的 offline reader 可能没有加载产生该块的 provider codec。此时 registry 会解码为 `ActionBlock.OpaqueReasoningBlock`：它精确保留 codec id、`Origin`、provider-native payload 与可选 `PlainText`，保证 deserialize → serialize 不改变持久化 authority，而不会再把 debug 文本降级成新的 replay 内容。这个 opaque carrier 不授予回灌能力；执行真实 provider 调用的进程仍须注册对应 codec，使相同 payload 解码为 provider-specific block。
+
 OpenAI Chat 路径的 `Strict` / `QwenSgLang` 会把 `reasoning_content` 捕获为 `OpenAIChatReasoningBlock`，但不把它当作可回灌 authority；通用 `SgLangCompatible` 忽略该扩展字段。`OpenAIChatDialects.DeepSeekV4` 与 `DeepSeekV4ChatClient` 则会同时捕获并在下一轮 assistant 历史中回灌 `reasoning_content`，以维持 DeepSeek V4 tool calling continuity。
 
 Gemini 路径的特殊点是：

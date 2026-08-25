@@ -70,6 +70,41 @@ public abstract record ActionBlock {
         CompletionDescriptor Origin,
         string? PlainText = null
     ) : ReasoningBlock(Origin, PlainText ?? Content);
+
+    /// <summary>
+    /// 未注册 provider codec 时使用的无损持久化载体。
+    /// <para>
+    /// 它保留原始 codec id 与 provider-native payload，使只依赖 Abstractions 的
+    /// offline reader 也能 deserialize → serialize 而不改变 replay authority。
+    /// 该类型不表示当前进程理解或有权回灌这份 payload；实际 provider 调用仍应
+    /// 注册对应 codec，并解码为 provider-specific reasoning block。
+    /// </para>
+    /// </summary>
+    public sealed record OpaqueReasoningBlock : ReasoningBlock {
+        private readonly byte[] _opaquePayload;
+
+        /// <summary>
+        /// Creates an opaque persistence carrier and takes an immutable snapshot
+        /// of the caller-owned payload.
+        /// </summary>
+        public OpaqueReasoningBlock(
+            string CodecId,
+            ReadOnlyMemory<byte> OpaquePayload,
+            CompletionDescriptor Origin,
+            string? PlainText = null
+        ) : base(Origin, PlainText) {
+            ArgumentException.ThrowIfNullOrWhiteSpace(CodecId);
+            ArgumentNullException.ThrowIfNull(Origin);
+            this.CodecId = CodecId;
+            _opaquePayload = OpaquePayload.ToArray();
+        }
+
+        /// <summary>产生该 payload 的稳定 reasoning codec id。</summary>
+        public string CodecId { get; }
+
+        /// <summary>尚未由当前进程解释的 provider-native serialized bytes。</summary>
+        public ReadOnlyMemory<byte> OpaquePayload => _opaquePayload;
+    }
 }
 
 /// <summary>

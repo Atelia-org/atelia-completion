@@ -186,6 +186,32 @@ public sealed class CompletionDispatchIdentityTests {
     }
 
     [Fact]
+    public void CodexResponsesUsesIndependentRequestAdapterIdentity() {
+        CompletionConnectionConfig connection = CreateConnection() with {
+            Kind = "openai-codex-responses",
+            CompletionSurfaceId = "openai-codex-responses",
+            BaseAddress = "https://chatgpt.com/backend-api/codex/",
+            ApiKey = null,
+            ApiKeyEnv = null,
+            MaxTokens = null
+        };
+        var client = new IdentityCompletionClient(
+            "chatgpt.com",
+            "openai-codex-responses-v1"
+        );
+
+        string fingerprint = CompletionDispatchIdentityFactory
+            .ComputeRequestAdapterFingerprint(client, connection);
+
+        Assert.Equal(
+            "sha256:"
+            + "0f306953ea7fc34b57805794ef74cccc"
+            + "e50aeac1f2847af8934c179e3f8ebf9b",
+            fingerprint
+        );
+    }
+
+    [Fact]
     public void BindExactMissingConnectionDoesNotFallbackOrCreateClient() {
         CompletionConnectionConfig connection = CreateConnection();
         var factory = new RecordingClientFactory(

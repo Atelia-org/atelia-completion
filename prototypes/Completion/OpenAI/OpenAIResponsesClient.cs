@@ -31,9 +31,11 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
     private readonly OpenAIResponsesClientOptions _options;
+    private readonly OpenAIResponsesProtocolClientCore _protocolCore;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "openai";
-    public string ApiSpecId => "openai-responses-v1";
+    public string ApiSpecId =>
+        PublicOpenAIResponsesProfile.ApiSpecId;
 
     public OpenAIResponsesClient(
         string? apiKey,
@@ -61,6 +63,15 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
                 "Unknown reasoning effort."
             );
         }
+        _protocolCore = new OpenAIResponsesProtocolClientCore(
+            _options,
+            ApiSpecId,
+            "OpenAI/Responses",
+            "OpenAI Responses",
+            PublicOpenAIResponsesProfile.MapReasoningEffort,
+            supportsRequiredNamedToolChoice: true,
+            sanitizeProviderErrors: false
+        );
 
         DebugUtil.Info(
             DebugCategory,
@@ -85,72 +96,14 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        DebugUtil.Info(DebugCategory, $"[OpenAI/Responses] Starting call model={request.ModelId}");
-
-        var invocation = CompletionDescriptor.From(this, request);
-        var apiRequest = OpenAIResponsesMessageConverter.ConvertToApiRequest(
+        return await _protocolCore.StreamCompletionAsync(
+            this,
             request,
-            _options,
-            invocation
-        );
-        using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-
-        var aggregator = new CompletionAggregator(invocation, observer);
-        aggregator.MergeUsage(
-            PromptCacheTelemetryContext.Create(
-                invocationOptions.PromptCacheReuseHint,
-                PromptCacheSupportStatus.Unknown,
-                new Dictionary<string, string>(StringComparer.Ordinal) {
-                    ["mapping"] = "implicit-best-effort"
-                }
-            )
-        );
-        var parser = new OpenAIResponsesStreamParser();
-        var stoppedEarly = false;
-
-        try {
-            await foreach (var frame in CompletionSseEventReader.ReadFramesAsync(stream, cancellationToken)) {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (frame.Data is null) { continue; }
-
-                if (string.Equals(frame.Data, "[DONE]", StringComparison.Ordinal)) {
-                    CompletionStreamTermination.RequireTerminalEvent(
-                        parser.TerminalEventObserved,
-                        "OpenAI Responses"
-                    );
-                    break;
-                }
-
-                parser.ParseEvent(frame.Data, aggregator, frame.EventType);
-                if (parser.TerminalEventObserved) { break; }
-
-                if (aggregator.ShouldStop) {
-                    stoppedEarly = true;
-                    break;
-                }
-            }
-
-            if (stoppedEarly) {
-                parser.DiscardIncompleteStreamingState();
-                aggregator.AbortIncompleteStreamingState();
-                aggregator.MarkIncomplete(detail: "Streaming observer stopped OpenAI Responses completion early.");
-            }
-            else {
-                CompletionStreamTermination.RequireTerminalEvent(
-                    parser.TerminalEventObserved,
-                    "OpenAI Responses"
-                );
-            }
-        }
-        catch (Exception exception) {
-            CleanupAfterFailure(parser, aggregator, exception);
-            throw;
-        }
-
-        DebugUtil.Trace(DebugCategory, "[OpenAI/Responses] Stream completed");
-        return aggregator.Build();
+            invocationOptions,
+            observer,
+            SendStreamingRequestAsync,
+            cancellationToken
+        ).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -221,31 +174,4 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         return extensionData;
     }
 
-    private static void CleanupAfterFailure(
-        OpenAIResponsesStreamParser parser,
-        CompletionAggregator aggregator,
-        Exception originalException
-    ) {
-        try {
-            parser.DiscardIncompleteStreamingState();
-        }
-        catch (Exception cleanupException) {
-            DebugUtil.Warning(
-                DebugCategory,
-                $"[OpenAI/Responses] Parser cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
-            );
-        }
-
-        try {
-            aggregator.AbortIncompleteStreamingState();
-        }
-        catch (Exception cleanupException) {
-            DebugUtil.Warning(
-                DebugCategory,
-                $"[OpenAI/Responses] Observer cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
-            );
-        }
-    }
 }

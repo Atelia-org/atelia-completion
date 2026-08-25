@@ -10,16 +10,20 @@ namespace Atelia.Completion.OpenAI;
 internal static class OpenAIResponsesMessageConverter {
     private const string DebugCategory = "Provider";
     private const string EncryptedReasoningInclude = "reasoning.encrypted_content";
-    private const string ResponsesApiSpecId = "openai-responses-v1";
-
     public static OpenAIResponsesApiRequest ConvertToApiRequest(
         CompletionRequest request,
         OpenAIResponsesClientOptions? options = null,
-        CompletionDescriptor? targetInvocation = null
+        CompletionDescriptor? targetInvocation = null,
+        string expectedApiSpecId = PublicOpenAIResponsesProfile.ApiSpecId,
+        OpenAIResponsesReasoningMapper? mapReasoningEffort = null,
+        bool supportsRequiredNamedToolChoice = true
     ) {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedApiSpecId);
 
         options ??= new OpenAIResponsesClientOptions();
+        mapReasoningEffort ??=
+            PublicOpenAIResponsesProfile.MapReasoningEffort;
         if (!Enum.IsDefined(options.ReasoningEffort)) {
             throw new ArgumentOutOfRangeException(
                 nameof(options),
@@ -35,13 +39,15 @@ internal static class OpenAIResponsesMessageConverter {
             request.PromptPrefix.SharedContextMessages,
             inputItems,
             state,
-            targetInvocation
+            targetInvocation,
+            expectedApiSpecId
         );
         ProjectMessages(
             request.TailMessages,
             inputItems,
             state,
-            targetInvocation
+            targetInvocation,
+            expectedApiSpecId
         );
 
         EnsureNoPendingToolCalls(state, "context ended");
@@ -55,12 +61,15 @@ internal static class OpenAIResponsesMessageConverter {
                 : request.PromptPrefix.SystemPrompt,
             Input = inputItems,
             Tools = BuildToolDefinitions(outputContract.Tools),
-            ToolChoice = BuildToolChoice(outputContract.ToolChoice),
+            ToolChoice = BuildToolChoice(
+                outputContract.ToolChoice,
+                supportsRequiredNamedToolChoice
+            ),
             Stream = true,
             Store = options.Store,
             Include = options.IncludeEncryptedReasoning ? [EncryptedReasoningInclude] : null,
             ParallelToolCalls = outputContract.AllowParallelToolCalls ?? true,
-            Reasoning = BuildReasoningConfig(options.ReasoningEffort)
+            Reasoning = mapReasoningEffort(options.ReasoningEffort)
         };
 
         int contextMessageCount = checked(
@@ -79,7 +88,8 @@ internal static class OpenAIResponsesMessageConverter {
         IReadOnlyList<IHistoryMessage> contextMessages,
         List<OpenAIResponsesInputItem> inputItems,
         ProjectionState state,
-        CompletionDescriptor? targetInvocation
+        CompletionDescriptor? targetInvocation,
+        string expectedApiSpecId
     ) {
         foreach (IHistoryMessage contextMessage in contextMessages) {
             switch (contextMessage) {
@@ -96,7 +106,8 @@ internal static class OpenAIResponsesMessageConverter {
                         action,
                         inputItems,
                         state,
-                        targetInvocation
+                        targetInvocation,
+                        expectedApiSpecId
                     );
                     break;
 
@@ -108,44 +119,31 @@ internal static class OpenAIResponsesMessageConverter {
         }
     }
 
-    private static object? BuildToolChoice(CompletionToolChoice toolChoice)
+    private static object? BuildToolChoice(
+        CompletionToolChoice toolChoice,
+        bool supportsRequiredNamedToolChoice
+    )
         => toolChoice.Kind switch {
             CompletionToolChoiceKind.ProviderDefault => null,
             CompletionToolChoiceKind.Auto => "auto",
             CompletionToolChoiceKind.None => "none",
             CompletionToolChoiceKind.RequiredAny => "required",
             CompletionToolChoiceKind.RequiredNamed =>
-                new OpenAIResponsesNamedToolChoice {
-                    Name = toolChoice.RequiredToolName
-                        ?? throw new InvalidOperationException(
-                            "RequiredNamed tool choice is missing its tool name."
-                        )
-                },
+                supportsRequiredNamedToolChoice
+                    ? new OpenAIResponsesNamedToolChoice {
+                        Name = toolChoice.RequiredToolName
+                            ?? throw new InvalidOperationException(
+                                "RequiredNamed tool choice is missing its tool name."
+                            )
+                    }
+                    : throw new NotSupportedException(
+                        "This Responses profile has no verified RequiredNamed tool-choice mapping."
+                    ),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(toolChoice),
                 toolChoice.Kind,
                 "Unknown completion tool choice."
             )
-        };
-
-    private static OpenAIResponsesReasoningConfig? BuildReasoningConfig(
-        CompletionReasoningEffort reasoningEffort
-    ) => reasoningEffort switch {
-        CompletionReasoningEffort.ProviderDefault => null,
-        CompletionReasoningEffort.Disabled => new OpenAIResponsesReasoningConfig {
-            Effort = "none"
-        },
-        CompletionReasoningEffort.Low => EnabledReasoning("low"),
-        CompletionReasoningEffort.Medium => EnabledReasoning("medium"),
-        CompletionReasoningEffort.High => EnabledReasoning("high"),
-        CompletionReasoningEffort.Max => EnabledReasoning("xhigh"),
-        _ => throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.")
-    };
-
-    private static OpenAIResponsesReasoningConfig EnabledReasoning(string effort)
-        => new() {
-            Effort = effort,
-            Summary = "auto"
         };
 
     private static void BuildObservationItem(
@@ -207,7 +205,8 @@ internal static class OpenAIResponsesMessageConverter {
         ActionMessage action,
         List<OpenAIResponsesInputItem> inputItems,
         ProjectionState state,
-        CompletionDescriptor? targetInvocation
+        CompletionDescriptor? targetInvocation,
+        string expectedApiSpecId
     ) {
         EnsureNoPendingToolCalls(state, $"assistant action before tool results blockCount={action.Blocks.Count}");
 
@@ -255,7 +254,8 @@ internal static class OpenAIResponsesMessageConverter {
                     FlushAssistantText();
                     inputItems.Add(ConvertReasoningBlock(
                         reasoningBlock,
-                        targetInvocation
+                        targetInvocation,
+                        expectedApiSpecId
                     ));
                     emittedItemCount++;
                     break;
@@ -310,11 +310,12 @@ internal static class OpenAIResponsesMessageConverter {
 
     private static OpenAIResponsesReasoningItem ConvertReasoningBlock(
         OpenAIResponsesReasoningBlock reasoningBlock,
-        CompletionDescriptor? targetInvocation
+        CompletionDescriptor? targetInvocation,
+        string expectedApiSpecId
     ) {
-        if (!string.Equals(reasoningBlock.Origin.ApiSpecId, ResponsesApiSpecId, StringComparison.Ordinal)) {
+        if (!string.Equals(reasoningBlock.Origin.ApiSpecId, expectedApiSpecId, StringComparison.Ordinal)) {
             throw new InvalidOperationException(
-                $"OpenAI Responses reasoning replay requires Origin.ApiSpecId='{ResponsesApiSpecId}', got '{reasoningBlock.Origin.ApiSpecId}'."
+                $"OpenAI Responses reasoning replay requires Origin.ApiSpecId='{expectedApiSpecId}', got '{reasoningBlock.Origin.ApiSpecId}'."
             );
         }
         if (targetInvocation is not null
@@ -331,14 +332,14 @@ internal static class OpenAIResponsesMessageConverter {
 
             if (root.ValueKind is not JsonValueKind.Object) {
                 throw new InvalidOperationException(
-                    $"OpenAI Responses reasoning replay expected a JSON object payload, but got '{reasoningBlock.RawItemJson}'."
+                    "OpenAI Responses reasoning replay expected a JSON object payload."
                 );
             }
 
             var itemType = root.GetProperty("type").GetString();
             if (!string.Equals(itemType, "reasoning", StringComparison.Ordinal)) {
                 throw new InvalidOperationException(
-                    $"OpenAI Responses reasoning replay expected a reasoning item payload, but got '{reasoningBlock.RawItemJson}'."
+                    "OpenAI Responses reasoning replay expected a reasoning item payload."
                 );
             }
 

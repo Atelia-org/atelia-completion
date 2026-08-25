@@ -95,6 +95,8 @@ public static class CompletionDispatchIdentityFactory {
     ) => connection.Kind.Trim().ToLowerInvariant() switch {
         "anthropic" => "anthropic-adaptive-effort-v1",
         "openai-responses" => "openai-responses-effort-v1",
+        "openai-codex-responses" =>
+            "openai-codex-responses-effort-v1",
         "openai-chat" => connection.CompletionSurfaceId switch {
             "openai-chat/strict" => "openai-chat-effort-v1",
             "openai-chat/qwen-sglang" => "qwen-thinking-switch-v1",

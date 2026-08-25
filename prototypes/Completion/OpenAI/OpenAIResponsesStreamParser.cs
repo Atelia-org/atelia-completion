@@ -16,11 +16,16 @@ internal sealed class OpenAIResponsesStreamParser {
 
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _completedFunctionCallItemIds = new(StringComparer.Ordinal);
+    private readonly bool _sanitizeProviderErrors;
     private string? _activeReasoningItemId;
     private StringBuilder? _activeReasoningSummary;
     private bool _terminalEventObserved;
 
     public bool TerminalEventObserved => _terminalEventObserved;
+
+    public OpenAIResponsesStreamParser(bool sanitizeProviderErrors = false) {
+        _sanitizeProviderErrors = sanitizeProviderErrors;
+    }
 
     public void ParseEvent(
         string json,
@@ -117,7 +122,9 @@ internal sealed class OpenAIResponsesStreamParser {
 
             case "response.incomplete":
                 MergeTerminalUsageIfPresent(obj, aggregator);
-                var incompleteReason = ExtractIncompleteReason(obj);
+                var incompleteReason = _sanitizeProviderErrors
+                    ? null
+                    : ExtractIncompleteReason(obj);
                 FinalizeTerminalStreamingState(aggregator);
                 aggregator.MarkIncomplete(
                     incompleteReason ?? "response.incomplete",
@@ -130,10 +137,7 @@ internal sealed class OpenAIResponsesStreamParser {
 
             case "response.failed":
                 MergeTerminalUsageIfPresent(obj, aggregator);
-                var failedMessage = ExtractErrorMessage(
-                    obj,
-                    "OpenAI Responses stream failed."
-                );
+                var failedMessage = BuildErrorMessage(obj);
                 FinalizeTerminalStreamingState(aggregator);
                 aggregator.AppendError(failedMessage);
                 aggregator.MarkFailed(eventType, failedMessage);
@@ -141,13 +145,20 @@ internal sealed class OpenAIResponsesStreamParser {
                 break;
 
             case "error":
-                var errorMessage = ExtractErrorMessage(obj, "OpenAI Responses stream failed.");
+                var errorMessage = BuildErrorMessage(obj);
                 FinalizeTerminalStreamingState(aggregator);
                 aggregator.AppendError(errorMessage);
                 aggregator.MarkFailed(eventType, errorMessage);
                 _terminalEventObserved = true;
                 break;
         }
+    }
+
+    private string BuildErrorMessage(JsonObject obj) {
+        if (_sanitizeProviderErrors) {
+            return "ChatGPT Codex response failed.";
+        }
+        return ExtractErrorMessage(obj, "OpenAI Responses stream failed.");
     }
 
     private static void MergeTerminalUsageIfPresent(
@@ -228,7 +239,9 @@ internal sealed class OpenAIResponsesStreamParser {
         if (_activeReasoningItemId is not null) {
             DebugUtil.Warning(
                 DebugCategory,
-                $"[OpenAI/Responses] Terminal event arrived with unfinished reasoning item_id={_activeReasoningItemId}."
+                _sanitizeProviderErrors
+                    ? "[OpenAI/Responses] Terminal event arrived with unfinished reasoning."
+                    : $"[OpenAI/Responses] Terminal event arrived with unfinished reasoning item_id={_activeReasoningItemId}."
             );
             aggregator.MarkIncomplete(detail: "OpenAI Responses terminal event arrived with unfinished reasoning.");
         }
@@ -237,9 +250,15 @@ internal sealed class OpenAIResponsesStreamParser {
             var pendingIds = string.Join(", ", _functionCalls.Keys.OrderBy(static id => id));
             DebugUtil.Warning(
                 DebugCategory,
-                $"[OpenAI/Responses] Terminal event arrived with unfinished function calls item_ids=[{pendingIds}]."
+                _sanitizeProviderErrors
+                    ? $"[OpenAI/Responses] Terminal event arrived with {_functionCalls.Count} unfinished function call(s)."
+                    : $"[OpenAI/Responses] Terminal event arrived with unfinished function calls item_ids=[{pendingIds}]."
             );
-            aggregator.MarkIncomplete(detail: $"OpenAI Responses terminal event arrived with unfinished function calls [{pendingIds}].");
+            aggregator.MarkIncomplete(
+                detail: _sanitizeProviderErrors
+                    ? "ChatGPT Codex terminal event arrived with unfinished function calls."
+                    : $"OpenAI Responses terminal event arrived with unfinished function calls [{pendingIds}]."
+            );
         }
 
         DiscardIncompleteStreamingState();
@@ -353,7 +372,9 @@ internal sealed class OpenAIResponsesStreamParser {
         if (_activeReasoningItemId is not null) {
             DebugUtil.Warning(
                 DebugCategory,
-                $"[OpenAI/Responses] Reasoning item switched from {_activeReasoningItemId} to {itemId} before completion."
+                _sanitizeProviderErrors
+                    ? "[OpenAI/Responses] Reasoning item switched before completion."
+                    : $"[OpenAI/Responses] Reasoning item switched from {_activeReasoningItemId} to {itemId} before completion."
             );
         }
 
@@ -395,7 +416,9 @@ internal sealed class OpenAIResponsesStreamParser {
 
         DebugUtil.Warning(
             DebugCategory,
-            $"[OpenAI/Responses] Reasoning item done mismatch active={_activeReasoningItemId}, item={itemId ?? "<null>"}."
+            _sanitizeProviderErrors
+                ? "[OpenAI/Responses] Reasoning item completion did not match the active item."
+                : $"[OpenAI/Responses] Reasoning item done mismatch active={_activeReasoningItemId}, item={itemId ?? "<null>"}."
         );
         aggregator.EndThinking(block);
         _activeReasoningItemId = null;

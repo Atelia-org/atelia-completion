@@ -35,3 +35,44 @@
 - OpenAI Responses events：[OpenAI API reference](https://platform.openai.com/docs/api-reference/responses-streaming)
 - Anthropic event types and lifecycle：[Anthropic streaming Messages](https://platform.claude.com/docs/en/build-with-claude/streaming#event-types)
 - Gemini response and finish reasons：[Gemini `generateContent` API](https://ai.google.dev/api/generate-content)
+
+## ChatGPT Codex subscription client（Linux MVP）
+
+`OpenAICodexResponsesClient` 可以直接作为 `ICompletionClient` 使用，不需要启动 local proxy。它只借用 Codex CLI
+file-backed `auth.json` 的当前 access-token snapshot；Codex CLI 仍是唯一 login/refresh/write-back owner。
+
+```csharp
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.OpenAI;
+
+var credentials = new CodexCliAuthFileCredentialProvider();
+CodexSubscriptionCredential firstSnapshot =
+    await credentials.GetCredentialAsync(ct);
+
+using var client = new OpenAICodexResponsesClient(
+    credentials,
+    new OpenAICodexResponsesClientOptions {
+        ExpectedAccountFingerprint = firstSnapshot.AccountFingerprint,
+        Originator = "atelia", // 构造期可配；默认值也是 atelia
+        MaxConcurrentRequests = 3
+    }
+);
+
+CompletionResult result = await client.StreamCompletionAsync(
+    request,
+    observer: null,
+    ct
+);
+```
+
+运行边界：
+
+- 当前只支持 Linux file-backed credential；`auth.json` 必须由当前用户拥有，mode 为 `0400` 或 `0600`；
+- provider 每个 logical attempt 重读 snapshot，但从不 materialize refresh/id token，不 refresh、不写文件；
+- access token 过期或 backend 401 且文件 generation 未变化时，先运行 Codex 让它 refresh，必要时重新 `codex login`；
+- endpoint 固定为 `https://chatgpt.com/backend-api/codex/responses`，它不是公开稳定 API；
+- `originator` 必须诚实稳定，允许构造时覆盖，不要伪装 `codex_cli_rs`、Pi 或 OpenCode；
+- public OpenAI Responses 与 Codex Responses 使用不同 `ApiSpecId`，两边的 provider-native reasoning payload 不能交叉 replay。
+
+Galatea 接入、connection shape、安全 preflight、环境变量和 live smoke 见
+[`docs/Completion/openai-codex-subscription-client-design.md`](../../docs/Completion/openai-codex-subscription-client-design.md)。

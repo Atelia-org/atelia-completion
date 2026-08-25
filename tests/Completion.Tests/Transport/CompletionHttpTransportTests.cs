@@ -1,18 +1,23 @@
 using System.Collections.Immutable;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using System.Runtime.Versioning;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
 using Atelia.Completion.OpenAI;
+using Microsoft.Win32.SafeHandles;
 using Xunit;
 
 namespace Atelia.Completion.Transport.Tests;
 
 public sealed class CompletionHttpTransportTests {
     private const string LocalLlmE2EEnvVar = "ATELIA_RUN_LOCAL_LLM_E2E";
+    private const int OpenReadOnly = 0;
+    private const int OpenNonBlocking = 0x800;
     private static readonly Uri LocalLlmBaseAddress = new("http://localhost:8000/");
 
     [Fact]
@@ -104,6 +109,8 @@ public sealed class CompletionHttpTransportTests {
 
     [Fact]
     public async Task JsonLinesGoldenLogSink_AppendsCamelCaseExchangeEntries() {
+        if (!SupportsHardenedRawSink()) { return; }
+
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "golden-log.jsonl");
 
@@ -161,8 +168,9 @@ public sealed class CompletionHttpTransportTests {
     }
 
     [Fact]
-    public void JsonLinesGoldenLogSink_RejectsExistingNonPrivateUnixFile() {
-        if (OperatingSystem.IsWindows()) { return; }
+    [SupportedOSPlatform("linux")]
+    public void JsonLinesGoldenLogSink_TightensExistingOwnedFileAndAppends() {
+        if (!SupportsHardenedRawSink()) { return; }
 
         var tempDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -172,7 +180,7 @@ public sealed class CompletionHttpTransportTests {
         var filePath = Path.Combine(tempDirectory, "raw.jsonl");
         try {
             Directory.CreateDirectory(tempDirectory);
-            File.WriteAllText(filePath, string.Empty);
+            File.WriteAllText(filePath, "preexisting\n");
             File.SetUnixFileMode(
                 filePath,
                 UnixFileMode.UserRead
@@ -181,19 +189,22 @@ public sealed class CompletionHttpTransportTests {
             );
             var sink = new JsonLinesCompletionHttpExchangeFileSink(filePath);
 
-            InvalidOperationException exception = Assert.Throws<
-                InvalidOperationException
-            >(() => sink.OnExchange(new CompletionHttpExchange(
+            sink.OnExchange(new CompletionHttpExchange(
                 "POST",
                 "https://example.invalid/",
                 "prompt",
                 400,
                 "response",
                 null
-            )));
+            ));
 
-            Assert.Contains("0600", exception.Message, StringComparison.Ordinal);
-            Assert.Equal(string.Empty, File.ReadAllText(filePath));
+            Assert.Equal(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                File.GetUnixFileMode(filePath)
+            );
+            string text = File.ReadAllText(filePath);
+            Assert.StartsWith("preexisting\n", text, StringComparison.Ordinal);
+            Assert.Contains("\"requestText\":\"prompt\"", text, StringComparison.Ordinal);
         }
         finally {
             if (Directory.Exists(tempDirectory)) {
@@ -203,8 +214,9 @@ public sealed class CompletionHttpTransportTests {
     }
 
     [Fact]
+    [SupportedOSPlatform("linux")]
     public void JsonLinesGoldenLogSink_RejectsUnixSymbolicLink() {
-        if (OperatingSystem.IsWindows()) { return; }
+        if (!SupportsHardenedRawSink()) { return; }
 
         var tempDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -249,7 +261,114 @@ public sealed class CompletionHttpTransportTests {
     }
 
     [Fact]
+    public void JsonLinesGoldenLogSink_RejectsUnixFifoWithoutWriting() {
+        if (!SupportsHardenedRawSink()) { return; }
+
+        var tempDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-completion-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        var fifoPath = Path.Combine(tempDirectory, "raw.jsonl");
+        try {
+            Directory.CreateDirectory(tempDirectory);
+            Assert.Equal(0, MakeFifo(fifoPath, 0x180));
+
+            // Keep a non-blocking reader open so even a regressed writer-side
+            // open cannot hang this test before the sink validates file type.
+            int readerDescriptor = OpenForRead(
+                fifoPath,
+                OpenReadOnly | OpenNonBlocking
+            );
+            Assert.True(
+                readerDescriptor >= 0,
+                $"Failed to open FIFO reader (errno {Marshal.GetLastPInvokeError()})."
+            );
+            using var readerHandle = new SafeFileHandle(
+                new IntPtr(readerDescriptor),
+                ownsHandle: true
+            );
+            var sink = new JsonLinesCompletionHttpExchangeFileSink(fifoPath);
+
+            InvalidOperationException exception = Assert.Throws<
+                InvalidOperationException
+            >(() => sink.OnExchange(new CompletionHttpExchange(
+                "POST",
+                "https://example.invalid/",
+                "prompt",
+                400,
+                "response",
+                null
+            )));
+
+            Assert.Contains(
+                "regular file",
+                exception.Message,
+                StringComparison.Ordinal
+            );
+        }
+        finally {
+            if (Directory.Exists(tempDirectory)) {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    [SupportedOSPlatform("linux")]
+    public void JsonLinesGoldenLogSink_KeepsValidatedHandleWhenPathIsReplaced() {
+        if (!SupportsHardenedRawSink()) { return; }
+
+        var tempDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-completion-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        var filePath = Path.Combine(tempDirectory, "raw.jsonl");
+        var openedPath = Path.Combine(tempDirectory, "opened.jsonl");
+        var victimPath = Path.Combine(tempDirectory, "victim.txt");
+        try {
+            Directory.CreateDirectory(tempDirectory);
+            File.WriteAllText(victimPath, "victim");
+            File.SetUnixFileMode(
+                victimPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite
+            );
+            var sink = new JsonLinesCompletionHttpExchangeFileSink(
+                filePath,
+                afterLinuxHandleValidatedForTest: () => {
+                    File.Move(filePath, openedPath);
+                    File.CreateSymbolicLink(filePath, victimPath);
+                }
+            );
+
+            sink.OnExchange(new CompletionHttpExchange(
+                "POST",
+                "https://example.invalid/",
+                "fixed-handle-prompt",
+                200,
+                "response",
+                null
+            ));
+
+            Assert.Contains(
+                "fixed-handle-prompt",
+                File.ReadAllText(openedPath),
+                StringComparison.Ordinal
+            );
+            Assert.Equal("victim", File.ReadAllText(victimPath));
+        }
+        finally {
+            if (Directory.Exists(tempDirectory)) {
+                Directory.Delete(tempDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task JsonLinesReplayResponder_ReplaysRecordedOpenAiExchangeInSequence() {
+        if (!SupportsHardenedRawSink()) { return; }
+
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "openai-replay.jsonl");
 
@@ -311,7 +430,9 @@ public sealed class CompletionHttpTransportTests {
 
     [Fact]
     public async Task JsonLinesGoldenLogSink_RecordsAndReplaysGeminiExchange() {
-        if (!GeminiProductionTypesPresent()) { return; }
+        if (!SupportsHardenedRawSink() || !GeminiProductionTypesPresent()) {
+            return;
+        }
 
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "gemini-replay.jsonl");
@@ -421,6 +542,8 @@ public sealed class CompletionHttpTransportTests {
 
     [Fact]
     public async Task TransportFactory_CreateJsonLinesReplayClient_ReplaysWithoutExplicitBuilderCalls() {
+        if (!SupportsHardenedRawSink()) { return; }
+
         var tempDirectory = Path.Combine(Path.GetTempPath(), "atelia-completion-tests", Guid.NewGuid().ToString("N"));
         var filePath = Path.Combine(tempDirectory, "factory-replay.jsonl");
 
@@ -627,6 +750,11 @@ public sealed class CompletionHttpTransportTests {
             || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool SupportsHardenedRawSink()
+        => OperatingSystem.IsLinux()
+            && RuntimeInformation.ProcessArchitecture is (
+                Architecture.X64 or Architecture.Arm64);
+
     private static async Task<(string LiveText, string ReplayedText)> RecordAndReplayOpenAiAsync(string filePath, string modelId) {
         var recordSetup = CompletionHttpTransportFactory.CreateFromPaths(
             LocalLlmBaseAddress,
@@ -767,6 +895,12 @@ public sealed class CompletionHttpTransportTests {
         var assembly = typeof(CompletionHttpTransportFactory).Assembly;
         return assembly.GetType("Atelia.Completion.Gemini.GeminiClient") is not null;
     }
+
+    [DllImport("libc", EntryPoint = "mkfifo", SetLastError = true)]
+    private static extern int MakeFifo(string path, uint mode);
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int OpenForRead(string path, int flags);
 
     private sealed class StubHttpMessageHandler : HttpMessageHandler {
         private readonly HttpResponseMessage _response;

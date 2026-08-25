@@ -102,8 +102,14 @@ public abstract record ActionBlock {
         /// <summary>产生该 payload 的稳定 reasoning codec id。</summary>
         public string CodecId { get; }
 
-        /// <summary>尚未由当前进程解释的 provider-native serialized bytes。</summary>
-        public ReadOnlyMemory<byte> OpaquePayload => _opaquePayload;
+        /// <summary>
+        /// 尚未由当前进程解释的 provider-native serialized bytes。
+        /// 每次读取均返回独立快照，避免通过 <see cref="ReadOnlyMemory{T}"/> 的
+        /// array extraction seam 修改参与 equality/hash 的实例状态。
+        /// </summary>
+        public ReadOnlyMemory<byte> OpaquePayload => _opaquePayload.ToArray();
+
+        internal byte[] CopyOpaquePayload() => _opaquePayload.ToArray();
 
         /// <inheritdoc />
         public bool Equals(OpaqueReasoningBlock? other)

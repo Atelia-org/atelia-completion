@@ -104,7 +104,7 @@ public sealed class ReasoningBlockCodecRegistry {
             return SerializedReasoningBlock.Create(
                 opaque.CodecId,
                 opaque.Origin,
-                opaque.OpaquePayload.ToArray(),
+                opaque.CopyOpaquePayload(),
                 opaque.PlainText
             );
         }

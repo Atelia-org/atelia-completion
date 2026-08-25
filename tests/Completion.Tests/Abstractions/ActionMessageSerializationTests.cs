@@ -229,6 +229,33 @@ public sealed class ActionMessageSerializationTests {
     }
 
     [Fact]
+    public void OpaqueReasoningBlock_PublicPayloadSnapshotCannotMutateInstance() {
+        var block = new ActionBlock.OpaqueReasoningBlock(
+            "unknown.codec.v1",
+            new byte[] { 10, 20, 30 },
+            Invocation,
+            "debug"
+        );
+        int originalHash = block.GetHashCode();
+        ReadOnlyMemory<byte> publicSnapshot = block.OpaquePayload;
+
+        Assert.True(
+            System.Runtime.InteropServices.MemoryMarshal.TryGetArray(
+                publicSnapshot,
+                out ArraySegment<byte> extracted
+            )
+        );
+        extracted.Array![extracted.Offset + 1] = 99;
+
+        Assert.Equal([10, 20, 30], block.OpaquePayload.ToArray());
+        Assert.Equal(originalHash, block.GetHashCode());
+        SerializedReasoningBlock serialized = Assert.Single(
+            ActionMessageSerialization.ToSerializedBlocks([block])
+        ).Reasoning!;
+        Assert.Equal([10, 20, 30], serialized.Payload);
+    }
+
+    [Fact]
     public void ProviderReasoningCodec_RejectsForgedPlainTextView() {
         var registry = ReasoningBlockCodecRegistry.CreateDefault();
         ReasoningBlockCodecs.RegisterAll(registry);

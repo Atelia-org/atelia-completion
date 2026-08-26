@@ -5,6 +5,28 @@ namespace Atelia.Completion.Tests;
 
 public sealed class CompletionConnectionRegistryLifetimeTests {
     [Fact]
+    public void Registry_DoesNotApplyConsumerSelectionPolicy() {
+        var client = new SyncClient();
+        CompletionConnectionsFileConfig config =
+            CompletionConnectionConfigLoader.NormalizeAndValidate(
+                Config("visible", "internal") with {
+                    SelectableConnectionIds = ["visible"],
+                    Bindings = new Dictionary<string, string?> {
+                        ["feature.internal"] = "internal",
+                    },
+                }
+            );
+        using var registry = new CompletionConnectionRegistry(
+            config,
+            new SharedFactory(client)
+        );
+
+        Assert.Equal("internal", registry.Resolve("internal").Id);
+        Assert.True(registry.TryGet("internal", out _));
+        Assert.Same(client, registry.GetClient("internal"));
+    }
+
+    [Fact]
     public async Task DisposeAsync_DisposesDistinctAsyncClientsExactlyOnce() {
         var client = new AsyncClient();
         var registry = new CompletionConnectionRegistry(

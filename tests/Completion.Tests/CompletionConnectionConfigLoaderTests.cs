@@ -28,9 +28,141 @@ public sealed class CompletionConnectionConfigLoaderTests {
             AnthropicPromptCacheTtl.OneHour,
             item.AnthropicPromptCacheTtl
         );
+        Assert.Null(config.SelectableConnectionIds);
+        Assert.Null(config.Bindings);
         Assert.Throws<NotSupportedException>(() =>
             ((IList<CompletionConnectionConfig>)config.Connections)[0] = item
         );
+    }
+
+    [Fact]
+    public void Decode_AcceptsAndFreezesOptionalSelectionAndBindings() {
+        CompletionConnectionsFileConfig config = DecodeDocument(Root(
+            Connection() + "," + Connection(id: "helper"),
+            extra: "\"selectableConnectionIds\":[\"helper\",\"main\"],"
+                + "\"bindings\":{\"feature.primary\":\"helper\","
+                + "\"feature.disabled\":null}"
+        ));
+
+        Assert.Equal(
+            ["helper", "main"],
+            config.SelectableConnectionIds
+        );
+        Assert.Equal(
+            "helper",
+            config.Bindings!["feature.primary"]
+        );
+        Assert.Null(config.Bindings["feature.disabled"]);
+        Assert.Empty(DecodeDocument(Root(
+            Connection(),
+            extra: "\"bindings\":{}"
+        )).Bindings!);
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<string>)config.SelectableConnectionIds!)[0] = "main"
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            ((IDictionary<string, string?>)config.Bindings)
+                ["feature.other"] = "main"
+        );
+    }
+
+    public static TheoryData<string> InvalidSelectableFields => new() {
+        "null",
+        "{}",
+        "[]",
+        "[1]",
+        "[\" \u2003\"]",
+        "[\"main\",\"main\"]",
+        "[\"missing\",\"main\"]",
+        "[\"MAIN\"]",
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidSelectableFields))]
+    public void Decode_RejectsInvalidSelectableConnectionIds(string value) {
+        Assert.Throws<InvalidDataException>(() => DecodeDocument(Root(
+            Connection(),
+            extra: $"\"selectableConnectionIds\":{value}"
+        )));
+    }
+
+    public static TheoryData<string> InvalidBindingFields => new() {
+        "null",
+        "[]",
+        "{\"feature\":1}",
+        "{\"\":\"main\"}",
+        "{\"feature\":\"\"}",
+        "{\"feature\":\"missing\"}",
+        "{\"feature\":\"main\",\"feature\":null}",
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidBindingFields))]
+    public void Decode_RejectsInvalidBindings(string value) {
+        Assert.Throws<InvalidDataException>(() => DecodeDocument(Root(
+            Connection(),
+            extra: $"\"bindings\":{value}"
+        )));
+    }
+
+    [Fact]
+    public void Decode_BindingKeysAreExactAndMayShareTargets() {
+        CompletionConnectionsFileConfig config = DecodeDocument(Root(
+            Connection(),
+            extra: "\"bindings\":{\"Role\":\"main\","
+                + "\"role\":\"main\"}"
+        ));
+
+        Assert.Equal(2, config.Bindings!.Count);
+        Assert.Equal("main", config.Bindings["Role"]);
+        Assert.Equal("main", config.Bindings["role"]);
+    }
+
+    [Fact]
+    public void Decode_EnforcesOptionalFieldCountsAndUtf8Bounds() {
+        string exact = new string('界', 42) + "aa";
+        string tooLong = exact + "a";
+        CompletionConnectionsFileConfig exactConfig = DecodeDocument(Root(
+            Connection(id: exact),
+            defaultId: exact,
+            extra: $"\"selectableConnectionIds\":[\"{exact}\"],"
+                + $"\"bindings\":{{\"{exact}\":\"{exact}\"}}"
+        ));
+        Assert.Equal(exact, Assert.Single(
+            exactConfig.SelectableConnectionIds!
+        ));
+        Assert.Equal(exact, exactConfig.Bindings![exact]);
+
+        Assert.Throws<InvalidDataException>(() => DecodeDocument(Root(
+            Connection(),
+            extra: $"\"selectableConnectionIds\":[\"main\",\"{tooLong}\"]"
+        )));
+        Assert.Throws<InvalidDataException>(() => DecodeDocument(Root(
+            Connection(),
+            extra: $"\"bindings\":{{\"{tooLong}\":null}}"
+        )));
+        Assert.Throws<InvalidDataException>(() => DecodeDocument(Root(
+            Connection(),
+            extra: $"\"bindings\":{{\"feature\":\"{tooLong}\"}}"
+        )));
+
+        string selectable = string.Join(
+            ',',
+            Enumerable.Repeat("\"main\"", 257)
+        );
+        Assert.Throws<InvalidDataException>(() => DecodeDocument(Root(
+            Connection(),
+            extra: $"\"selectableConnectionIds\":[{selectable}]"
+        )));
+        string bindings = string.Join(
+            ',',
+            Enumerable.Range(0, 257)
+                .Select(index => $"\"feature.{index}\":null")
+        );
+        Assert.Throws<InvalidDataException>(() => DecodeDocument(Root(
+            Connection(),
+            extra: $"\"bindings\":{{{bindings}}}"
+        )));
     }
 
     [Fact]
@@ -86,6 +218,15 @@ public sealed class CompletionConnectionConfigLoaderTests {
         Encoding.UTF8.GetBytes(
             "{\"V\":1,\"connections\":[],\"defaultConnectionId\":\"main\"}"
         ),
+        Encoding.UTF8.GetBytes(Root(
+            Connection(),
+            extra: "\"selectableConnectionIds\":[\"main\"],"
+                + "\"SelectableConnectionIds\":[\"main\"]"
+        )),
+        Encoding.UTF8.GetBytes(Root(
+            Connection(),
+            extra: "\"bindings\":{},\"bindings\":{}"
+        )),
         Encoding.UTF8.GetBytes(Root(Connection()) + " trailing"),
         Encoding.UTF8.GetBytes(Root(Connection()).Replace("}", "},", StringComparison.Ordinal)),
         Encoding.UTF8.GetBytes("/*comment*/" + Root(Connection())),
@@ -443,11 +584,153 @@ public sealed class CompletionConnectionConfigLoaderTests {
             Assert.Equal("custom", item.CompletionSurfaceId);
             Assert.Equal("env-endpoint", item.BaseAddress);
             Assert.Equal("env-key", item.ApiKey);
+            Assert.Null(normalized.SelectableConnectionIds);
+            Assert.Null(normalized.Bindings);
         }
         finally {
             Environment.SetEnvironmentVariable(endpointEnv, null);
             Environment.SetEnvironmentVariable(keyEnv, null);
         }
+    }
+
+    [Fact]
+    public void NormalizeAndValidate_ValidatesAndFreezesOptionalMetadata() {
+        var selectable = new List<string> { "helper", "main" };
+        var bindings = new Dictionary<string, string?>(StringComparer.Ordinal) {
+            ["feature.primary"] = "helper",
+            ["feature.disabled"] = null,
+        };
+        CompletionConnectionsFileConfig normalized =
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [
+                    ProgrammaticConnection("main"),
+                    ProgrammaticConnection("helper"),
+                ],
+                DefaultConnectionId: "main",
+                SelectableConnectionIds: selectable,
+                Bindings: bindings
+            ));
+
+        selectable[0] = "main";
+        bindings["feature.primary"] = "main";
+        Assert.Equal(
+            ["helper", "main"],
+            normalized.SelectableConnectionIds
+        );
+        Assert.Equal(
+            "helper",
+            normalized.Bindings!["feature.primary"]
+        );
+        Assert.Null(normalized.Bindings["feature.disabled"]);
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<string>)normalized.SelectableConnectionIds!)[0] = "main"
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            ((IDictionary<string, string?>)normalized.Bindings)
+                ["feature.other"] = "main"
+        );
+    }
+
+    [Fact]
+    public void NormalizeAndValidate_RejectsInvalidOptionalMetadata() {
+        CompletionConnectionConfig main = ProgrammaticConnection("main");
+
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                SelectableConnectionIds: []
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                SelectableConnectionIds: ["main", "main"]
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                SelectableConnectionIds: ["missing", "main"]
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main, ProgrammaticConnection("helper")],
+                "main",
+                SelectableConnectionIds: ["helper"]
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                Bindings: new Dictionary<string, string?> {
+                    ["feature"] = " ",
+                }
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                Bindings: new Dictionary<string, string?> {
+                    ["feature"] = "missing",
+                }
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                Bindings: new Dictionary<string, string?> {
+                    [""] = "main",
+                }
+            ))
+        );
+        string oversizedIdentifier = new string('界', 43);
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                SelectableConnectionIds: [
+                    "main",
+                    oversizedIdentifier,
+                ]
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                Bindings: new Dictionary<string, string?> {
+                    [oversizedIdentifier] = null,
+                }
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                SelectableConnectionIds: Enumerable.Repeat(
+                    "main",
+                    257
+                ).ToArray()
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                [main],
+                "main",
+                Bindings: Enumerable.Range(0, 257).ToDictionary(
+                    index => $"feature.{index}",
+                    static _ => (string?)null,
+                    StringComparer.Ordinal
+                )
+            ))
+        );
     }
 
     [Fact]
@@ -537,16 +820,23 @@ public sealed class CompletionConnectionConfigLoaderTests {
     private static CompletionConnectionsFileConfig Decode(
         string item,
         string defaultId = "main"
+    ) => DecodeDocument(Root(item, defaultId: defaultId));
+
+    private static CompletionConnectionsFileConfig DecodeDocument(
+        string document
     ) => CompletionConnectionConfigLoader.Decode(
-        Encoding.UTF8.GetBytes(Root(item, defaultId: defaultId))
+        Encoding.UTF8.GetBytes(document)
     );
 
     private static string Root(
         string item,
         string version = "1",
-        string defaultId = "main"
+        string defaultId = "main",
+        string extra = ""
     ) => $"{{\"v\":{version},\"connections\":[{item}],"
-        + $"\"defaultConnectionId\":\"{defaultId}\"}}";
+        + $"\"defaultConnectionId\":\"{defaultId}\""
+        + (extra.Length == 0 ? string.Empty : "," + extra)
+        + "}";
 
     private static string Connection(
         string id = "main",
@@ -573,6 +863,16 @@ public sealed class CompletionConnectionConfigLoaderTests {
             Encoding.UTF8.GetBytes(document)
         );
     }
+
+    private static CompletionConnectionConfig ProgrammaticConnection(
+        string id
+    ) => new(
+        id,
+        "custom",
+        $"model-{id}",
+        "custom-v1",
+        "endpoint"
+    );
 
     private static string EnvName(string suffix)
         => $"ATELIA_COMPLETION_V1_{suffix}_{Guid.NewGuid():N}";

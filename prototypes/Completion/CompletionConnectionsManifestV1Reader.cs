@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -67,7 +68,9 @@ internal static class CompletionConnectionsManifestV1Reader {
             CompletionConnectionConfigLoader.NormalizeAndValidate(
                 new CompletionConnectionsFileConfig(
                     Array.AsReadOnly(unresolved),
-                    manifest.DefaultConnectionId
+                    manifest.DefaultConnectionId,
+                    manifest.SelectableConnectionIds,
+                    manifest.Bindings
                 )
             );
         return Freeze(normalized);
@@ -78,9 +81,26 @@ internal static class CompletionConnectionsManifestV1Reader {
     ) {
         CompletionConnectionConfig[] connections = config.Connections
             .ToArray();
+        IReadOnlyList<string>? selectableConnectionIds =
+            config.SelectableConnectionIds is null
+                ? null
+                : Array.AsReadOnly(
+                    config.SelectableConnectionIds.ToArray()
+                );
+        IReadOnlyDictionary<string, string?>? bindings =
+            config.Bindings is null
+                ? null
+                : new ReadOnlyDictionary<string, string?>(
+                    new Dictionary<string, string?>(
+                        config.Bindings,
+                        StringComparer.Ordinal
+                    )
+                );
         return new CompletionConnectionsFileConfig(
             Array.AsReadOnly(connections),
-            config.DefaultConnectionId
+            config.DefaultConnectionId,
+            selectableConnectionIds,
+            bindings
         );
     }
 
@@ -140,7 +160,7 @@ internal static class CompletionConnectionsManifestV1Reader {
             RequireProperties(
                 root,
                 required: ["v", "connections", "defaultConnectionId"],
-                optional: []
+                optional: ["selectableConnectionIds", "bindings"]
             );
             JsonElement version = root.GetProperty("v");
             if (version.ValueKind is not JsonValueKind.Number
@@ -185,7 +205,20 @@ internal static class CompletionConnectionsManifestV1Reader {
                     "defaultConnectionId must exactly match one connection id."
                 );
             }
-            return new WireManifest(connections, defaultConnectionId);
+            IReadOnlyList<string>? selectableConnectionIds =
+                ParseSelectableConnectionIds(
+                    root,
+                    ids,
+                    defaultConnectionId
+                );
+            IReadOnlyDictionary<string, string?>? bindings =
+                ParseBindings(root, ids);
+            return new WireManifest(
+                connections,
+                defaultConnectionId,
+                selectableConnectionIds,
+                bindings
+            );
         }
         catch (InvalidDataException) {
             throw;
@@ -202,6 +235,102 @@ internal static class CompletionConnectionsManifestV1Reader {
                 exception
             );
         }
+    }
+
+    private static IReadOnlyList<string>? ParseSelectableConnectionIds(
+        JsonElement root,
+        IReadOnlySet<string> connectionIds,
+        string defaultConnectionId
+    ) {
+        if (!root.TryGetProperty(
+                "selectableConnectionIds",
+                out JsonElement array)) {
+            return null;
+        }
+        if (array.ValueKind is not JsonValueKind.Array
+            || array.GetArrayLength() is < 1 or > MaximumConnectionCount) {
+            throw new InvalidDataException(
+                "selectableConnectionIds must contain between 1 and 256 connection ids."
+            );
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>(array.GetArrayLength());
+        foreach (JsonElement item in array.EnumerateArray()) {
+            string connectionId = RequireBoundedString(
+                item,
+                "selectableConnectionIds item",
+                MaximumIdentifierUtf8Bytes
+            );
+            if (!seen.Add(connectionId)) {
+                throw new InvalidDataException(
+                    "selectableConnectionIds contains a duplicate connection id."
+                );
+            }
+            if (!connectionIds.Contains(connectionId)) {
+                throw new InvalidDataException(
+                    "selectableConnectionIds references an unknown connection id."
+                );
+            }
+            result.Add(connectionId);
+        }
+        if (!seen.Contains(defaultConnectionId)) {
+            throw new InvalidDataException(
+                "selectableConnectionIds must contain defaultConnectionId."
+            );
+        }
+        return result;
+    }
+
+    private static IReadOnlyDictionary<string, string?>? ParseBindings(
+        JsonElement root,
+        IReadOnlySet<string> connectionIds
+    ) {
+        if (!root.TryGetProperty("bindings", out JsonElement bindings)) {
+            return null;
+        }
+        if (bindings.ValueKind is not JsonValueKind.Object) {
+            throw new InvalidDataException("bindings must be an object.");
+        }
+
+        var result = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (JsonProperty property in bindings.EnumerateObject()) {
+            if (result.Count >= MaximumConnectionCount) {
+                throw new InvalidDataException(
+                    "bindings must contain at most 256 entries."
+                );
+            }
+            string binding = RequireBoundedText(
+                property.Name,
+                "binding key",
+                MaximumIdentifierUtf8Bytes
+            );
+            if (result.ContainsKey(binding)) {
+                throw new InvalidDataException(
+                    "bindings contains a duplicate key."
+                );
+            }
+
+            string? connectionId = property.Value.ValueKind switch {
+                JsonValueKind.Null => null,
+                JsonValueKind.String => RequireBoundedString(
+                    property.Value,
+                    "binding connection id",
+                    MaximumIdentifierUtf8Bytes
+                ),
+                _ => throw new InvalidDataException(
+                    "binding values must be a connection id string or null."
+                )
+            };
+            if (connectionId is not null
+                && !connectionIds.Contains(connectionId)) {
+                throw new InvalidDataException(
+                    "bindings references an unknown connection id."
+                );
+            }
+            result.Add(binding, connectionId);
+        }
+        return result;
     }
 
     private static WireConnection ParseConnection(JsonElement item) {
@@ -331,6 +460,18 @@ internal static class CompletionConnectionsManifestV1Reader {
         int maximumUtf8Bytes
     ) {
         string parsed = RequireStringValue(value, propertyName);
+        return RequireBoundedText(
+            parsed,
+            propertyName,
+            maximumUtf8Bytes
+        );
+    }
+
+    private static string RequireBoundedText(
+        string parsed,
+        string propertyName,
+        int maximumUtf8Bytes
+    ) {
         if (string.IsNullOrWhiteSpace(parsed)
             || StrictUtf8.GetByteCount(parsed) > maximumUtf8Bytes) {
             throw new InvalidDataException(
@@ -381,7 +522,9 @@ internal static class CompletionConnectionsManifestV1Reader {
 
     private sealed record WireManifest(
         IReadOnlyList<WireConnection> Connections,
-        string DefaultConnectionId
+        string DefaultConnectionId,
+        IReadOnlyList<string>? SelectableConnectionIds,
+        IReadOnlyDictionary<string, string?>? Bindings
     );
 
     private sealed record WireConnection(

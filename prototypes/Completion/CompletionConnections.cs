@@ -8,7 +8,9 @@ namespace Atelia.Completion;
 
 public sealed record CompletionConnectionsFileConfig(
     IReadOnlyList<CompletionConnectionConfig> Connections,
-    string? DefaultConnectionId = null
+    string? DefaultConnectionId = null,
+    IReadOnlyList<string>? SelectableConnectionIds = null,
+    IReadOnlyDictionary<string, string?>? Bindings = null
 );
 
 public sealed record CompletionConnectionConfig(
@@ -255,12 +257,130 @@ public static class CompletionConnectionConfigLoader {
 
         if (!connectionIds.Contains(defaultConnectionId)) { throw new InvalidOperationException($"Completion defaultConnectionId '{defaultConnectionId}' does not match any connection id."); }
 
+        IReadOnlyList<string>? selectableConnectionIds =
+            NormalizeSelectableConnectionIds(
+                config.SelectableConnectionIds,
+                connectionIds,
+                defaultConnectionId
+            );
+        IReadOnlyDictionary<string, string?>? bindings =
+            NormalizeBindings(config.Bindings, connectionIds);
+
         return CompletionConnectionsManifestV1Reader.Freeze(
             new CompletionConnectionsFileConfig(
                 resolvedConnections,
-                defaultConnectionId
+                defaultConnectionId,
+                selectableConnectionIds,
+                bindings
             )
         );
+    }
+
+    private static IReadOnlyList<string>? NormalizeSelectableConnectionIds(
+        IReadOnlyList<string>? configured,
+        IReadOnlySet<string> connectionIds,
+        string defaultConnectionId
+    ) {
+        if (configured is null) { return null; }
+        if (configured.Count is < 1
+            or > CompletionConnectionsManifestV1Reader
+                .MaximumConnectionCount) {
+            throw new InvalidOperationException(
+                "Completion selectableConnectionIds must contain between "
+                + "1 and 256 connection ids."
+            );
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var normalized = new List<string>(configured.Count);
+        for (int index = 0; index < configured.Count; index++) {
+            string? connectionId = configured[index];
+            RequireNonBlank(
+                connectionId,
+                $"Completion selectableConnectionIds[{index}] must be non-empty."
+            );
+            RequireConfigBound(
+                connectionId!,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumIdentifierUtf8Bytes,
+                "Completion selectable connection id"
+            );
+            if (!seen.Add(connectionId!)) {
+                throw new InvalidOperationException(
+                    "Completion selectableConnectionIds contains duplicate "
+                    + $"id '{connectionId}'."
+                );
+            }
+            if (!connectionIds.Contains(connectionId!)) {
+                throw new InvalidOperationException(
+                    "Completion selectableConnectionIds references unknown "
+                    + $"connection id '{connectionId}'."
+                );
+            }
+            normalized.Add(connectionId!);
+        }
+        if (!seen.Contains(defaultConnectionId)) {
+            throw new InvalidOperationException(
+                "Completion selectableConnectionIds must contain the "
+                + $"default connection id '{defaultConnectionId}'."
+            );
+        }
+        return normalized;
+    }
+
+    private static IReadOnlyDictionary<string, string?>? NormalizeBindings(
+        IReadOnlyDictionary<string, string?>? configured,
+        IReadOnlySet<string> connectionIds
+    ) {
+        if (configured is null) { return null; }
+        if (configured.Count
+            > CompletionConnectionsManifestV1Reader
+                .MaximumConnectionCount) {
+            throw new InvalidOperationException(
+                "Completion bindings must contain at most 256 entries."
+            );
+        }
+
+        var normalized = new Dictionary<string, string?>(
+            configured.Count,
+            StringComparer.Ordinal
+        );
+        foreach ((string? binding, string? connectionId) in configured) {
+            RequireNonBlank(
+                binding,
+                "Completion binding keys must be non-empty."
+            );
+            RequireConfigBound(
+                binding!,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumIdentifierUtf8Bytes,
+                "Completion binding key"
+            );
+            if (!normalized.TryAdd(binding!, connectionId)) {
+                throw new InvalidOperationException(
+                    $"Completion bindings contains duplicate key '{binding}'."
+                );
+            }
+            if (connectionId is null) { continue; }
+
+            RequireNonBlank(
+                connectionId,
+                $"Completion binding '{binding}' must reference a non-empty connection id or null."
+            );
+            RequireConfigBound(
+                connectionId,
+                CompletionConnectionsManifestV1Reader
+                    .MaximumIdentifierUtf8Bytes,
+                "Completion binding connection id"
+            );
+            if (!connectionIds.Contains(connectionId)) {
+                throw new InvalidOperationException(
+                    $"Completion binding '{binding}' references unknown "
+                    + $"connection id '{connectionId}'."
+                );
+            }
+        }
+        return normalized;
     }
 
     private static void RequireNonBlank(string? value, string message) {

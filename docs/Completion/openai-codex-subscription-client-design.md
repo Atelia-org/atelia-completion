@@ -450,6 +450,13 @@ first slice 把“HTTP 401 且尚未收到任何 SSE payload”视为当前 pinn
 因此仅在 credential generation 确实变化后允许一次 byte-identical retry。这是未文档化 backend 的受控假设，不是公开
 协议证明；任何已收到 SSE payload 的调用都绝不重试，第二个 401 也立即 terminal。
 
+上述“不透明重试”是`OpenAICodexResponsesClient`自身的provider adapter契约。Galatea的side-effect-free
+`TextExtractor` orchestration在此边界之外，对exact `TransportOutcomeUnknown`采用最多5次总尝试，并在重试前
+依次等待1s、2s、4s、8s。它不扩大HTTP/SSE错误分类，不在取得任何usable response后重试，artifact tool也只在
+最终成功结果聚合后执行一次。因为outcome unknown仍可能已经消耗provider算力，该策略只承诺无重复本地artifact
+副作用，不承诺provider侧exactly-once或单次计费。TextExtractor没有code-owned elapsed deadline，只服从caller
+cancellation。
+
 Responses function-name validator 在 protocol core 请求 credential 或执行 HTTP callback 前运行；current tool declaration 与
 historical `ActionBlock.ToolCall` 的 dotted、超长或其它 profile-invalid name 会抛 provider-neutral
 `CompletionRequestRejectedException`，携带 code-owned `openai.responses.invalid-function-name` 与
@@ -756,6 +763,8 @@ direct backend 是 drift-prone implementation surface。开始 WP-2 与 opt-in l
   aggregator，同时保持独立 `ApiSpecId` 与 reasoning mapping entry；
 - `OpenAICodexResponsesClient`：固定 direct SSE route、逐 attempt credential snapshot、默认并发 3、401 仅在
   generation 改变时单次 byte-identical retry、non-2xx/transport/SSE error 的 code-owned redaction；
+- Galatea `TextExtractor`：在client边界之外只对pre-response `TransportOutcomeUnknown`进行5次总尝试与
+  1s/2s/4s/8s指数退避，不设置独立elapsed deadline；
 - `CodexSubscriptionCompletionClientFactory`：exact intercept 新 kind，验证 canonical surface/base 与 forbidden key；
 - `GalateaCodexSubscriptionComposition`：只有启用新 kind 时才要求 exact one user、exact one Codex connection 和
   explicit loopback `listenUrls`，并在 server bind/client creation 前 fail closed；Codex mode 还会替换默认可 reload

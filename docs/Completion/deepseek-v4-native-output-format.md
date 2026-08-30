@@ -2,7 +2,7 @@
 
 > **用途**：记述 DeepSeek V4 模型的 token 级原生输出格式。供后续模型中立的上下文建模、格式互转、回灌（replay）设计时查阅。
 > **权威源（Canonical-Source）**：`deepseek-ai/DeepSeek-V4-Pro` 仓库 `encoding/encoding_dsv4.py`（当前参考实现为 vllm `vllm/tokenizers/deepseek_v4_encoding.py`）。
-> **适用范围**：`prototypes/Completion/OpenAI/*` 中的 `DeepSeekV4ChatClient`、`OpenAIChatStreamParser`、`OpenAIChatMessageConverter`。
+> **适用范围**：`src/Completion/OpenAI/*` 中的 `DeepSeekV4ChatClient`、`OpenAIChatStreamParser`、`OpenAIChatMessageConverter`。
 > **最后更新**：2026-05-03
 
 ---
@@ -383,7 +383,7 @@ DeepSeek V4 选择刚性三段式而非 Anthropic 的灵活 block 序列，这�
 | vllm 集成版 tokenizer wrapper | `vllm-project/vllm` → `vllm/tokenizers/deepseek_v4.py` |
 | vllm tool parser | `vllm-project/vllm` → `vllm/tool_parsers/deepseekv4_tool_parser.py` |
 | vllm reasoning parser | `vllm-project/vllm` → `vllm/reasoning/deepseek_v3_reasoning_parser.py`（V4 复用 V3 parser） |
-| Atelia OpenAI client | `prototypes/Completion/OpenAI/DeepSeekV4ChatClient.cs` |
-| Atelia stream parser | `prototypes/Completion/OpenAI/OpenAIChatStreamParser.cs` |
-| Atelia message converter | `prototypes/Completion/OpenAI/OpenAIChatMessageConverter.cs` |
-| Atelia dialect 定义 | `prototypes/Completion/OpenAI/OpenAIChatDialect.cs` |
+| Atelia OpenAI client | `src/Completion/OpenAI/DeepSeekV4ChatClient.cs` |
+| Atelia stream parser | `src/Completion/OpenAI/OpenAIChatStreamParser.cs` |
+| Atelia message converter | `src/Completion/OpenAI/OpenAIChatMessageConverter.cs` |
+| Atelia dialect 定义 | `src/Completion/OpenAI/OpenAIChatDialect.cs` |

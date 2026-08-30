@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\prototypes\Completion\Completion.csproj" />
-    <ProjectReference Include="..\..\prototypes\Completion.Tools\Completion.Tools.csproj" />
+    <ProjectReference Include="..\..\src\Completion\Completion.csproj" />
+    <ProjectReference Include="..\..\src\Completion.Tools\Completion.Tools.csproj" />
   </ItemGroup>
 </Project>

@@ -1,7 +1,7 @@
 # Completion HTTP Transport Pipeline
 
-> **用途**：固定 `prototypes/Completion` 在 HTTP transport 侧的主干设计，避免后续会话在 capture / record / replay 方向上各自发散。
-> **适用范围**：`prototypes/Completion/Transport/*` 及所有继续走 `HttpClient` 的 provider client。
+> **用途**：固定 `src/Completion` 在 HTTP transport 侧的主干设计，避免后续会话在 capture / record / replay 方向上各自发散。
+> **适用范围**：`src/Completion/Transport/*` 及所有继续走 `HttpClient` 的 provider client。
 > **最后更新**：2026-05-02
 
 ---

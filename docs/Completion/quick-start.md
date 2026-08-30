@@ -534,7 +534,7 @@ Gemini 路径的特殊点是：
   不会伪装成普通`Incomplete`或自动重试。Anthropic的唯一窄兼容是：blocks全关、已收到非空
   `message_delta.stop_reason`后的无pending-frame clean EOF可按该reason结束；read exception、取消、pending frame
   和active block均不适用。完整矩阵见
-  [`prototypes/Completion/README.md`](../../prototypes/Completion/README.md)。
+  [`src/Completion/README.md`](../../src/Completion/README.md)。
 - OpenAI Responses只按typed `response.refusal.delta/done`、message refusal content或最终response output fallback
   识别模型拒答，不从普通文本猜测。refusal正文仍可作为transient text/observer delta显示，但必须等最终
   `response.completed` / `response.incomplete` 后才收口为`Incomplete(response.refusal)`；正文不进入errors或termination
@@ -732,5 +732,5 @@ Gemini 的特殊点不是构造方式，而是历史回灌：
 - [openai-compatible-evolution.md](./openai-compatible-evolution.md) — 当你撞到新的兼容端点差异，按这份增量演进，不要堆 flag。
 - `docs/Agent/Thinking-Replay-Design.md` — `ActionBlock.Thinking` / `OpaquePayload` 回灌契约全本（特别是 §3.1、§5.2）。
 - `prototypes/LiveContextProto/Program.cs` — client 构造的最小活样本（看 `Main` 中的 `oaiClient = new OpenAIChatClient(...)` 几行；其余 `CharacterAgent` / `ConsoleTui` 是 prototype 私有封装，对单纯调通本库不必关心）。
-- `prototypes/Completion.Abstractions/CompletionResult.cs` — `CompletionResult` record 的实现与契约。
-- `prototypes/Completion/CompletionAggregator.cs` — provider 流式输出在 Completion 层内部的标准聚合器。
+- `src/Completion.Abstractions/CompletionResult.cs` — `CompletionResult` record 的实现与契约。
+- `src/Completion/CompletionAggregator.cs` — provider 流式输出在 Completion 层内部的标准聚合器。

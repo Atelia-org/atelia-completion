@@ -1,8 +1,8 @@
 # Completion & Completion.Abstractions — Memory Notebook
 
-> **用途**：供 AI Agent 在新会话中快速重建对 `prototypes/Completion*` 的整体认知。
+> **用途**：供 AI Agent 在新会话中快速重建对 `src/Completion*` 的整体认知。
 > **原则**：只记当前主线设计、已落地决策与高风险边界，不复述代码细节。
-> **最后更新**：2026-08-05
+> **最后更新**：2026-08-30
 
 ---
 
@@ -12,6 +12,10 @@
 
 **Completion** = provider实现层：当前包含OpenAI Chat Completions、OpenAI Responses、Anthropic Messages
 与Google Gemini generateContent四套原生client，加上共享HTTP/SSE transport和通用工具类。
+
+**Completion.Tools** = 独立的 Agent 工具运行时：负责从业务方法/结构化产物生成工具定义、管理 session 级可见性，并执行模型发出的 `RawToolCall`。
+
+三个项目已从 `prototypes/` 迁移至 `src/`，程序集名、命名空间和项目名保持不变；`src/` 表示长期保留的核心基础设施归属，不表示所有 provider-specific API 已经对外冻结。
 
 拆两层的目的：让 Agent.Core 等上层只依赖稳定的 Abstractions，新增 provider 时只动 Completion 层不破坏上层。
 
@@ -101,7 +105,7 @@
 四个client共享`CompletionSseEventReader`处理CR/LF/CRLF、空行提交、多行`data:`、注释、BOM与
 UTF-8 replacement decoding；provider parser只负责各自的JSON shape与terminal lifecycle。当前
 transport-liveness权威契约及四Provider terminal matrix见
-[`prototypes/Completion/README.md`](../../prototypes/Completion/README.md)。
+[`src/Completion/README.md`](../../src/Completion/README.md)。
 
 `AnthropicStreamParser` 直接处理 8 种事件：
 
@@ -209,7 +213,7 @@ Gemini 的关键不是“有 thinking token”，而是 `thoughtSignature` 会�
 ## 目录结构速览
 
 ```text
-prototypes/Completion.Abstractions/
+src/Completion.Abstractions/
 ├─ ICompletionClient.cs       核心接口（Name, ApiSpecId, StreamCompletionAsync）
 ├─ CompletionRequest.cs       请求 DTO（不可变）
 ├─ ThinkingChunk.cs           thinking 块的 provider-neutral 容器
@@ -217,7 +221,7 @@ prototypes/Completion.Abstractions/
 ├─ RawToolCall.cs             原始工具调用 + ToolExecutionStatus 枚举（Success/Failed/Skipped）
 └─ ToolDefinition.cs          ToolDefinition + ToolSchema
 
-prototypes/Completion/
+src/Completion/
 ├─ Transport/
 │  ├─ CompletionHttpClientBuilder.cs   组装 capture / replay handler 链
 │  ├─ CompletionHttpExchange.cs        HTTP 文本交换快照
@@ -249,7 +253,7 @@ prototypes/Completion/
    ├─ StreamParserToolUtility.cs    StreamParser 共享工具
    └─ ToolArgumentParsingResult.cs  解析结果 DTO
 
-prototypes/Completion.Tools/
+src/Completion.Tools/
 ├─ ITool.cs                     工具执行协议（ExecuteAsync 接收 ToolExecutionContext）
 ├─ ToolExecutor.cs              session 级调度壳；按工具名分发 RawToolCall，并统一处理缺失/取消/异常
 ├─ JsonArgumentParser.cs        schema-driven JSON 参数解析 helper
@@ -275,7 +279,7 @@ prototypes/Completion.Tools/
 - `ToolDefinition.InputSchema` 已支持递归 object / array / value 声明
 - provider 请求投影与执行期参数解析都走同一条 `ToolDefinition.InputSchema` 主链，不再存在 flat 公共 API 作为第二真源
 - `ReflectedToolDefinitionBuilder` 是共享声明 helper；若只需要 `ToolDefinition`，调用方仍需显式放进 `CompletionPromptPrefix.OutputContract.Tools`，若要直接拿到可执行工具则优先用 `MethodToolWrapper` / `ArtifactToolWrapper<T>`
-- `ReflectedToolDefinitionBuilder` 位于 `prototypes/Completion.Tools/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
+- `ReflectedToolDefinitionBuilder` 位于 `src/Completion.Tools/Declaration/`，当前只负责 `class` / `record class` + Attribute -> `ToolDefinition`
 - LLM JSON 没有 uint，调用方需自行做 long → uint 的范围检查
 
 ### 计费 token usage 已从 Completion 抽象层移除

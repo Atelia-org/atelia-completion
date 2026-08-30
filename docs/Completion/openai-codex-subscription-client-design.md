@@ -2,7 +2,7 @@
 
 > 状态：Implemented（Borrowed credential MVP；WP-0 至 WP-3 已落地，WP-4 live acceptance 见 §14）  
 > 日期：2026-08-25  
-> 适用范围：`prototypes/Completion`、`tests/Completion.Tests`，以及选择接入该 client 的 Galatea Host composition  
+> 适用范围：`src/Completion`、`tests/Completion.Tests`，以及选择接入该 client 的 Galatea Host composition  
 > 协议声明：代码已经实现不代表 ChatGPT backend 成为稳定公共 API；该 direct route 仍是版本钉死的 implementation coupling
 
 ## 1. 结论

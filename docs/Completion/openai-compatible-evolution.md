@@ -1,7 +1,7 @@
 # OpenAI-Compatible 演进指南
 
 > **用途**：指导后续 LLM Agent 会话在 `OpenAI Chat Completions` 或更广义 `OpenAI-compatible` 端点遇到不兼容问题时，如何增量分析、设计与落地。
-> **适用范围**：`prototypes/Completion/OpenAI/*`
+> **适用范围**：`src/Completion/OpenAI/*`
 > **最后更新**：2026-05-02
 
 ---

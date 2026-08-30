@@ -267,13 +267,15 @@ domain-separated account-id fingerprint，不是 token hash，不进入 SessionJ
 在 connections V1 之外提供。未来若需要多 account 机器路由，再通过 strict connections V2 引入非 secret
 `credentialId`，不能把 raw account id 加进 V1。
 
-### 5.2 文件安全
+### 5.2 文件读取边界
 
 Linux first slice 使用 handle-based、component-safe no-follow、bounded reader，不复用普通 `File.ReadAllText`：
 
-- final file 必须是当前用户拥有的 regular file；
-- 拒绝 final symlink/reparse、execute bits，以及 group/other 的任何权限；接受 `0400` 或 `0600`；
-- credential directory 必须由当前用户拥有，至少拒绝 group/other write；推荐 `0700`；
+- final file 必须是OS允许当前进程读取的regular file；provider不解释owner、file mode或父目录写权限，
+  也不替operator修改权限；
+- 拒绝final symlink/reparse与non-regular file；ancestor component继续使用no-follow打开；
+- `auth.json`包含access token，operator仍应遵循OpenAI官方文档，将其视同密码并通过文件系统、挂载或
+  credential store保护；这项部署责任不由只读consumer的mode检查代替；
 - JSON 文件上限 128 KiB，单个 token 上限 64 KiB，strict UTF-8，depth bounded；
 - critical fields 的 duplicate/case-variant duplicate 必须拒绝；未知字段允许忽略以容纳 Codex schema 演进；
 - 先打开并验证受检 credential directory handle，再通过 anchored `openat`/`openat2` 打开 final file；ancestor/final
@@ -283,9 +285,9 @@ Linux first slice 使用 handle-based、component-safe no-follow、bounded reade
 - 不在异常中附带 raw JSON、token prefix/hash、raw account id 或完整 credential path；
 - 解析后的原始 byte buffer 在 `finally` 清零。
 
-本次本地验收观察（不是通用设计 authority）：2026-08-25 的当前机器上，`/root/.codex/auth.json` mode 为 `0755`；
-父目录 `/root` 为 `0700`，所以它当前并非全机可读，但文件自身仍不满足上述最小权限契约。后续 live implementation
-acceptance 前应由 operator 明确收紧为 `0600`。本设计阶段不修改该文件或权限。
+早期实现曾要求owner匹配并仅接受`0400`/`0600`，这会把只读consumer变成operator存储策略的裁判，
+也会拒绝权限位不能表达真实ACL的挂载。当前contract hard-cut为readability + regular/no-follow边界；
+部署侧仍应优先使用private file或OS credential store，但client不再据mode/owner猜测实际可访问主体。
 
 Windows/keyring 支持不进入 first slice；对应平台必须明确 `PlatformNotSupported` 或 `AuthStorageUnavailable`，不能静默
 退化为宽松读取。
@@ -435,7 +437,7 @@ terminal evidence set，因此不 bump public/Codex v2。
 | file missing/keyring-only/logout | `AuthStorageUnavailable` |
 | partial write/暂时不可读 | bounded reopen 一次；仍失败为 `AuthSnapshotTemporarilyUnreadable` |
 | 非 `chatgpt` auth mode | `UnsupportedAuthMode` |
-| unsafe mode/owner/symlink | `CredentialStorageUnsafe` |
+| symlink、non-regular或无法安全anchored-open | `CredentialStorageUnsafe` |
 | token expired | `AuthOwnerRefreshRequired`，network 前失败 |
 | account mid-process changed | `AuthAccountChanged`，禁止自动切换 |
 | current declaration / historical tool call 的 function name 不满足 Responses profile | converter 在 credential/network 前抛 typed local no-dispatch rejection；只分类这一 exact validator |
@@ -589,7 +591,7 @@ fingerprint 不变。
 - effective credential 未变时 generation 稳定，token/account 变化时递增；
 - Host provisioned account fingerprint mismatch 跨重启 fail closed；
 - 不 materialize refresh token；
-- mode/owner/symlink/bounds/duplicate/partial-write/expiry tests 通过；
+- readable mode/owner、symlink/non-regular、bounds/duplicate/partial-write/expiry tests 通过；
 - credential JSON/structured-log/debugger canary 不可见；
 - 测试只使用显式 temp fixture，不探测真实 home。
 
@@ -703,8 +705,8 @@ publish。
 17. public/Codex reasoning cross-replay 拒绝；
 18. golden/call-log/exception/API response 全文扫描不包含 access/refresh/id/account canary；
 19. manifest/factory/fingerprint/registry lifetime/dispose contract；account fingerprint 跨重启 mismatch；
-20. Linux `0400`/`0600` 接受，`0644`/`0660`/execute/symlink/non-regular 拒绝；relative `$CODEX_HOME`、ancestor
-    symlink 与 unsafe directory owner/mode 拒绝；
+20. Linux上不同owner/mode只要OS允许读取就接受；symlink/non-regular拒绝；relative `$CODEX_HOME`与ancestor
+    symlink拒绝；
 21. loopback classifier exact 覆盖 `127.0.0.1`、`::1`、wildcard、`0.0.0.0` 与 LAN address；
 22. live smoke 只读 explicit authority file，验证没有复制或 materialize refresh token；Agent Control live acceptance
     锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；
@@ -757,7 +759,7 @@ direct backend 是 drift-prone implementation surface。开始 WP-2 与 opt-in l
 2026-08-25 的 Borrowed credential MVP 已落到以下主链：
 
 - `CodexCliAuthFileCredentialProvider`：只读 file-backed Codex `auth.json`，逐路径组件
-  `openat(O_NOFOLLOW)`，同一 fd 双读校验，拒绝不安全 owner/mode/symlink，永不读取成 managed string 的
+  `openat(O_NOFOLLOW)`，同一 fd 双读校验，不解释owner/mode并拒绝symlink/non-regular，永不读取成 managed string 的
   `refresh_token`/`id_token`，永不 refresh/write-back；
 - `OpenAIResponsesProtocolClientCore`：public Responses 与 Codex sibling client 共用 projection、SSE reader/parser、
   aggregator，同时保持独立 `ApiSpecId` 与 reasoning mapping entry；
@@ -799,11 +801,12 @@ opt-in live acceptance 位于 `OpenAICodexResponsesLiveTests`，必须同时提�
 它不会复制 auth file，默认不会启用 HTTP raw/call log，也不会触发 refresh/故意制造 401。Agent Control shape 使用独立
 enable switch；raw JSONL 还需要显式 fresh absolute path，且只用于短期诊断。
 
-2026-08-25 live acceptance：将 operator 选定的 `/root/.codex/auth.json` 从历史遗留 `0755` 收紧为 `0600` 后，
+2026-08-25 live acceptance：当时曾将operator选定的`/root/.codex/auth.json`从历史遗留`0755`收紧为`0600`后，
 以 `originator=atelia`、model `gpt-5.4` 发出一次小请求，收到 semantic `response.completed`，聚合文本精确为 `OK`。
 前两次诊断请求只暴露出成功响应缺失 `Content-Type` 的兼容差异，未读取/打印 response body；加入上述窄兼容和离线
 回归后第三次通过。整个 acceptance 未调用 refresh endpoint、未写回 auth file 内容、未复制 credential，也未输出
 token/account id。
+该chmod是历史验收步骤，不是当前只读credential consumer的运行前置条件。
 
 2026-08-26 的 `gpt-5.6-sol` tool probe matrix 使用 `CompletionReasoningEffort.Max`：无 tool、required underscore、
 required constrained underscore 均成功；required dotted 与 `strict:true` optional underscore 均稳定返回 HTTP 400。

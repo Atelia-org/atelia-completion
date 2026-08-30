@@ -169,7 +169,7 @@ public sealed class CodexSubscriptionCredentialException : Exception {
         CodexSubscriptionCredentialFailureReason.AuthStorageUnavailable =>
             "The Codex authentication file is unavailable.",
         CodexSubscriptionCredentialFailureReason.CredentialStorageUnsafe =>
-            "The Codex authentication file or directory does not satisfy the required storage protections.",
+            "The Codex authentication path could not be safely opened as a regular non-symlink file.",
         CodexSubscriptionCredentialFailureReason.AuthSnapshotTemporarilyUnreadable =>
             "The Codex authentication snapshot changed while it was being read.",
         CodexSubscriptionCredentialFailureReason.AuthSnapshotMalformed =>

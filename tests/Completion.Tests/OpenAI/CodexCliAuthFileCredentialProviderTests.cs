@@ -300,38 +300,32 @@ public sealed class CodexCliAuthFileCredentialProviderTests {
     }
 
     [Fact]
-    public async Task GetCredentialAsync_AcceptsOnlyCanonicalFileModes() {
+    public async Task GetCredentialAsync_AcceptsReadableFileModes() {
         using var fixture = new AuthFixture();
         string token = CreateAccessToken(Now.AddHours(1), "account-mode");
         fixture.WriteAuth(token, "account-mode");
 
         foreach (UnixFileMode mode in new[] {
             UnixFileMode.UserRead,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite
-        }) {
-            File.SetUnixFileMode(fixture.AuthFilePath, mode);
-            var provider = new CodexCliAuthFileCredentialProvider(
-                fixture.AuthFilePath,
-                new FixedTimeProvider(Now)
-            );
-            _ = await provider.GetCredentialAsync();
-        }
-
-        foreach (UnixFileMode mode in new[] {
+            UnixFileMode.UserRead | UnixFileMode.UserWrite,
             UnixFileMode.UserRead | UnixFileMode.GroupRead,
             UnixFileMode.UserRead | UnixFileMode.UserWrite
+                | UnixFileMode.UserExecute,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite
                 | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupWrite
+                | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead | UnixFileMode.OtherWrite
+                | UnixFileMode.OtherExecute
         }) {
             File.SetUnixFileMode(fixture.AuthFilePath, mode);
             var provider = new CodexCliAuthFileCredentialProvider(
                 fixture.AuthFilePath,
                 new FixedTimeProvider(Now)
             );
-            await AssertReason(
-                provider,
-                CodexSubscriptionCredentialFailureReason
-                    .CredentialStorageUnsafe
-            );
+            CodexSubscriptionCredential credential =
+                await provider.GetCredentialAsync();
+            Assert.Equal("account-mode", credential.AccountId);
         }
     }
 
@@ -366,7 +360,7 @@ public sealed class CodexCliAuthFileCredentialProviderTests {
     }
 
     [Fact]
-    public async Task GetCredentialAsync_RejectsUnsafeCredentialDirectory() {
+    public async Task GetCredentialAsync_AcceptsReadableSharedDirectory() {
         using var fixture = new AuthFixture();
         string token = CreateAccessToken(Now.AddHours(1), "account-directory");
         fixture.WriteAuth(token, "account-directory");
@@ -375,19 +369,21 @@ public sealed class CodexCliAuthFileCredentialProviderTests {
             UnixFileMode.UserRead
                 | UnixFileMode.UserWrite
                 | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead
                 | UnixFileMode.GroupWrite
                 | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead
+                | UnixFileMode.OtherWrite
+                | UnixFileMode.OtherExecute
         );
         try {
             var provider = new CodexCliAuthFileCredentialProvider(
                 fixture.AuthFilePath,
                 new FixedTimeProvider(Now)
             );
-            await AssertReason(
-                provider,
-                CodexSubscriptionCredentialFailureReason
-                    .CredentialStorageUnsafe
-            );
+            CodexSubscriptionCredential credential =
+                await provider.GetCredentialAsync();
+            Assert.Equal("account-directory", credential.AccountId);
         }
         finally {
             File.SetUnixFileMode(
@@ -420,10 +416,24 @@ public sealed class CodexCliAuthFileCredentialProviderTests {
     }
 
     [Fact]
-    public async Task GetCredentialAsync_RejectsSymlinkedFileAndDirectory() {
+    public async Task GetCredentialAsync_RejectsSymlinkedAndNonRegularPaths() {
         using var fixture = new AuthFixture();
         string token = CreateAccessToken(Now.AddHours(1), "account-link");
         fixture.WriteAuth(token, "account-link");
+
+        string directoryAsFile = Path.Combine(
+            fixture.RootPath,
+            "directory-as-auth"
+        );
+        Directory.CreateDirectory(directoryAsFile);
+        var directoryAsFileProvider = new CodexCliAuthFileCredentialProvider(
+            directoryAsFile,
+            new FixedTimeProvider(Now)
+        );
+        await AssertReason(
+            directoryAsFileProvider,
+            CodexSubscriptionCredentialFailureReason.CredentialStorageUnsafe
+        );
 
         string fileLink = Path.Combine(fixture.RootPath, "auth-link.json");
         File.CreateSymbolicLink(fileLink, fixture.AuthFilePath);
@@ -528,7 +538,7 @@ public sealed class CodexCliAuthFileCredentialProviderTests {
     }
 
     [Fact]
-    public async Task GetCredentialAsync_RejectsWrongFileOwnerWhenTestCanChangeOwner() {
+    public async Task GetCredentialAsync_AcceptsDifferentFileOwnerWhenReadable() {
         if (!OperatingSystem.IsLinux() || GetEffectiveUserId() != 0) {
             return;
         }
@@ -542,11 +552,9 @@ public sealed class CodexCliAuthFileCredentialProviderTests {
                 fixture.AuthFilePath,
                 new FixedTimeProvider(Now)
             );
-            await AssertReason(
-                provider,
-                CodexSubscriptionCredentialFailureReason
-                    .CredentialStorageUnsafe
-            );
+            CodexSubscriptionCredential credential =
+                await provider.GetCredentialAsync();
+            Assert.Equal("account-owner", credential.AccountId);
         }
         finally {
             Assert.Equal(

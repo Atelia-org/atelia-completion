@@ -78,7 +78,8 @@ CompletionResult result = await client.StreamCompletionAsync(
 
 运行边界：
 
-- 当前只支持 Linux file-backed credential；`auth.json` 必须由当前用户拥有，mode 为 `0400` 或 `0600`；
+- 当前只支持 Linux file-backed credential；provider不解释文件owner/mode，只要求操作系统允许当前进程读取一个
+  non-symlink regular file；operator仍应按OpenAI官方建议把`auth.json`视同密码并自行保护；
 - provider 每个 logical attempt 重读 snapshot，但从不 materialize refresh/id token，不 refresh、不写文件；
 - access token 过期或 backend 401 且文件 generation 未变化时，先运行 Codex 让它 refresh，必要时重新 `codex login`；
 - endpoint 固定为 `https://chatgpt.com/backend-api/codex/responses`，它不是公开稳定 API；

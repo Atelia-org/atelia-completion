@@ -173,11 +173,11 @@ public sealed class CodexCliAuthFileCredentialProvider
         using SafeFileHandle directory = LinuxOpen.OpenDirectoryChain(
             directoryPath
         );
-        LinuxOpen.ValidateCredentialDirectory(directory);
+        LinuxOpen.ValidateDirectoryType(directory);
         cancellationToken.ThrowIfCancellationRequested();
 
         using SafeFileHandle file = LinuxOpen.OpenFile(directory, fileName);
-        LinuxOpen.ValidateCredentialFile(file);
+        LinuxOpen.ValidateRegularFile(file);
 
         long length;
         try {
@@ -774,16 +774,10 @@ public sealed class CodexCliAuthFileCredentialProvider
             }
         }
 
-        public static void ValidateCredentialDirectory(
+        public static void ValidateDirectoryType(
             SafeFileHandle handle
         ) {
-            LinuxMetadata metadata = ReadMetadata(handle);
-            UnixFileMode permissions = File.GetUnixFileMode(handle);
-            if ((metadata.Mode & LinuxFileTypeMask) != LinuxDirectoryType
-                || metadata.UserId != GetEffectiveUserId()
-                || (permissions
-                    & (UnixFileMode.GroupWrite
-                        | UnixFileMode.OtherWrite)) != 0) {
+            if ((ReadMode(handle) & LinuxFileTypeMask) != LinuxDirectoryType) {
                 throw Failure(
                     CodexSubscriptionCredentialFailureReason
                         .CredentialStorageUnsafe
@@ -791,14 +785,11 @@ public sealed class CodexCliAuthFileCredentialProvider
             }
         }
 
-        public static void ValidateCredentialFile(SafeFileHandle handle) {
-            LinuxMetadata metadata = ReadMetadata(handle);
-            UnixFileMode permissions = File.GetUnixFileMode(handle);
-            bool safePermissions = permissions is UnixFileMode.UserRead
-                or (UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            if ((metadata.Mode & LinuxFileTypeMask) != LinuxRegularFileType
-                || metadata.UserId != GetEffectiveUserId()
-                || !safePermissions) {
+        public static void ValidateRegularFile(SafeFileHandle handle) {
+            // Read authority comes from the successful OS open. This
+            // read-only consumer deliberately does not infer authority or
+            // confidentiality from uid/gid or Unix permission bits.
+            if ((ReadMode(handle) & LinuxFileTypeMask) != LinuxRegularFileType) {
                 throw Failure(
                     CodexSubscriptionCredentialFailureReason
                         .CredentialStorageUnsafe
@@ -823,7 +814,7 @@ public sealed class CodexCliAuthFileCredentialProvider
             );
         }
 
-        private static LinuxMetadata ReadMetadata(SafeFileHandle handle) {
+        private static uint ReadMode(SafeFileHandle handle) {
             bool addedRef = false;
             IntPtr buffer = Marshal.AllocHGlobal(256);
             try {
@@ -836,24 +827,19 @@ public sealed class CodexCliAuthFileCredentialProvider
                     );
                 }
 
-                (int modeOffset, int userIdOffset) =
-                    RuntimeInformation.ProcessArchitecture switch {
-                        Architecture.X64 => (24, 28),
-                        Architecture.Arm64 => (16, 24),
-                        _ => throw Failure(
-                            CodexSubscriptionCredentialFailureReason
-                                .UnsupportedPlatform
-                        )
-                    };
+                int modeOffset = RuntimeInformation.ProcessArchitecture switch {
+                    Architecture.X64 => 24,
+                    Architecture.Arm64 => 16,
+                    _ => throw Failure(
+                        CodexSubscriptionCredentialFailureReason
+                            .UnsupportedPlatform
+                    )
+                };
                 uint mode = unchecked((uint)Marshal.ReadInt32(
                     buffer,
                     modeOffset
                 ));
-                uint userId = unchecked((uint)Marshal.ReadInt32(
-                    buffer,
-                    userIdOffset
-                ));
-                return new LinuxMetadata(mode, userId);
+                return mode;
             }
             finally {
                 if (addedRef) {
@@ -862,8 +848,6 @@ public sealed class CodexCliAuthFileCredentialProvider
                 Marshal.FreeHGlobal(buffer);
             }
         }
-
-        private sealed record LinuxMetadata(uint Mode, uint UserId);
 
         [DllImport("libc", EntryPoint = "open", SetLastError = true)]
         private static extern int Open(string path, int flags);
@@ -878,7 +862,5 @@ public sealed class CodexCliAuthFileCredentialProvider
         [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
         private static extern int FStat(int descriptor, IntPtr value);
 
-        [DllImport("libc", EntryPoint = "geteuid")]
-        private static extern uint GetEffectiveUserId();
     }
 }

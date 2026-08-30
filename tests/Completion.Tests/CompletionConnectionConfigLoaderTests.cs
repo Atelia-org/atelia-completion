@@ -635,6 +635,14 @@ public sealed class CompletionConnectionConfigLoaderTests {
     public void NormalizeAndValidate_RejectsInvalidOptionalMetadata() {
         CompletionConnectionConfig main = ProgrammaticConnection("main");
 
+        foreach (int invalidMaxTokens in new[] { 0, -1 }) {
+            Assert.Throws<InvalidOperationException>(() =>
+                CompletionConnectionConfigLoader.NormalizeAndValidate(new(
+                    [main with { MaxTokens = invalidMaxTokens }],
+                    "main"
+                ))
+            );
+        }
         Assert.Throws<InvalidOperationException>(() =>
             CompletionConnectionConfigLoader.NormalizeAndValidate(new(
                 [main],

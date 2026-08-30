@@ -22,6 +22,10 @@ public sealed record CompletionConnectionConfig(
     string? ApiKey = null,
     string? BaseAddressEnv = null,
     string? ApiKeyEnv = null,
+    /// <summary>
+    /// Provider/client output setting. Business runtimes must not reinterpret
+    /// it as an independent per-request budget.
+    /// </summary>
     int? MaxTokens = null,
     /// <summary>
     /// Provider-neutral reasoning preset. <see cref="CompletionReasoningEffort.ProviderDefault"/>
@@ -237,6 +241,11 @@ public static class CompletionConnectionConfigLoader {
             if (!Enum.IsDefined(connection.ReasoningEffort)) {
                 throw new InvalidOperationException(
                     $"Completion connection '{connection.Id}' has unsupported reasoningEffort value '{connection.ReasoningEffort}'."
+                );
+            }
+            if (connection.MaxTokens is <= 0) {
+                throw new InvalidOperationException(
+                    $"Completion connection '{connection.Id}' MaxTokens must be null or positive."
                 );
             }
             CompletionConnectionConfigValidation

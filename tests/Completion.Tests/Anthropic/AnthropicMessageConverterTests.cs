@@ -7,6 +7,25 @@ namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicMessageConverterTests {
     [Fact]
+    public void ConvertToApiRequest_UsesConnectionDefaultWhenRequestOmitsMaxTokens() {
+        var request = new CompletionRequest(
+            "claude-3",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("hi")]
+            ),
+            tailMessages: []
+        );
+
+        Assert.Null(request.MaxTokens);
+        AnthropicApiRequest apiRequest = AnthropicMessageConverter
+            .ConvertToApiRequest(request, defaultMaxTokens: 32_768);
+
+        Assert.Equal(32_768, apiRequest.MaxTokens);
+    }
+
+    [Fact]
     public void ConvertToApiRequest_ReplaysRawArgumentsJson() {
         var toolCall = new RawToolCall(
             ToolName: "search",

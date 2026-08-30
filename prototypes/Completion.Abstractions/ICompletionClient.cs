@@ -7,6 +7,15 @@ namespace Atelia.Completion.Abstractions;
 /// 为不同模型提供商的补全（Completion）客户端提供一个抽象层。
 /// 在强化学习（RL）语境下，它扮演"策略近似器"或"价值近似器"的角色，同时确保对外提供统一的历史和动作接口。
 /// </summary>
+/// <remarks>
+/// 同一实例可能同时收到多个重叠的
+/// <see cref="StreamCompletionAsync(CompletionRequest, CompletionStreamObserver?, CancellationToken)"/>
+/// 调用。实现必须隔离每次调用的 request、observer、parser、聚合状态、
+/// result 与 cancellation；取消一次调用不得取消其他调用。实现可以在内部
+/// 限流或串行化，因此本合同不承诺 provider 请求必然并行执行。
+/// lifetime owner 必须在所有调用结束后才 dispose 客户端；调用与 dispose
+/// 的并发不属于本合同。
+/// </remarks>
 public interface ICompletionClient {
     /// <summary>
     /// 获取一个用以区分多个客户端实例的唯一名称。

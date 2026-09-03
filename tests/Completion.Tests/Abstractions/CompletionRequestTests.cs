@@ -6,6 +6,27 @@ namespace Atelia.Completion.Tests.Abstractions;
 
 public sealed class CompletionRequestTests {
     [Fact]
+    public void PublicContractHasNoCallerSelectedOutputTokenCeiling() {
+        Assert.DoesNotContain(
+            typeof(CompletionRequest).GetProperties(),
+            static property => property.Name.Contains(
+                "MaxToken",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        Assert.All(
+            typeof(CompletionRequest).GetConstructors(),
+            constructor => Assert.DoesNotContain(
+                constructor.GetParameters(),
+                static parameter => parameter.Name?.Contains(
+                    "maxToken",
+                    StringComparison.OrdinalIgnoreCase
+                ) is true
+            )
+        );
+    }
+
+    [Fact]
     public void Constructor_FreezesPrefixAndTailCollections() {
         var shared = new List<IHistoryMessage> {
             new ObservationMessage("shared")

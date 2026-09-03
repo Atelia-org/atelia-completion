@@ -42,8 +42,8 @@ aggregator，但拥有独立的：
   以及 terminal 前 EOF 建立 fail-closed 语义。
 - `CompletionConnectionRegistry` 按 connection 惰性缓存 `ICompletionClient`；这要求 credential provider 在每次
   invocation 获取新 snapshot，不能把 access token 冻结到 client lifetime。
-- `connections.json` 是 strict V1：字段语言封闭，但 `kind` 与 `completionSurfaceId` 的值域开放。因此新增 kind
-  不要求扩张 V1；新增 `credentialId`、`authFile` 等字段则必须另行设计 V2。
+- `connections.json` 是 strict V2：字段语言封闭，但 `kind` 与 `completionSurfaceId` 的值域开放。因此新增 kind
+  不要求扩张 V2；新增 `credentialId`、`authFile` 等字段则必须另行设计下一版 manifest。
 - connection/request-adapter fingerprint 已排除 API key 等 secret。新实现也不得把 token、account id、auth path
   或 token generation 持久化进 dispatch identity。
 
@@ -222,9 +222,9 @@ System.Text.Json 也看不到可序列化的 secret property。`Create(...)` 只
 `OpenAIResponsesClient` 保持一致：所有合法 `PromptCacheReuseHint` 都显式接受为 validated no-op；不能依赖 interface default
 导致非-default hint 意外 fail。`TimeProvider` 注入 credential provider 的 internal test constructor，而不只注入 client。
 
-当前 Codex body profile 没有经验证的 provider-neutral `CompletionRequest.MaxTokens` mapping。first slice 对非 null
-`MaxTokens` 在 credential/file/network side effect 前 fail fast，不能像现有 public Responses path 一样静默忽略；只有在
-pinned wire evidence与 tests 锁定字段语义后才开放映射。
+Completion 公共契约有意不支持 caller-selected output-token ceiling，Codex body profile 也省略这类字段。
+`CompletionRequest` 与 connection config 都不存在 `MaxTokens`；这不是漏实现，而是为了避免本地预算截断已经
+计费的生成。只有 provider 协议强制要求 limit 时，adapter 才能使用 provider 对 exact model 报告的最大值。
 
 `Originator` 是构造期参数而不是 protocol constant；它有 `atelia` 默认值，并按
 `^[a-z][a-z0-9._-]{0,63}$` 校验。Galatea composition 默认传：
@@ -264,8 +264,8 @@ refresh writer。若长期不运行 Codex，access token 最终会过期，Ateli
 保留 connection id；切换到另一个 ChatGPT account 必须使用新的 connection id、重新 provision
 `ExpectedAccountFingerprint`，并先处置不能在新 account 下恢复的旧 Prepared/Started work。该 fingerprint 是
 domain-separated account-id fingerprint，不是 token hash，不进入 SessionJournal durable identity；它由 Host composition
-在 connections V1 之外提供。未来若需要多 account 机器路由，再通过 strict connections V2 引入非 secret
-`credentialId`，不能把 raw account id 加进 V1。
+在 connections V2 之外提供。未来若需要多 account 机器路由，再通过后续 strict manifest 引入非 secret
+`credentialId`，不能把 raw account id 加进 V2。
 
 ### 5.2 文件读取边界
 
@@ -390,7 +390,8 @@ optional tool 在旧的无条件 `strict:true` 投影下返回 HTTP 400。因此
 Responses Lite profile 导致的本次故障。投影变化同时把 public/Codex `ApiSpecId` 分别 bump 为
 `openai-responses-v2` / `openai-codex-responses-v2`，使旧 frozen request 不会绑定到新的 request adapter。
 
-Codex options 不暴露 `Store`、`IncludeEncryptedReasoning` 或 arbitrary `ExtraBody`。新增 body field 必须进入
+Codex options 不暴露 `Store`、`IncludeEncryptedReasoning` 或 arbitrary body injection；公共 OpenAI Chat / Responses
+options 也不再提供 `ExtraBody` 逃生口。新增 body field 必须进入
 Codex-specific allowlist、tests 和 request-adapter fingerprint review。
 
 首版支持当前 provider-neutral `ProviderDefault`、`Auto`、`None` 与 `RequiredAny` 投影。由于尚无 pinned
@@ -516,7 +517,7 @@ first slice 的 `connections.json` 不新增字段：
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "connections": [
     {
       "id": "chatgpt-codex",
@@ -531,7 +532,7 @@ first slice 的 `connections.json` 不新增字段：
 }
 ```
 
-V1 仍要求 `baseAddress`，所以这里把它当作 operator-readable assertion；Codex factory 必须 exact 验证该值，不能把它
+V2 仍要求 `baseAddress`，所以这里把它当作 operator-readable assertion；Codex factory 必须 exact 验证该值，不能把它
 当任意 bearer destination。canonical BaseAddress 与请求 relative URI 必须来自 §3.3 的同一个 internal profile；factory
 在任何 credential/file/network side effect 前校验 resolved value，client 从同一 profile 构造 transport，禁止三处复制
 常量。`baseAddressEnv` resolve 后 exact 相等可以接受；`apiKey`/`apiKeyEnv` 对这个 kind 必须禁止。
@@ -602,8 +603,8 @@ fingerprint 不变。
 完成标准：
 
 - zero real network 的 scripted handler tests 覆盖完整 request 与 SSE terminal；
-- `store=true`/arbitrary ExtraBody 不存在于 public surface；
-- 两个 `ICompletionClient` overload 都显式实现；合法 prompt-cache hints 为 validated no-op；non-null `MaxTokens` fail fast；
+- `store=true`/arbitrary body injection 不存在于 Codex public surface；
+- 两个 `ICompletionClient` overload 都显式实现；合法 prompt-cache hints 为 validated no-op；body 省略 output cap；
 - 401 generation-change retry 至多一次；403/429/3xx/5xx 无透明 retry；
 - non-2xx 与 SSE terminal error 都经过 Codex-specific sanitizer；
 - typed refusal 只在最终 `response.completed` / `response.incomplete` terminal 后收口为
@@ -616,7 +617,7 @@ fingerprint 不变。
 
 完成标准：
 
-- strict connections V1 未扩字段；
+- strict connections V2 不含 output-cap 字段；
 - existing known kinds 的 fingerprint byte-identical；
 - token/account/path rotation 不改变 durable fingerprint；
 - kind/surface/base/ApiSpec/mapping 变化会改变相应 identity；
@@ -691,7 +692,7 @@ publish。
 6. 完整 URI 恰为 `/backend-api/codex/responses`，不含额外 `/v1`；`http`、非 443、userinfo、host suffix trap、
    absolute request URI 与 `baseAddressEnv` bypass 全部在 credential access 前拒绝；
 7. exact bearer/account/originator/UA headers，refresh/id token 不进入 URI/body/header；
-8. body 固定 `store:false`、`stream:true` 与 encrypted reasoning include；non-null `MaxTokens` fail fast；
+8. body 固定 `store:false`、`stream:true` 与 encrypted reasoning include，并省略 output cap；
 9. 两个 `ICompletionClient` overload 与全部合法 `CompletionInvocationOptions` hint 行为一致；
 10. 第一个 401 只在 generation 变化时重试一次，第二个 401 terminal；
 11. 403/429/3xx/5xx 不重试；301/302/303/307/308 都不得产生第二次 request；

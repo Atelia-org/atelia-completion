@@ -14,7 +14,7 @@ internal sealed class AnthropicApiRequest {
     public required List<AnthropicMessage> Messages { get; set; }
 
     [JsonPropertyName("max_tokens")]
-    public int MaxTokens { get; set; } = 200_000;
+    public required int MaxTokens { get; set; }
 
     /// <summary>
     /// system 提示。默认承载一个 <see cref="string"/>；启用 prompt caching 时会被替换为

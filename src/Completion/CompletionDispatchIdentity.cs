@@ -53,7 +53,6 @@ public static class CompletionDispatchIdentityFactory {
                 connection.ModelId,
                 connection.CompletionSurfaceId,
                 connection.BaseAddress,
-                connection.MaxTokens,
                 connection.ReasoningEffort
             )
         );
@@ -75,7 +74,8 @@ public static class CompletionDispatchIdentityFactory {
                 client.ApiSpecId,
                 connection.Kind,
                 connection.CompletionSurfaceId,
-                ResolveReasoningMappingId(connection)
+                ResolveReasoningMappingId(connection),
+                ResolveOutputLimitMappingId(connection)
             )
         );
     }
@@ -106,13 +106,20 @@ public static class CompletionDispatchIdentityFactory {
         _ => "reasoning-control-unsupported-v1"
     };
 
+    private static string ResolveOutputLimitMappingId(
+        CompletionConnectionConfig connection
+    ) => connection.Kind.Trim().ToLowerInvariant() switch {
+        "anthropic" => "anthropic-model-info-max-tokens-v1",
+        "gemini" => "gemini-model-output-token-limit-v1",
+        _ => "provider-output-limit-omitted-v1"
+    };
+
     private sealed record ConnectionFingerprintDto(
         string ConnectionId,
         string Kind,
         string ModelId,
         string CompletionSurfaceId,
         string BaseAddress,
-        int? MaxTokens,
         CompletionReasoningEffort ReasoningEffort
     );
 
@@ -121,7 +128,8 @@ public static class CompletionDispatchIdentityFactory {
         string ClientApiSpecId,
         string ConnectionKind,
         string CompletionSurfaceId,
-        string ReasoningMappingId
+        string ReasoningMappingId,
+        string OutputLimitMappingId
     );
 }
 

@@ -34,8 +34,6 @@ internal sealed class OpenAIResponsesApiRequest {
     [JsonPropertyName("reasoning")]
     public OpenAIResponsesReasoningConfig? Reasoning { get; set; }
 
-    [JsonExtensionData]
-    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 internal sealed class OpenAIResponsesNamedToolChoice {

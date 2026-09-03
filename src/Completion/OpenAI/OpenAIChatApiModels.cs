@@ -28,8 +28,21 @@ internal sealed class OpenAIChatApiRequest {
     [JsonPropertyName("reasoning_effort")]
     public string? ReasoningEffort { get; set; }
 
-    [JsonExtensionData]
-    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+    [JsonPropertyName("thinking")]
+    public OpenAIChatThinkingConfig? Thinking { get; set; }
+
+    [JsonPropertyName("chat_template_kwargs")]
+    public OpenAIChatTemplateKwargs? ChatTemplateKwargs { get; set; }
+}
+
+internal sealed class OpenAIChatThinkingConfig {
+    [JsonPropertyName("type")]
+    public required string Type { get; set; }
+}
+
+internal sealed class OpenAIChatTemplateKwargs {
+    [JsonPropertyName("enable_thinking")]
+    public bool EnableThinking { get; set; }
 }
 
 internal sealed class OpenAIChatStreamOptions {

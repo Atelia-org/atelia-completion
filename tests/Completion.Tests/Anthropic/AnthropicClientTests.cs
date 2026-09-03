@@ -867,6 +867,9 @@ public sealed class AnthropicClientTests {
             HttpRequestMessage request,
             CancellationToken cancellationToken
         ) {
+            if (request.Method == HttpMethod.Get) {
+                return ModelInfoResponse();
+            }
             RequestAcceptHeaders.Add(request.Headers.Accept.ToString());
             RequestBodies.Add(await request.Content!.ReadAsStringAsync(
                 cancellationToken
@@ -874,6 +877,16 @@ public sealed class AnthropicClientTests {
             return _responses.Dequeue();
         }
     }
+
+    private static HttpResponseMessage ModelInfoResponse(
+        int maximumTokens = 200_000
+    ) => new(HttpStatusCode.OK) {
+        Content = new StringContent(
+            $"{{\"id\":\"claude-opus-4-6\",\"max_tokens\":{maximumTokens}}}",
+            Encoding.UTF8,
+            "application/json"
+        )
+    };
 
     private sealed class ThrowAfterPayloadStream : Stream {
         private readonly byte[] _payload;

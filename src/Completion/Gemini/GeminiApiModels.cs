@@ -15,6 +15,14 @@ internal sealed class GeminiGenerateContentRequest {
 
     [JsonPropertyName("toolConfig")]
     public GeminiToolConfig? ToolConfig { get; set; }
+
+    [JsonPropertyName("generationConfig")]
+    public GeminiGenerationConfig? GenerationConfig { get; set; }
+}
+
+internal sealed class GeminiGenerationConfig {
+    [JsonPropertyName("maxOutputTokens")]
+    public required int MaxOutputTokens { get; set; }
 }
 
 internal sealed class GeminiContent {

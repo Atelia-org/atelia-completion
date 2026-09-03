@@ -90,8 +90,7 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
             new OpenAIResponsesClientOptions {
                 ReasoningEffort = options.ReasoningEffort,
                 Store = false,
-                IncludeEncryptedReasoning = true,
-                ExtraBody = null
+                IncludeEncryptedReasoning = true
             },
             ApiSpecId,
             "ChatGPT/Codex Responses",
@@ -142,11 +141,6 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
     ) {
         ArgumentNullException.ThrowIfNull(request);
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (request.MaxTokens is not null) {
-            throw new NotSupportedException(
-                "ChatGPT Codex Responses has no verified provider-neutral MaxTokens mapping."
-            );
-        }
 
         await _admissionGate.WaitAsync(cancellationToken)
             .ConfigureAwait(false);

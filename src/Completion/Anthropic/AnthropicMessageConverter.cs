@@ -17,12 +17,19 @@ internal static class AnthropicMessageConverter {
 
     public static AnthropicApiRequest ConvertToApiRequest(
         CompletionRequest request,
-        int? defaultMaxTokens = null,
+        int modelMaximumTokens,
         bool enablePromptCaching = false,
         CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
         AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault,
         CompletionDescriptor? targetInvocation = null
     ) {
+        if (modelMaximumTokens <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(modelMaximumTokens),
+                modelMaximumTokens,
+                "Provider-resolved model maximum must be positive."
+            );
+        }
         var messages = new List<AnthropicMessage>();
         var pendingToolCalls = new List<PendingToolCall>();
 
@@ -68,7 +75,7 @@ internal static class AnthropicMessageConverter {
             request.PromptPrefix.OutputContract;
         var apiRequest = new AnthropicApiRequest {
             Model = request.ModelId,
-            MaxTokens = request.MaxTokens ?? defaultMaxTokens ?? 32000,
+            MaxTokens = modelMaximumTokens,
             Messages = messages,
             System = string.IsNullOrWhiteSpace(request.PromptPrefix.SystemPrompt)
                 ? null

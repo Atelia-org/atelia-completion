@@ -7,7 +7,7 @@ namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicMessageConverterTests {
     [Fact]
-    public void ConvertToApiRequest_UsesConnectionDefaultWhenRequestOmitsMaxTokens() {
+    public void ConvertToApiRequest_UsesProviderResolvedModelMaximum() {
         var request = new CompletionRequest(
             "claude-3",
             new CompletionPromptPrefix(
@@ -18,9 +18,8 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        Assert.Null(request.MaxTokens);
         AnthropicApiRequest apiRequest = AnthropicMessageConverter
-            .ConvertToApiRequest(request, defaultMaxTokens: 32_768);
+            .ConvertToApiRequest(request, modelMaximumTokens: 32_768);
 
         Assert.Equal(32_768, apiRequest.MaxTokens);
     }
@@ -56,7 +55,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
         var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
@@ -103,7 +102,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
         var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
@@ -142,7 +141,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
         var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
@@ -181,7 +180,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
         var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
@@ -221,7 +220,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         var assistantMessage = apiRequest.Messages.Single(message => message.Role == "assistant");
         var toolUseBlock = Assert.IsType<AnthropicToolUseBlock>(assistantMessage.Content.Single(block => block is AnthropicToolUseBlock));
@@ -265,7 +264,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         Assert.Collection(
             apiRequest.Messages,
@@ -346,7 +345,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+            () => AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000)
         );
 
         Assert.Contains("call-2", exception.Message, StringComparison.Ordinal);
@@ -379,7 +378,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+            () => AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000)
         );
 
         Assert.Contains("expected 'search'", exception.Message, StringComparison.Ordinal);
@@ -407,7 +406,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+            () => AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000)
         );
 
         Assert.Contains("without a preceding assistant tool_use", exception.Message, StringComparison.Ordinal);
@@ -431,7 +430,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         var only = Assert.Single(apiRequest.Messages);
         Assert.Equal("user", only.Role);
@@ -459,7 +458,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         Assert.Collection(
             apiRequest.Messages,
@@ -513,7 +512,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
         var assistant = apiRequest.Messages.Single(message => message.Role == "assistant");
 
         Assert.Collection(
@@ -556,7 +555,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
         var assistant = apiRequest.Messages.Single(message => message.Role == "assistant");
 
         Assert.Collection(
@@ -594,7 +593,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+            () => AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000)
         );
 
         Assert.Contains("Failed to deserialize Anthropic thinking block payload", exception.Message, StringComparison.Ordinal);
@@ -623,6 +622,7 @@ public sealed class AnthropicMessageConverterTests {
         var exception = Assert.Throws<InvalidOperationException>(
             () => AnthropicMessageConverter.ConvertToApiRequest(
                 request,
+                modelMaximumTokens: 200_000,
                 targetInvocation: target
             )
         );
@@ -653,7 +653,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => AnthropicMessageConverter.ConvertToApiRequest(request)
+            () => AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000)
         );
 
         Assert.Contains("Cannot replay non-Anthropic reasoning block", exception.Message, StringComparison.Ordinal);
@@ -663,7 +663,7 @@ public sealed class AnthropicMessageConverterTests {
     public void ConvertToApiRequest_PromptCachingDisabledByDefault_LeavesSystemStringAndNoBreakpoints() {
         var request = BuildToolLoopRequest();
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         Assert.IsType<string>(apiRequest.System);
         Assert.Null(Assert.Single(apiRequest.Tools!).CacheControl);
@@ -677,7 +677,7 @@ public sealed class AnthropicMessageConverterTests {
     public void ConvertToApiRequest_PromptCachingEnabled_MarksToolsSystemAndLastMessageBreakpoints() {
         var request = BuildToolLoopRequest();
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, defaultMaxTokens: null, enablePromptCaching: true);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000, enablePromptCaching: true);
 
         // system 段：转为 content-block 数组并在其上打断点。
         var systemBlocks = Assert.IsType<List<AnthropicSystemTextBlock>>(apiRequest.System);
@@ -701,7 +701,7 @@ public sealed class AnthropicMessageConverterTests {
     public void ConvertToApiRequest_PromptCachingEnabled_SerializesSystemArrayWithCacheControl() {
         var request = BuildToolLoopRequest();
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, defaultMaxTokens: null, enablePromptCaching: true);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000, enablePromptCaching: true);
 
         var options = new JsonSerializerOptions {
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -745,6 +745,7 @@ public sealed class AnthropicMessageConverterTests {
     ) {
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
             BuildToolLoopRequest(),
+            modelMaximumTokens: 200_000,
             enablePromptCaching: true,
             promptCacheTtl: promptCacheTtl
         );
@@ -785,7 +786,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, defaultMaxTokens: null, enablePromptCaching: true);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000, enablePromptCaching: true);
 
         Assert.Null(apiRequest.System);
         Assert.Null(apiRequest.Tools);
@@ -808,6 +809,7 @@ public sealed class AnthropicMessageConverterTests {
         AnthropicApiRequest apiRequest =
             AnthropicMessageConverter.ConvertToApiRequest(
                 request,
+                modelMaximumTokens: 200_000,
                 enablePromptCaching: true
             );
 
@@ -867,6 +869,7 @@ public sealed class AnthropicMessageConverterTests {
         AnthropicApiRequest apiRequest =
             AnthropicMessageConverter.ConvertToApiRequest(
                 request,
+                modelMaximumTokens: 200_000,
                 enablePromptCaching: true
             );
         var options = new JsonSerializerOptions {
@@ -940,6 +943,7 @@ public sealed class AnthropicMessageConverterTests {
         AnthropicApiRequest apiRequest =
             AnthropicMessageConverter.ConvertToApiRequest(
                 request,
+                modelMaximumTokens: 200_000,
                 enablePromptCaching: true
             );
 
@@ -986,7 +990,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         AnthropicApiRequest apiRequest =
-            AnthropicMessageConverter.ConvertToApiRequest(request);
+            AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         Assert.Contains(
             apiRequest.Messages.SelectMany(static message => message.Content),
@@ -1020,7 +1024,7 @@ public sealed class AnthropicMessageConverterTests {
         );
 
         AnthropicApiRequest apiRequest =
-            AnthropicMessageConverter.ConvertToApiRequest(request);
+            AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         Assert.Equal("tool", apiRequest.ToolChoice!.Type);
         Assert.Equal("emit_result", apiRequest.ToolChoice.Name);
@@ -1050,6 +1054,7 @@ public sealed class AnthropicMessageConverterTests {
         Assert.Throws<NotSupportedException>(
             () => AnthropicMessageConverter.ConvertToApiRequest(
                 request,
+                modelMaximumTokens: 200_000,
                 reasoningEffort: CompletionReasoningEffort.High
             )
         );
@@ -1064,12 +1069,12 @@ public sealed class AnthropicMessageConverterTests {
                 CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
                 new IHistoryMessage[] { new ObservationMessage("hi") }
             ),
-            tailMessages: [],
-            maxTokens: 8000
+            tailMessages: []
         );
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
             request,
+            modelMaximumTokens: 200_000,
             reasoningEffort: CompletionReasoningEffort.Disabled
         );
 
@@ -1102,6 +1107,7 @@ public sealed class AnthropicMessageConverterTests {
 
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
             request,
+            modelMaximumTokens: 200_000,
             reasoningEffort: reasoningEffort
         );
 
@@ -1122,7 +1128,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         Assert.Null(apiRequest.Thinking);
         Assert.Null(apiRequest.OutputConfig);
@@ -1149,7 +1155,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
         var assistant = apiRequest.Messages.Single(message => message.Role == "assistant");
 
         Assert.Collection(

@@ -231,7 +231,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v9",
+                Schema: "atelia.completion.call-log.v10",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -423,7 +423,6 @@ public sealed record CompletionCallLogConnectionSnapshot(
     string? BaseAddressEnv,
     string? ApiKeyEnv,
     bool HasApiKey,
-    int? MaxTokens,
     CompletionReasoningEffort ReasoningEffort,
     AnthropicPromptCacheTtl AnthropicPromptCacheTtl,
     string ProviderId,
@@ -442,7 +441,6 @@ public sealed record CompletionCallLogConnectionSnapshot(
             connection.BaseAddressEnv,
             connection.ApiKeyEnv,
             !string.IsNullOrWhiteSpace(connection.ApiKey),
-            connection.MaxTokens,
             connection.ReasoningEffort,
             connection.AnthropicPromptCacheTtl,
             client.Name,
@@ -454,8 +452,7 @@ public sealed record CompletionCallLogConnectionSnapshot(
 public sealed record CompletionCallLogRequest(
     string ModelId,
     CompletionCallLogPromptPrefix PromptPrefix,
-    IReadOnlyList<CompletionCallLogHistoryMessage> TailMessages,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? MaxTokens
+    IReadOnlyList<CompletionCallLogHistoryMessage> TailMessages
 ) {
     public static CompletionCallLogRequest From(CompletionRequest request) {
         ArgumentNullException.ThrowIfNull(request);
@@ -465,8 +462,7 @@ public sealed record CompletionCallLogRequest(
             CompletionCallLogPromptPrefix.From(request.PromptPrefix),
             request.TailMessages
                 .Select(CompletionCallLogHistoryMessage.From)
-                .ToArray(),
-            request.MaxTokens
+                .ToArray()
         );
     }
 }

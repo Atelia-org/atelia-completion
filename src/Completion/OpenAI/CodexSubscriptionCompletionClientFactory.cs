@@ -118,12 +118,6 @@ public sealed class CodexSubscriptionCompletionClientFactory
                 + "apiKey or apiKeyEnv for Codex subscription authentication."
             );
         }
-        if (connection.MaxTokens is not null) {
-            throw new InvalidOperationException(
-                $"Completion connection '{connection.Id}' must not configure "
-                + "MaxTokens for the Codex subscription surface."
-            );
-        }
         if (connection.AnthropicPromptCacheTtl
                 is not AnthropicPromptCacheTtl.ProviderDefault) {
             throw new InvalidOperationException(

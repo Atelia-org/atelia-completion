@@ -1,7 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Transport;
@@ -15,19 +14,6 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
-    private static readonly HashSet<string> ReservedRequestFieldNames = new(StringComparer.Ordinal) {
-        "model",
-        "instructions",
-        "input",
-        "tools",
-        "tool_choice",
-        "stream",
-        "store",
-        "include",
-        "parallel_tool_calls",
-        "reasoning"
-    };
-
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
     private readonly OpenAIResponsesClientOptions _options;
@@ -51,10 +37,7 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
         _options = new OpenAIResponsesClientOptions {
             ReasoningEffort = options.ReasoningEffort,
             Store = options.Store,
-            IncludeEncryptedReasoning = options.IncludeEncryptedReasoning,
-            ExtraBody = options.ExtraBody is null
-                ? null
-                : (JsonObject)options.ExtraBody.DeepClone()
+            IncludeEncryptedReasoning = options.IncludeEncryptedReasoning
         };
         if (!Enum.IsDefined(_options.ReasoningEffort)) {
             throw new ArgumentOutOfRangeException(
@@ -75,7 +58,7 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
 
         DebugUtil.Info(
             DebugCategory,
-            $"[OpenAI/Responses] Client initialized base={_httpClient.BaseAddress}, extraBodyKeys={_options.ExtraBody?.Count ?? 0}, reasoningEffort={_options.ReasoningEffort}"
+            $"[OpenAI/Responses] Client initialized base={_httpClient.BaseAddress}, reasoningEffort={_options.ReasoningEffort}"
         );
     }
 
@@ -139,7 +122,6 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
     }
 
     private HttpRequestMessage CreateHttpRequest(OpenAIResponsesApiRequest apiRequest) {
-        apiRequest.ExtensionData = BuildExtraBodyExtensionData();
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
         DebugUtil.Trace(DebugCategory, $"[OpenAI/Responses] Request payload length={json.Length}");
 
@@ -154,24 +136,4 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
 
         return request;
     }
-
-    private Dictionary<string, JsonElement>? BuildExtraBodyExtensionData() {
-        if (_options.ExtraBody is null || _options.ExtraBody.Count == 0) { return null; }
-
-        var extensionData = new Dictionary<string, JsonElement>(_options.ExtraBody.Count, StringComparer.Ordinal);
-        foreach (var (propertyName, propertyValue) in _options.ExtraBody) {
-            if (ReservedRequestFieldNames.Contains(propertyName)) {
-                throw new InvalidOperationException(
-                    $"OpenAI Responses extra body field '{propertyName}' collides with a reserved request property."
-                );
-            }
-
-            extensionData[propertyName] = propertyValue is null
-                ? JsonSerializer.SerializeToElement((object?)null, SerializerOptions)
-                : propertyValue.Deserialize<JsonElement>(SerializerOptions);
-        }
-
-        return extensionData;
-    }
-
 }

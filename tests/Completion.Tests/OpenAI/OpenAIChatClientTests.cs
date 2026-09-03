@@ -2,7 +2,6 @@ using System.Collections.Immutable;
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Transport;
 using Xunit;
@@ -10,6 +9,26 @@ using Xunit;
 namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIChatClientTests {
+    [Fact]
+    public void ClientOptionsDoNotExposeArbitraryJsonBodyInjection() {
+        Assert.DoesNotContain(
+            typeof(OpenAIChatClientOptions).GetProperties(),
+            static property => string.Equals(
+                property.Name,
+                "ExtraBody",
+                StringComparison.Ordinal
+            )
+        );
+        Assert.DoesNotContain(
+            typeof(OpenAIResponsesClientOptions).GetProperties(),
+            static property => string.Equals(
+                property.Name,
+                "ExtraBody",
+                StringComparison.Ordinal
+            )
+        );
+    }
+
     [Fact]
     public async Task StreamCompletionAsync_ParsesContentWithoutRequestingUsage() {
         var handler = new SequenceHttpMessageHandler(
@@ -163,7 +182,7 @@ public sealed class OpenAIChatClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_IncludesConfiguredExtraBodyFieldsAtRequestRoot() {
+    public async Task StreamCompletionAsync_QwenThinkingControlIsAtRequestRoot() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {
                 Content = new StringContent(
@@ -197,7 +216,6 @@ public sealed class OpenAIChatClientTests {
         var requestBody = Assert.Single(handler.RequestBodies);
         using var document = JsonDocument.Parse(requestBody);
         var root = document.RootElement;
-        Assert.False(root.TryGetProperty("extra_body", out _));
         Assert.True(root.TryGetProperty("chat_template_kwargs", out var kwargs));
         Assert.False(kwargs.GetProperty("enable_thinking").GetBoolean());
     }
@@ -316,113 +334,6 @@ public sealed class OpenAIChatClientTests {
         else {
             Assert.Equal(expectedWireValue, root.GetProperty("reasoning_effort").GetString());
         }
-    }
-
-    [Theory]
-    [InlineData("model")]
-    [InlineData("reasoning_effort")]
-    [InlineData("thinking")]
-    public async Task StreamCompletionAsync_ThrowsWhenExtraBodyCollidesWithReservedFields(
-        string fieldName
-    ) {
-        using var handler = new SequenceHttpMessageHandler(
-            new HttpResponseMessage(HttpStatusCode.OK) {
-                Content = new StringContent(
-                    """
-                    data: [DONE]
-
-                    """,
-                    Encoding.UTF8,
-                    "text/event-stream"
-                )
-            }
-        );
-        using var httpClient = new HttpClient(handler) {
-            BaseAddress = new Uri("http://localhost:8000/")
-        };
-
-        var client = new OpenAIChatClient(
-            apiKey: null,
-            httpClient: httpClient,
-            dialect: OpenAIChatDialects.Strict,
-            options: new OpenAIChatClientOptions {
-                ExtraBody = new JsonObject {
-                    [fieldName] = "should-not-override"
-                }
-            }
-        );
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
-        );
-
-        Assert.Contains("collides with a reserved request property", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.RequestBodies);
-    }
-
-    [Fact]
-    public async Task StreamCompletionAsync_QwenRejectsDuplicateThinkingControlSource() {
-        using var handler = new SequenceHttpMessageHandler(
-            EventStreamResponse(
-                """
-                data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-
-                """
-            )
-        );
-        using var httpClient = CreateHttpClient(handler);
-        var client = new OpenAIChatClient(
-            apiKey: null,
-            httpClient,
-            OpenAIChatDialects.QwenSgLang,
-            new OpenAIChatClientOptions {
-                ReasoningEffort = CompletionReasoningEffort.High,
-                ExtraBody = new JsonObject {
-                    ["chat_template_kwargs"] = new JsonObject {
-                        ["enable_thinking"] = false
-                    }
-                }
-            }
-        );
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
-        );
-
-        Assert.Contains("conflicts", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.RequestBodies);
-    }
-
-    [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    public async Task StreamCompletionAsync_RejectsExtraBodyChoiceCount(int choiceCount) {
-        using var handler = new SequenceHttpMessageHandler(
-            EventStreamResponse(
-                """
-                data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-
-                """
-            )
-        );
-        using var httpClient = CreateHttpClient(handler);
-        var client = new OpenAIChatClient(
-            apiKey: null,
-            httpClient,
-            OpenAIChatDialects.Strict,
-            new OpenAIChatClientOptions {
-                ExtraBody = new JsonObject {
-                    ["n"] = choiceCount
-                }
-            }
-        );
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
-        );
-
-        Assert.Contains("'n'", exception.Message, StringComparison.Ordinal);
-        Assert.Empty(handler.RequestBodies);
     }
 
     [Fact]

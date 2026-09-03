@@ -34,14 +34,14 @@ public sealed class CompletionDispatchIdentityTests {
         Assert.Equal("api-a", identity.ApiSpecId);
         Assert.Equal(
             "sha256:"
-            + "f4172cc5b7775416319274be9ad6c55c"
-            + "96c32bbdf03359bf5f4d69a0b1bea513",
+            + "d252b9c28316fb0440afe6bf9773be15"
+            + "da4e5c52666959b02dceb9eaaf88275e",
             identity.ConnectionFingerprint
         );
         Assert.Equal(
             "sha256:"
-            + "7dd61e0ffc56fddba9b55da90909c93e"
-            + "6b4add16176f8dcf70aa67afd65aa7e5",
+            + "3fa2e051a2424462acd1d2c7096000d9"
+            + "aad88ce524185a5886a87a5ebed4bf72",
             identity.RequestAdapterFingerprint
         );
         Assert.Equal(identity, changedSecrets);
@@ -87,10 +87,6 @@ public sealed class CompletionDispatchIdentityTests {
                     connection with {
                         BaseAddress = "https://b.example/v1/"
                     }
-                ),
-            CompletionDispatchIdentityFactory
-                .ComputeConnectionFingerprint(
-                    connection with { MaxTokens = 8192 }
                 ),
             CompletionDispatchIdentityFactory
                 .ComputeConnectionFingerprint(
@@ -192,8 +188,7 @@ public sealed class CompletionDispatchIdentityTests {
             CompletionSurfaceId = "openai-codex-responses",
             BaseAddress = "https://chatgpt.com/backend-api/codex/",
             ApiKey = null,
-            ApiKeyEnv = null,
-            MaxTokens = null
+            ApiKeyEnv = null
         };
         var client = new IdentityCompletionClient(
             "chatgpt.com",
@@ -205,9 +200,43 @@ public sealed class CompletionDispatchIdentityTests {
 
         Assert.Equal(
             "sha256:"
-            + "5d819bda701fc325fdef17c260140a7e7"
-            + "59156440fe6ea5ccdc63dccfa54f8f2",
+            + "8c256736bee867f3e135ff8a61b2d8a8"
+            + "5438cae327f3299363cd03910f982fc0",
             fingerprint
+        );
+    }
+
+    [Fact]
+    public void RequiredProviderMaximumPoliciesHaveVersionedAdapterIdentities() {
+        var client = new IdentityCompletionClient("client-a", "api-a");
+        CompletionConnectionConfig baseline = CreateConnection();
+
+        string anthropic = CompletionDispatchIdentityFactory
+            .ComputeRequestAdapterFingerprint(
+                client,
+                baseline with {
+                    Kind = "anthropic",
+                    CompletionSurfaceId = "anthropic"
+                }
+            );
+        string gemini = CompletionDispatchIdentityFactory
+            .ComputeRequestAdapterFingerprint(
+                client,
+                baseline with {
+                    Kind = "gemini",
+                    CompletionSurfaceId = "gemini"
+                }
+            );
+
+        Assert.Equal(
+            "sha256:a8ffdd492cb8221235347430e3294ccd"
+                + "156ee89eedc997ebd7d207c22029a717",
+            anthropic
+        );
+        Assert.Equal(
+            "sha256:7aeadb29245f92e37ecc3c1db121323c"
+                + "dd65c52b852b43f5fa4aa5fb73e795ca",
+            gemini
         );
     }
 
@@ -345,8 +374,7 @@ public sealed class CompletionDispatchIdentityTests {
             BaseAddress: "https://a.example/v1/",
             ApiKey: "secret-a",
             BaseAddressEnv: "BASE_ADDRESS_ENV",
-            ApiKeyEnv: "API_KEY_ENV",
-            MaxTokens: 4096
+            ApiKeyEnv: "API_KEY_ENV"
         );
 
     private sealed class RecordingClientFactory(

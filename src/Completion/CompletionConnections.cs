@@ -13,6 +13,16 @@ public sealed record CompletionConnectionsFileConfig(
     IReadOnlyDictionary<string, string?>? Bindings = null
 );
 
+/// <summary>
+/// Describes one provider connection without a caller-selected output-token
+/// ceiling.
+/// </summary>
+/// <remarks>
+/// Per-connection output caps are intentionally unsupported. Provider limit
+/// fields are omitted when omission has maximum/unlimited semantics; when a
+/// numeric field is required to realize those semantics, the adapter may use
+/// only the selected model's provider-reported maximum.
+/// </remarks>
 public sealed record CompletionConnectionConfig(
     string Id,
     string Kind,
@@ -22,11 +32,6 @@ public sealed record CompletionConnectionConfig(
     string? ApiKey = null,
     string? BaseAddressEnv = null,
     string? ApiKeyEnv = null,
-    /// <summary>
-    /// Provider/client output setting. Business runtimes must not reinterpret
-    /// it as an independent per-request budget.
-    /// </summary>
-    int? MaxTokens = null,
     /// <summary>
     /// Provider-neutral reasoning preset. <see cref="CompletionReasoningEffort.ProviderDefault"/>
     /// preserves the selected provider/model default.
@@ -66,17 +71,17 @@ internal static class CompletionConnectionConfigValidation {
 }
 
 public static class CompletionConnectionConfigLoader {
-    /// <summary>Maximum encoded size accepted by the V1 connections document.</summary>
+    /// <summary>Maximum encoded size accepted by the V2 connections document.</summary>
     public const int MaximumInputUtf8Bytes = 1024 * 1024;
 
     /// <summary>
-    /// Decodes the single strict V1 connections byte language. The root must
-    /// contain exact integer <c>v: 1</c>, 1..256 connections, and an exact
+    /// Decodes the single strict V2 connections byte language. The root must
+    /// contain exact integer <c>v: 2</c>, 1..256 connections, and an exact
     /// default connection id; nesting is capped at depth 8 and input at 1 MiB.
     /// </summary>
     public static CompletionConnectionsFileConfig Decode(
         ReadOnlySpan<byte> utf8Json
-    ) => CompletionConnectionsManifestV1Reader.Decode(utf8Json);
+    ) => CompletionConnectionsManifestV2Reader.Decode(utf8Json);
 
     /// <summary>Reads a bounded ordinary file and delegates to <see cref="Decode"/>.</summary>
     public static CompletionConnectionsFileConfig LoadFile(string path) {
@@ -93,7 +98,7 @@ public static class CompletionConnectionConfigLoader {
         );
         if (stream.Length is < 1 or > MaximumInputUtf8Bytes) {
             throw new InvalidDataException(
-                "Completion connections bytes are empty or exceed the 1 MiB V1 bound."
+                "Completion connections bytes are empty or exceed the 1 MiB V2 bound."
             );
         }
         int length = checked((int)stream.Length);
@@ -117,7 +122,7 @@ public static class CompletionConnectionConfigLoader {
         ArgumentNullException.ThrowIfNull(config);
         if (config.Connections is not { Count: > 0 }
             || config.Connections.Count
-                > CompletionConnectionsManifestV1Reader
+                > CompletionConnectionsManifestV2Reader
                     .MaximumConnectionCount) {
             throw new InvalidOperationException(
                 "Completion connections must contain between 1 and 256 connections."
@@ -132,7 +137,7 @@ public static class CompletionConnectionConfigLoader {
             RequireNonBlank(connection.Id, $"Completion connection[{i}] must have a non-empty id.");
             RequireConfigBound(
                 connection.Id,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumIdentifierUtf8Bytes,
                 "Completion connection id"
             );
@@ -142,13 +147,13 @@ public static class CompletionConnectionConfigLoader {
             RequireNonBlank(connection.ModelId, $"Completion connection '{connection.Id}' must have a non-empty modelId.");
             RequireConfigBound(
                 connection.Kind,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumIdentifierUtf8Bytes,
                 "Completion connection kind"
             );
             RequireConfigBound(
                 connection.ModelId,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumIdentifierUtf8Bytes,
                 "Completion connection modelId"
             );
@@ -158,7 +163,7 @@ public static class CompletionConnectionConfigLoader {
             string completionSurfaceId = ResolveCompletionSurfaceId(connection.Kind, connection.CompletionSurfaceId);
             RequireConfigBound(
                 completionSurfaceId,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumIdentifierUtf8Bytes,
                 "Completion connection completionSurfaceId"
             );
@@ -169,7 +174,7 @@ public static class CompletionConnectionConfigLoader {
             if (!string.IsNullOrWhiteSpace(connection.BaseAddress)) {
                 RequireConfigBound(
                     connection.BaseAddress,
-                    CompletionConnectionsManifestV1Reader
+                    CompletionConnectionsManifestV2Reader
                         .MaximumEndpointUtf8Bytes,
                     "Completion connection baseAddress"
                 );
@@ -177,7 +182,7 @@ public static class CompletionConnectionConfigLoader {
             if (connection.ApiKey is not null) {
                 RequireConfigBound(
                     connection.ApiKey,
-                    CompletionConnectionsManifestV1Reader
+                    CompletionConnectionsManifestV2Reader
                         .MaximumSecretUtf8Bytes,
                     "Completion connection apiKey"
                 );
@@ -186,7 +191,7 @@ public static class CompletionConnectionConfigLoader {
             if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)) {
                 RequireConfigBound(
                     connection.BaseAddressEnv,
-                    CompletionConnectionsManifestV1Reader
+                    CompletionConnectionsManifestV2Reader
                         .MaximumIdentifierUtf8Bytes,
                     "Completion connection baseAddressEnv"
                 );
@@ -206,7 +211,7 @@ public static class CompletionConnectionConfigLoader {
             if (!string.IsNullOrWhiteSpace(connection.ApiKeyEnv)) {
                 RequireConfigBound(
                     connection.ApiKeyEnv,
-                    CompletionConnectionsManifestV1Reader
+                    CompletionConnectionsManifestV2Reader
                         .MaximumIdentifierUtf8Bytes,
                     "Completion connection apiKeyEnv"
                 );
@@ -226,14 +231,14 @@ public static class CompletionConnectionConfigLoader {
             RequireNonBlank(baseAddress, $"Completion connection '{connection.Id}' must have a non-empty baseAddress.");
             RequireConfigBound(
                 baseAddress,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumEndpointUtf8Bytes,
                 "Resolved Completion connection baseAddress"
             );
             if (apiKey is not null) {
                 RequireConfigBound(
                     apiKey,
-                    CompletionConnectionsManifestV1Reader
+                    CompletionConnectionsManifestV2Reader
                         .MaximumSecretUtf8Bytes,
                     "Resolved Completion connection apiKey"
                 );
@@ -241,11 +246,6 @@ public static class CompletionConnectionConfigLoader {
             if (!Enum.IsDefined(connection.ReasoningEffort)) {
                 throw new InvalidOperationException(
                     $"Completion connection '{connection.Id}' has unsupported reasoningEffort value '{connection.ReasoningEffort}'."
-                );
-            }
-            if (connection.MaxTokens is <= 0) {
-                throw new InvalidOperationException(
-                    $"Completion connection '{connection.Id}' MaxTokens must be null or positive."
                 );
             }
             CompletionConnectionConfigValidation
@@ -260,7 +260,7 @@ public static class CompletionConnectionConfigLoader {
 
         RequireConfigBound(
             defaultConnectionId,
-            CompletionConnectionsManifestV1Reader.MaximumIdentifierUtf8Bytes,
+            CompletionConnectionsManifestV2Reader.MaximumIdentifierUtf8Bytes,
             "Completion defaultConnectionId"
         );
 
@@ -275,7 +275,7 @@ public static class CompletionConnectionConfigLoader {
         IReadOnlyDictionary<string, string?>? bindings =
             NormalizeBindings(config.Bindings, connectionIds);
 
-        return CompletionConnectionsManifestV1Reader.Freeze(
+        return CompletionConnectionsManifestV2Reader.Freeze(
             new CompletionConnectionsFileConfig(
                 resolvedConnections,
                 defaultConnectionId,
@@ -292,7 +292,7 @@ public static class CompletionConnectionConfigLoader {
     ) {
         if (configured is null) { return null; }
         if (configured.Count is < 1
-            or > CompletionConnectionsManifestV1Reader
+            or > CompletionConnectionsManifestV2Reader
                 .MaximumConnectionCount) {
             throw new InvalidOperationException(
                 "Completion selectableConnectionIds must contain between "
@@ -310,7 +310,7 @@ public static class CompletionConnectionConfigLoader {
             );
             RequireConfigBound(
                 connectionId!,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumIdentifierUtf8Bytes,
                 "Completion selectable connection id"
             );
@@ -343,7 +343,7 @@ public static class CompletionConnectionConfigLoader {
     ) {
         if (configured is null) { return null; }
         if (configured.Count
-            > CompletionConnectionsManifestV1Reader
+            > CompletionConnectionsManifestV2Reader
                 .MaximumConnectionCount) {
             throw new InvalidOperationException(
                 "Completion bindings must contain at most 256 entries."
@@ -361,7 +361,7 @@ public static class CompletionConnectionConfigLoader {
             );
             RequireConfigBound(
                 binding!,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumIdentifierUtf8Bytes,
                 "Completion binding key"
             );
@@ -378,7 +378,7 @@ public static class CompletionConnectionConfigLoader {
             );
             RequireConfigBound(
                 connectionId,
-                CompletionConnectionsManifestV1Reader
+                CompletionConnectionsManifestV2Reader
                     .MaximumIdentifierUtf8Bytes,
                 "Completion binding connection id"
             );
@@ -400,7 +400,7 @@ public static class CompletionConnectionConfigLoader {
         string value,
         int maximumUtf8Bytes,
         string field
-    ) => CompletionConnectionsManifestV1Reader.RequireUtf8Bounded(
+    ) => CompletionConnectionsManifestV2Reader.RequireUtf8Bounded(
         value,
         maximumUtf8Bytes,
         field
@@ -470,7 +470,6 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
                 "anthropic" => new AnthropicClient(
                     apiKey: connection.ApiKey,
                     httpClient: httpClient,
-                    defaultMaxTokens: connection.MaxTokens,
                     reasoningEffort: connection.ReasoningEffort,
                     promptCacheTtl: connection.AnthropicPromptCacheTtl
                 ),

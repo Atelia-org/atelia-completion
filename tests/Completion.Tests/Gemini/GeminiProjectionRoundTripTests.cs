@@ -180,10 +180,11 @@ public sealed class GeminiProjectionRoundTripTests {
             converterType,
             "ConvertToApiRequest",
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
-            typeof(CompletionRequest)
+            typeof(CompletionRequest),
+            typeof(int)
         );
 
-        var apiRequest = convertMethod.Invoke(null, [request]);
+        var apiRequest = convertMethod.Invoke(null, [request, 65_536]);
         Assert.True(
             apiRequest is not null,
             $"Blocked: '{converterType.FullName}.ConvertToApiRequest' returned null."

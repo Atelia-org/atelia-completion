@@ -110,7 +110,7 @@ public sealed class CompletionHttpClientBuilder {
         private void Publish(HttpRequestMessage request, HttpResponseMessage response, string? requestText, string? responseText) {
             var exchange = new CompletionHttpExchange(
                 Method: request.Method.Method,
-                RequestUri: request.RequestUri?.ToString(),
+                RequestUri: SanitizeRequestUri(request.RequestUri),
                 RequestText: requestText,
                 StatusCode: (int)response.StatusCode,
                 ResponseText: responseText,
@@ -123,7 +123,7 @@ public sealed class CompletionHttpClientBuilder {
         private void PublishFailure(HttpRequestMessage request, string? requestText, Exception exception) {
             var exchange = new CompletionHttpExchange(
                 Method: request.Method.Method,
-                RequestUri: request.RequestUri?.ToString(),
+                RequestUri: SanitizeRequestUri(request.RequestUri),
                 RequestText: requestText,
                 StatusCode: null,
                 ResponseText: null,
@@ -178,7 +178,7 @@ public sealed class CompletionHttpClientBuilder {
             var response = _replayResponder.CreateResponse(
                 new CompletionHttpReplayRequest(
                     Method: request.Method.Method,
-                    RequestUri: request.RequestUri?.ToString(),
+                    RequestUri: SanitizeRequestUri(request.RequestUri),
                     RequestText: requestText
                 )
             );
@@ -195,6 +195,35 @@ public sealed class CompletionHttpClientBuilder {
 
         await content.LoadIntoBufferAsync(cancellationToken);
         return await content.ReadAsStringAsync(cancellationToken);
+    }
+
+    private static string? SanitizeRequestUri(Uri? requestUri) {
+        if (requestUri is null) { return null; }
+
+        string value = requestUri.ToString();
+        int queryStart = value.IndexOf('?');
+        if (queryStart < 0) { return value; }
+
+        int fragmentStart = value.IndexOf('#', queryStart + 1);
+        int queryEnd = fragmentStart < 0 ? value.Length : fragmentStart;
+        string[] fields = value[(queryStart + 1)..queryEnd].Split('&');
+        var changed = false;
+        for (int index = 0; index < fields.Length; index++) {
+            int separator = fields[index].IndexOf('=');
+            string name = separator < 0
+                ? fields[index]
+                : fields[index][..separator];
+            if (!string.Equals(name, "key", StringComparison.OrdinalIgnoreCase)) {
+                continue;
+            }
+            fields[index] = name + "=%5BREDACTED%5D";
+            changed = true;
+        }
+        if (!changed) { return value; }
+
+        return value[..(queryStart + 1)]
+            + string.Join('&', fields)
+            + value[queryEnd..];
     }
 
     private sealed class CompletionTapStreamContent : StreamContent {

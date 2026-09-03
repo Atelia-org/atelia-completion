@@ -190,14 +190,14 @@ public sealed class GeminiToolSchemaProjectionTests {
             "ConvertToApiRequest",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
             binder: null,
-            types: [typeof(CompletionRequest)],
+            types: [typeof(CompletionRequest), typeof(int)],
             modifiers: null
         );
 
         Assert.NotNull(method);
 
         try {
-            return method!.Invoke(null, [request])!;
+            return method!.Invoke(null, [request, 65_536])!;
         }
         catch (TargetInvocationException ex) when (ex.InnerException is not null) {
             ExceptionDispatchInfo.Capture(ex.InnerException).Throw();

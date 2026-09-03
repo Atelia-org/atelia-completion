@@ -23,7 +23,7 @@ public sealed class AnthropicClient : ICompletionClient {
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
     private readonly string _apiVersion;
-    private readonly int? _defaultMaxTokens;
+    private readonly ProviderModelMaximumCache _modelMaximums;
     private readonly bool _enablePromptCaching;
     private readonly CompletionReasoningEffort _reasoningEffort;
     private readonly AnthropicPromptCacheTtl _promptCacheTtl;
@@ -35,7 +35,6 @@ public sealed class AnthropicClient : ICompletionClient {
         string? apiKey,
         HttpClient httpClient,
         string? apiVersion = null,
-        int? defaultMaxTokens = null,
         bool enablePromptCaching = true,
         CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
         AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault
@@ -47,7 +46,9 @@ public sealed class AnthropicClient : ICompletionClient {
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(AnthropicClient));
 
         _apiVersion = string.IsNullOrWhiteSpace(apiVersion) ? DefaultApiVersion : apiVersion;
-        _defaultMaxTokens = defaultMaxTokens;
+        _modelMaximums = new ProviderModelMaximumCache(
+            FetchModelMaximumAsync
+        );
         _enablePromptCaching = enablePromptCaching;
         _reasoningEffort = Enum.IsDefined(reasoningEffort)
             ? reasoningEffort
@@ -60,7 +61,7 @@ public sealed class AnthropicClient : ICompletionClient {
                 "Unknown Anthropic prompt cache TTL."
             );
 
-        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, defaultMaxTokens={_defaultMaxTokens?.ToString() ?? "(none)"}, promptCaching={_enablePromptCaching}, promptCacheTtl={_promptCacheTtl}, reasoningEffort={_reasoningEffort}");
+        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, promptCaching={_enablePromptCaching}, promptCacheTtl={_promptCacheTtl}, reasoningEffort={_reasoningEffort}");
     }
 
     public Task<CompletionResult> StreamCompletionAsync(
@@ -130,9 +131,13 @@ public sealed class AnthropicClient : ICompletionClient {
         DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
 
         var invocation = CompletionDescriptor.From(this, request);
+        int modelMaximumTokens = await _modelMaximums.GetAsync(
+            request.ModelId,
+            cancellationToken
+        ).ConfigureAwait(false);
         var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
             request,
-            _defaultMaxTokens,
+            modelMaximumTokens,
             enablePromptCaching,
             _reasoningEffort,
             promptCacheTtl,
@@ -343,6 +348,41 @@ public sealed class AnthropicClient : ICompletionClient {
         );
     }
 
+    private async Task<int> FetchModelMaximumAsync(
+        string modelId,
+        CancellationToken cancellationToken
+    ) {
+        using HttpRequestMessage request = CreateModelInfoRequest(modelId);
+        using HttpResponseMessage response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken
+        ).ConfigureAwait(false);
+        using JsonDocument document = await ProviderModelCapabilityResponse
+            .ReadJsonObjectAsync(
+                response,
+                "Anthropic",
+                cancellationToken
+            ).ConfigureAwait(false);
+        return ProviderModelCapabilityResponse.RequirePositivePlainInt32(
+            document.RootElement,
+            "max_tokens",
+            "Anthropic"
+        );
+    }
+
+    private HttpRequestMessage CreateModelInfoRequest(string modelId) {
+        var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"v1/models/{Uri.EscapeDataString(modelId)}"
+        );
+        request.Headers.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("application/json")
+        );
+        ApplyAuthenticationHeaders(request);
+        return request;
+    }
+
     private HttpRequestMessage CreateHttpRequest(AnthropicApiRequest apiRequest) {
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
         DebugUtil.Trace(DebugCategory, $"[Anthropic] Request payload length={json.Length}");
@@ -352,6 +392,12 @@ public sealed class AnthropicClient : ICompletionClient {
         };
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
+        ApplyAuthenticationHeaders(request);
+
+        return request;
+    }
+
+    private void ApplyAuthenticationHeaders(HttpRequestMessage request) {
         if (!string.IsNullOrWhiteSpace(_apiKey)) {
             request.Headers.Add("x-api-key", _apiKey);
         }
@@ -359,8 +405,6 @@ public sealed class AnthropicClient : ICompletionClient {
         if (!string.IsNullOrWhiteSpace(_apiVersion)) {
             request.Headers.Add("anthropic-version", _apiVersion);
         }
-
-        return request;
     }
 
     private static void CleanupAfterFailure(

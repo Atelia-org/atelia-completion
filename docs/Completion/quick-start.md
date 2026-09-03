@@ -281,6 +281,7 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 
 - 本地 `sglang` 服务已经监听 `http://localhost:8000/`
 - 该端点同时支持 OpenAI Chat 与 Anthropic Messages
+- Anthropic surface 还需支持 `GET /v1/models/{modelId}` 并返回正整数 `max_tokens`；没有静态 fallback
 - 本地服务不校验 `model-id` 与 `api-key`，因此测试中的占位值不会影响运行
 
 推荐把它视为**显式运行的本地集成测试**，而不是默认快速单测：
@@ -304,7 +305,6 @@ public sealed class CompletionRequest {
     public string ModelId { get; }                                 // 必填，且必须能被服务端识别
     public CompletionPromptPrefix PromptPrefix { get; }            // typed stable-prefix boundary
     public ImmutableArray<IHistoryMessage> TailMessages { get; }   // 不共享的请求尾部
-    public int? MaxTokens { get; }
 }
 ```
 
@@ -320,7 +320,14 @@ public sealed class CompletionRequest {
 `TailMessages = []`。需要共享 prefix 的调用必须显式划分两段，不能用裸 message index 或
 adapter 内字符串搜索表达 boundary。
 
-**当前不暴露的字段**（按需走 provider 默认值，未来再扩展）：`temperature`、`top_p`、`stop`、`response_format` 等。
+**有意不支持 output-token cap**：`CompletionRequest` 与 strict connections V2 都不提供
+`MaxTokens` / `MaxOutputTokens` 一类数字。省略字段即可表达不限量/模型最大值的 provider wire 一律省略；必须
+显式发送数字才能得到该语义时，client 先查询 exact `ModelId` 的官方 model capability，并且只发送 provider
+报告的模型最大值。这里不会再引入
+per-request、per-connection 或换名后的本地输出预算，避免把已经计费的生成截断成不可用结果。V1
+connections manifest 会被拒绝，V2 中残留的 `maxTokens`（包括 `null`）也会作为 unknown property 被拒绝。
+
+**其他当前不暴露的字段**（按需走 provider 默认值，未来再扩展）：`temperature`、`top_p`、`stop`、`response_format` 等。
 
 ⚠️ **不要把 system 拼进 messages**——它走 `PromptPrefix.SystemPrompt`，与历史解耦。
 
@@ -624,6 +631,10 @@ new AnthropicClient(
 
 走真·Anthropic 时，用 `CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://api.anthropic.com/"))` 创建 `HttpClient`，再把真 key 给 `apiKey`。`ApiSpecId == "messages-v1"`。
 
+Anthropic Messages 的 `max_tokens` 是必填字段。client 在首次使用某个 exact `ModelId` 时先调用
+`GET /v1/models/{modelId}`，严格读取 `ModelInfo.max_tokens`，成功后才发送 Messages POST；成功值按 client
+lifetime/exact id 缓存，并发查询 one-flight，失败或取消不会污染缓存。没有静态 fallback，也没有调用方数字配置。
+
 **Adaptive thinking**：`ProviderDefault` 不发送显式控制，`Disabled` 发送 `thinking.type=disabled`，`Low`～`Max` 发送 `thinking.type=adaptive`、`display=summarized` 与对应的 `output_config.effort`。开启后：
 
 - 明文 thinking 通过 `CompletionStreamObserver.ReceivedReasoningDelta` 流式推送，并在 `AnthropicReasoningBlock.PlainText` 上留存完整快照；
@@ -642,11 +653,11 @@ new AnthropicClient(
 }
 ```
 
-非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v9` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。v9 同时显式记录 object schema 的 nullable 语义。`CompletionOutputContract.SemanticFingerprint`采用条件式wire版本：递归schema中没有nullable Object时继续使用原`atelia.completion.output-contract.v1` preimage，保持既有fingerprint；首次出现`ToolSchema.Object.IsNullable=true`时才使用显式提交每个Object nullability的v2 preimage。
+非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v10` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。v10 从 connection/request snapshot 删除了 output-cap 字段，并继续显式记录 object schema 的 nullable 语义。`CompletionOutputContract.SemanticFingerprint`采用条件式wire版本：递归schema中没有nullable Object时继续使用原`atelia.completion.output-contract.v1` preimage，保持既有fingerprint；首次出现`ToolSchema.Object.IsNullable=true`时才使用显式提交每个Object nullability的v2 preimage。
 
 单次调用的 `PromptCacheReuseHint` 优先级如下：当 `enablePromptCaching=false` 时始终不发送 cache breakpoint；否则 `ConnectionDefault` 沿用 connection 的 `AnthropicPromptCacheTtl`，`NoReuseExpected` 不发送 `cache_control`，`ReuseExpectedSoon` 映射到 `5m`，`ReuseExpectedAfterPause` 映射到 `1h`。OpenAI Chat、OpenAI Responses、Gemini 与 DeepSeek 当前接受这些 hint，但只提供 implicit/best-effort 行为，不伪装成显式 breakpoint 保证；Gemini explicit CachedContent 属于独立 resource lifecycle，不在单次 invocation options 中映射。
 
-Call log v8 在 `request.promptPrefix` / `request.tailMessages` 中保留 typed boundary，完整记录
+Call log v10 在 `request.promptPrefix` / `request.tailMessages` 中保留 typed boundary，完整记录
 `OutputContract` 的 ordered tools、tool choice、parallel policy 与 canonical semantic fingerprint。
 `response.usage` 分别记录 uncached input、cache creation、cache read 与 output tokens；
 `promptCache.requestStatus / supportStatus / observationStatus` 是相互独立的状态。
@@ -671,6 +682,11 @@ new GeminiClient(
     httpClient: httpClient
 );
 ```
+
+Gemini 的 `maxOutputTokens` 在省略时会采用随模型变化的默认值，因此 client 在首次使用某个 exact
+`ModelId` 时先调用 `GET /v1beta/models/{modelId}`，严格读取 `Model.outputTokenLimit`，再把该最大值写入
+`generationConfig.maxOutputTokens`。成功值按 client lifetime/exact id 缓存，并发查询 one-flight；失败或取消不
+poison cache，且 capability 成功前不会发送 billable generation POST。
 
 当前 Gemini 实现走 Google AI Studio / Gemini Developer API：
 

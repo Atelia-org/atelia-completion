@@ -18,7 +18,7 @@ public sealed class AnthropicToolSchemaProjectionTests {
             tailMessages: []
         );
 
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request);
+        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(request, modelMaximumTokens: 200_000);
 
         var tool = Assert.Single(apiRequest.Tools!);
         Assert.Equal("search_docs", tool.Name);

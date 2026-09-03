@@ -8,12 +8,23 @@ namespace Atelia.Completion.Tests;
 
 public sealed class CompletionConnectionConfigLoaderTests {
     [Fact]
-    public void Decode_AcceptsStrictV1AndFreezesResult() {
+    public void ConnectionContractHasNoCallerSelectedOutputTokenCeiling() {
+        Assert.DoesNotContain(
+            typeof(CompletionConnectionConfig).GetProperties(),
+            static property => property.Name.Contains(
+                "MaxToken",
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+    }
+
+    [Fact]
+    public void Decode_AcceptsStrictV2AndFreezesResult() {
         CompletionConnectionsFileConfig config = Decode(
             Connection(
                 kind: "anthropic",
                 surface: "anthropic",
-                extra: "\"apiKey\":\"secret\",\"maxTokens\":2048,"
+                extra: "\"apiKey\":\"secret\","
                     + "\"reasoningEffort\":\"high\","
                     + "\"anthropicPromptCacheTtl\":\"1h\""
             )
@@ -22,7 +33,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
         CompletionConnectionConfig item = Assert.Single(config.Connections);
         Assert.Equal("main", config.DefaultConnectionId);
         Assert.Equal("secret", item.ApiKey);
-        Assert.Equal(2048, item.MaxTokens);
         Assert.Equal(CompletionReasoningEffort.High, item.ReasoningEffort);
         Assert.Equal(
             AnthropicPromptCacheTtl.OneHour,
@@ -172,7 +182,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
                 .Connections
         );
 
-        Assert.Null(item.MaxTokens);
         Assert.Equal(
             CompletionReasoningEffort.ProviderDefault,
             item.ReasoningEffort
@@ -190,10 +199,10 @@ public sealed class CompletionConnectionConfigLoaderTests {
     [InlineData("null")]
     [InlineData("\"1\"")]
     [InlineData("0")]
-    [InlineData("2")]
+    [InlineData("1")]
     [InlineData("1.0")]
     [InlineData("1e0")]
-    public void Decode_RequiresExactIntegerV1(string? version) {
+    public void Decode_RequiresExactIntegerV2(string? version) {
         string document = version is null
             ? "{\"connections\":[" + Connection()
                 + "],\"defaultConnectionId\":\"main\"}"
@@ -210,13 +219,13 @@ public sealed class CompletionConnectionConfigLoaderTests {
 
     public static TheoryData<byte[]> StructuralFailures => new() {
         Encoding.UTF8.GetBytes(
-            "{\"v\":1,\"v\":1,\"connections\":[],\"defaultConnectionId\":\"main\"}"
+            "{\"v\":2,\"v\":2,\"connections\":[],\"defaultConnectionId\":\"main\"}"
         ),
         Encoding.UTF8.GetBytes(
-            "{\"v\":1,\"connections\":[],\"defaultConnectionId\":\"main\",\"unknown\":1}"
+            "{\"v\":2,\"connections\":[],\"defaultConnectionId\":\"main\",\"unknown\":1}"
         ),
         Encoding.UTF8.GetBytes(
-            "{\"V\":1,\"connections\":[],\"defaultConnectionId\":\"main\"}"
+            "{\"V\":2,\"connections\":[],\"defaultConnectionId\":\"main\"}"
         ),
         Encoding.UTF8.GetBytes(Root(
             Connection(),
@@ -427,7 +436,7 @@ public sealed class CompletionConnectionConfigLoaderTests {
         ));
         Assert.Throws<InvalidDataException>(() =>
             CompletionConnectionConfigLoader.Decode(Encoding.UTF8.GetBytes(
-                "{\"v\":1,\"connections\":[" + Connection() + ","
+                "{\"v\":2,\"connections\":[" + Connection() + ","
                 + Connection() + "],\"defaultConnectionId\":\"main\"}"
             ))
         );
@@ -463,25 +472,16 @@ public sealed class CompletionConnectionConfigLoaderTests {
     }
 
     [Theory]
-    [InlineData("")]
     [InlineData("null")]
     [InlineData("1")]
     [InlineData("2147483647")]
-    public void Decode_AcceptsSupportedMaxTokens(string token) {
-        string extra = token.Length == 0
-            ? string.Empty
-            : $"\"maxTokens\":{token}";
-        Assert.Single(Decode(Connection(extra: extra)).Connections);
-    }
-
-    [Theory]
     [InlineData("0")]
     [InlineData("-1")]
     [InlineData("2147483648")]
     [InlineData("1.0")]
     [InlineData("1e0")]
     [InlineData("\"1\"")]
-    public void Decode_RejectsUnsupportedMaxTokens(string token) {
+    public void Decode_RejectsRemovedMaxTokensProperty(string token) {
         Assert.Throws<InvalidDataException>(() => Decode(Connection(
             extra: $"\"maxTokens\":{token}"
         )));
@@ -635,14 +635,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
     public void NormalizeAndValidate_RejectsInvalidOptionalMetadata() {
         CompletionConnectionConfig main = ProgrammaticConnection("main");
 
-        foreach (int invalidMaxTokens in new[] { 0, -1 }) {
-            Assert.Throws<InvalidOperationException>(() =>
-                CompletionConnectionConfigLoader.NormalizeAndValidate(new(
-                    [main with { MaxTokens = invalidMaxTokens }],
-                    "main"
-                ))
-            );
-        }
         Assert.Throws<InvalidOperationException>(() =>
             CompletionConnectionConfigLoader.NormalizeAndValidate(new(
                 [main],
@@ -742,7 +734,7 @@ public sealed class CompletionConnectionConfigLoaderTests {
     }
 
     [Fact]
-    public void V1EnvMigration_PreservesNormalizedNonSecretFingerprint() {
+    public void V2EnvManifest_PreservesNormalizedNonSecretFingerprint() {
         string endpointEnv = EnvName("MIGRATION_ENDPOINT");
         string keyEnv = EnvName("MIGRATION_KEY");
         try {
@@ -764,7 +756,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
                         BaseAddress: string.Empty,
                         BaseAddressEnv: endpointEnv,
                         ApiKeyEnv: keyEnv,
-                        MaxTokens: 4_096,
                         ReasoningEffort: CompletionReasoningEffort.High
                     )],
                     DefaultConnectionId: "main"
@@ -774,7 +765,7 @@ public sealed class CompletionConnectionConfigLoaderTests {
                 surface: "openai-responses",
                 source: $"\"baseAddressEnv\":\"{endpointEnv}\"",
                 extra: $"\"apiKeyEnv\":\"{keyEnv}\","
-                    + "\"maxTokens\":4096,\"reasoningEffort\":\"high\""
+                    + "\"reasoningEffort\":\"high\""
             ));
 
             CompletionConnectionConfig oldConnection = Assert.Single(
@@ -803,7 +794,6 @@ public sealed class CompletionConnectionConfigLoaderTests {
                 migratedConnection.BaseAddressEnv
             );
             Assert.Equal(oldConnection.ApiKeyEnv, migratedConnection.ApiKeyEnv);
-            Assert.Equal(oldConnection.MaxTokens, migratedConnection.MaxTokens);
             Assert.Equal(
                 oldConnection.ReasoningEffort,
                 migratedConnection.ReasoningEffort
@@ -838,7 +828,7 @@ public sealed class CompletionConnectionConfigLoaderTests {
 
     private static string Root(
         string item,
-        string version = "1",
+        string version = "2",
         string defaultId = "main",
         string extra = ""
     ) => $"{{\"v\":{version},\"connections\":[{item}],"
@@ -864,7 +854,7 @@ public sealed class CompletionConnectionConfigLoaderTests {
             .Select(index => Connection(id: $"item-{index}"))
             .ToArray();
         string defaultId = count == 0 ? "none" : "item-0";
-        string document = "{\"v\":1,\"connections\":["
+        string document = "{\"v\":2,\"connections\":["
             + string.Join(',', items)
             + $"],\"defaultConnectionId\":\"{defaultId}\"}}";
         return CompletionConnectionConfigLoader.Decode(
@@ -883,7 +873,7 @@ public sealed class CompletionConnectionConfigLoaderTests {
     );
 
     private static string EnvName(string suffix)
-        => $"ATELIA_COMPLETION_V1_{suffix}_{Guid.NewGuid():N}";
+        => $"ATELIA_COMPLETION_V2_{suffix}_{Guid.NewGuid():N}";
 
     private static string CreateTempDirectory() {
         string path = Path.Combine(

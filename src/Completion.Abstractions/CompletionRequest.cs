@@ -2,12 +2,29 @@ using System.Collections.Immutable;
 
 namespace Atelia.Completion.Abstractions;
 
+/// <summary>
+/// Describes one Completion invocation without imposing a caller-selected
+/// output-token ceiling.
+/// </summary>
+/// <remarks>
+/// Per-request and per-connection output caps are intentionally unsupported.
+/// Provider limit fields are omitted when omission has maximum/unlimited
+/// semantics. When a numeric field is required to realize those semantics,
+/// including when omission selects a lower model-varying default, it is
+/// populated only with the selected model's provider-reported maximum. This
+/// prevents a local budget from truncating an already billable generation
+/// before it produces a usable result.
+/// </remarks>
 public sealed class CompletionRequest {
+    /// <summary>Creates an immutable request for the selected model.</summary>
+    /// <remarks>
+    /// There is deliberately no output-token-limit parameter. See the class
+    /// contract for the provider mapping policy.
+    /// </remarks>
     public CompletionRequest(
         string modelId,
         CompletionPromptPrefix promptPrefix,
-        IReadOnlyList<IHistoryMessage> tailMessages,
-        int? maxTokens = null
+        IReadOnlyList<IHistoryMessage> tailMessages
     ) {
         ModelId = string.IsNullOrWhiteSpace(modelId)
             ? throw new ArgumentException("Model id cannot be empty.", nameof(modelId))
@@ -21,16 +38,7 @@ public sealed class CompletionRequest {
                 nameof(tailMessages)
             );
         }
-        if (maxTokens is <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(maxTokens),
-                maxTokens,
-                "Max tokens must be positive when specified."
-            );
-        }
-
         TailMessages = [.. tailMessages];
-        MaxTokens = maxTokens;
     }
 
     public string ModelId { get; }
@@ -38,6 +46,4 @@ public sealed class CompletionRequest {
     public CompletionPromptPrefix PromptPrefix { get; }
 
     public ImmutableArray<IHistoryMessage> TailMessages { get; }
-
-    public int? MaxTokens { get; }
 }

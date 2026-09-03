@@ -454,6 +454,9 @@ public sealed class GeminiClientTests {
         public int RequestCount { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            if (request.Method == HttpMethod.Get) {
+                return Task.FromResult(ModelInfoResponse());
+            }
             RequestCount++;
             return Task.FromResult(_responses.Dequeue());
         }
@@ -469,10 +472,23 @@ public sealed class GeminiClientTests {
         public HttpRequestMessage? LastRequest { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+            if (request.Method == HttpMethod.Get) {
+                return Task.FromResult(ModelInfoResponse());
+            }
             LastRequest = request;
             return Task.FromResult(_response);
         }
     }
+
+    private static HttpResponseMessage ModelInfoResponse(
+        int maximumTokens = 65_536
+    ) => new(HttpStatusCode.OK) {
+        Content = new StringContent(
+            $"{{\"name\":\"models/gemini-2.5-flash\",\"outputTokenLimit\":{maximumTokens}}}",
+            Encoding.UTF8,
+            "application/json"
+        )
+    };
 
     private sealed class ThrowAfterPayloadStream : Stream {
         private readonly byte[] _payload;

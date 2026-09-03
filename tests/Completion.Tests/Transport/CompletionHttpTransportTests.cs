@@ -182,11 +182,17 @@ public sealed class CompletionHttpTransportTests {
 
         Assert.Equal("world", result.Message.GetFlattenedText());
 
-        var exchange = Assert.Single(captureSink.GetSnapshot());
-        Assert.Equal("POST", exchange.Method);
-        Assert.Equal("http://localhost:8000/v1/messages", exchange.RequestUri);
-        Assert.Contains("claude-3-5-sonnet-20241022", exchange.RequestText, StringComparison.Ordinal);
-        Assert.Contains("\"text\":\"world\"", exchange.ResponseText, StringComparison.Ordinal);
+        CompletionHttpExchange[] exchanges = captureSink.GetSnapshot().ToArray();
+        Assert.Equal(2, exchanges.Length);
+        Assert.Equal("GET", exchanges[0].Method);
+        Assert.Equal(
+            "http://localhost:8000/v1/models/claude-3-5-sonnet-20241022",
+            exchanges[0].RequestUri
+        );
+        Assert.Equal("POST", exchanges[1].Method);
+        Assert.Equal("http://localhost:8000/v1/messages", exchanges[1].RequestUri);
+        Assert.Contains("claude-3-5-sonnet-20241022", exchanges[1].RequestText, StringComparison.Ordinal);
+        Assert.Contains("\"text\":\"world\"", exchanges[1].ResponseText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -199,8 +205,8 @@ public sealed class CompletionHttpTransportTests {
         try {
             using var httpClient = new CompletionHttpClientBuilder()
                 .UsePrimaryHandler(
-                new StubHttpMessageHandler(
-                    new HttpResponseMessage(HttpStatusCode.OK) {
+                    new StubHttpMessageHandler(
+                        new HttpResponseMessage(HttpStatusCode.OK) {
                         Content = new StringContent(
                             """
                                 data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":null}
@@ -457,8 +463,8 @@ public sealed class CompletionHttpTransportTests {
         try {
             using (var recordingHttpClient = new CompletionHttpClientBuilder()
                 .UsePrimaryHandler(
-                new StubHttpMessageHandler(
-                    new HttpResponseMessage(HttpStatusCode.OK) {
+                    new StubHttpMessageHandler(
+                        new HttpResponseMessage(HttpStatusCode.OK) {
                         Content = new StringContent(
                             """
                                 data: {"choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}],"usage":null}
@@ -522,8 +528,9 @@ public sealed class CompletionHttpTransportTests {
         try {
             using (var recordingHttpClient = new CompletionHttpClientBuilder()
                 .UsePrimaryHandler(
-                new StubHttpMessageHandler(
-                    new HttpResponseMessage(HttpStatusCode.OK) {
+                    new CapabilityAwareStubHttpMessageHandler(
+                        "{\"outputTokenLimit\":65536}",
+                        new HttpResponseMessage(HttpStatusCode.OK) {
                         Content = new StringContent(
                             """
                                 data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]}}]}
@@ -547,8 +554,8 @@ public sealed class CompletionHttpTransportTests {
             }
 
             var lines = await File.ReadAllLinesAsync(filePath, CancellationToken.None);
-            var line = Assert.Single(lines);
-            using (var document = JsonDocument.Parse(line)) {
+            Assert.Equal(2, lines.Length);
+            using (var document = JsonDocument.Parse(lines[1])) {
                 var root = document.RootElement;
                 Assert.Equal(
                     "http://localhost:8000/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
@@ -725,6 +732,39 @@ public sealed class CompletionHttpTransportTests {
         Assert.Null(exchange.StatusCode);
         Assert.Null(exchange.ResponseText);
         Assert.Equal("System.Net.Http.HttpRequestException: simulated connect failure", exchange.ErrorText);
+    }
+
+    [Fact]
+    public async Task CapturePipeline_RedactsApiKeyQueryFromFailureExchange() {
+        const string Secret = "GEMINI_QUERY_KEY_CANARY";
+        var captureSink = new InMemoryCompletionHttpExchangeSink();
+        using var httpClient = new CompletionHttpClientBuilder()
+            .UsePrimaryHandler(new ThrowingHttpMessageHandler(
+                new HttpRequestException("simulated connect failure")
+            ))
+            .AddExchangeSink(captureSink)
+            .Build();
+        httpClient.BaseAddress = new Uri("https://provider.example/");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            httpClient.SendAsync(new HttpRequestMessage(
+                HttpMethod.Get,
+                $"v1beta/models/model?key={Secret}&alt=json"
+            ))
+        );
+
+        CompletionHttpExchange exchange = Assert.Single(
+            captureSink.GetSnapshot()
+        );
+        Assert.DoesNotContain(
+            Secret,
+            exchange.RequestUri,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            "https://provider.example/v1beta/models/model?key=%5BREDACTED%5D&alt=json",
+            exchange.RequestUri
+        );
     }
 
     [Fact]
@@ -1032,6 +1072,29 @@ public sealed class CompletionHttpTransportTests {
         }
     }
 
+    private sealed class CapabilityAwareStubHttpMessageHandler(
+        string capabilityJson,
+        HttpResponseMessage generationResponse
+    ) : HttpMessageHandler {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        ) {
+            _ = cancellationToken;
+            return Task.FromResult(
+                request.Method == HttpMethod.Get
+                    ? new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(
+                            capabilityJson,
+                            Encoding.UTF8,
+                            "application/json"
+                        )
+                    }
+                    : generationResponse
+            );
+        }
+    }
+
     private sealed class ThrowingHttpMessageHandler : HttpMessageHandler {
         private readonly Exception _exception;
 
@@ -1054,6 +1117,19 @@ public sealed class CompletionHttpTransportTests {
 
     private sealed class AnthropicReplayResponder : ICompletionHttpReplayResponder {
         public HttpResponseMessage CreateResponse(CompletionHttpReplayRequest request) {
+            if (string.Equals(request.Method, "GET", StringComparison.Ordinal)) {
+                Assert.Equal(
+                    "http://localhost:8000/v1/models/claude-3-5-sonnet-20241022",
+                    request.RequestUri
+                );
+                return new HttpResponseMessage(HttpStatusCode.OK) {
+                    Content = new StringContent(
+                        "{\"max_tokens\":200000}",
+                        Encoding.UTF8,
+                        "application/json"
+                    )
+                };
+            }
             Assert.Equal("POST", request.Method);
             Assert.Equal("http://localhost:8000/v1/messages", request.RequestUri);
             Assert.Contains("\"model\":\"claude-3-5-sonnet-20241022\"", request.RequestText, StringComparison.Ordinal);

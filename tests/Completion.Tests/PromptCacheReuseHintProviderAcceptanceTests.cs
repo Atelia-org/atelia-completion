@@ -163,6 +163,15 @@ public sealed class PromptCacheReuseHintProviderAcceptanceTests {
             HttpRequestMessage request,
             CancellationToken cancellationToken
         ) {
+            if (request.Method == HttpMethod.Get) {
+                return new HttpResponseMessage(HttpStatusCode.OK) {
+                    Content = new StringContent(
+                        "{\"outputTokenLimit\":65536}",
+                        Encoding.UTF8,
+                        "application/json"
+                    )
+                };
+            }
             RequestBodies.Add(
                 await request.Content!.ReadAsStringAsync(cancellationToken)
             );

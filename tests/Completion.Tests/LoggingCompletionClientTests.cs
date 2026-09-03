@@ -356,7 +356,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v9",
+                "atelia.completion.call-log.v10",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -388,7 +388,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v9",
+            "atelia.completion.call-log.v10",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -399,7 +399,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement request = root.GetProperty("request");
         Assert.Equal("model-a", request.GetProperty("modelId").GetString());
-        Assert.Equal(2048, request.GetProperty("maxTokens").GetInt32());
+        Assert.False(request.TryGetProperty("maxTokens", out _));
         Assert.False(request.TryGetProperty("systemPrompt", out _));
         Assert.False(request.TryGetProperty("context", out _));
         Assert.False(request.TryGetProperty("tools", out _));
@@ -452,7 +452,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             valueSchema.GetProperty("default").ValueKind
         );
         JsonElement connection = root.GetProperty("connection");
-        Assert.Equal(4096, connection.GetProperty("maxTokens").GetInt32());
+        Assert.False(connection.TryGetProperty("maxTokens", out _));
         Assert.Equal(
             "high",
             connection.GetProperty("reasoningEffort").GetString()
@@ -523,7 +523,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v9",
+            "atelia.completion.call-log.v10",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -550,7 +550,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
     }
 
     [Fact]
-    public async Task CallLogV9_RecordsEveryNullableSchemaNodeExactly() {
+    public async Task CallLogV10_RecordsEveryNullableSchemaNodeExactly() {
         var client = CreateLoggingClient(
             new YieldingCompletionClient("nullable-schema-test")
         );
@@ -608,11 +608,11 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         ));
         using JsonDocument document = JsonDocument.Parse(json);
         Assert.Equal(
-            "atelia.completion.call-log.v9",
+            "atelia.completion.call-log.v10",
             document.RootElement.GetProperty("schema").GetString()
         );
         Assert.DoesNotContain(
-            "atelia.completion.call-log.v8",
+            "atelia.completion.call-log.v9",
             json,
             StringComparison.Ordinal
         );
@@ -669,7 +669,6 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         ModelId: "model-a",
         CompletionSurfaceId: "surface-a",
         BaseAddress: "http://localhost/",
-        MaxTokens: 4096,
         ReasoningEffort: CompletionReasoningEffort.High,
         AnthropicPromptCacheTtl: AnthropicPromptCacheTtl.OneHour
     );
@@ -717,8 +716,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
                 ),
                 [new ObservationMessage("shared")]
             ),
-            [new ObservationMessage("tail")],
-            maxTokens: 2048
+            [new ObservationMessage("tail")]
         );
     }
 

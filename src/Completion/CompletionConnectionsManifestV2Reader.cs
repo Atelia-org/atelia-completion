@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
@@ -7,7 +6,7 @@ using Atelia.Completion.Anthropic;
 
 namespace Atelia.Completion;
 
-internal static class CompletionConnectionsManifestV1Reader {
+internal static class CompletionConnectionsManifestV2Reader {
     internal const int MaximumConnectionCount = 256;
     internal const int MaximumIdentifierUtf8Bytes = 128;
     internal const int MaximumEndpointUtf8Bytes = 4 * 1024;
@@ -58,7 +57,6 @@ internal static class CompletionConnectionsManifestV1Reader {
                 item.ApiKey,
                 item.BaseAddressEnv,
                 item.ApiKeyEnv,
-                item.MaxTokens,
                 item.ReasoningEffort,
                 item.AnthropicPromptCacheTtl
             );
@@ -128,7 +126,7 @@ internal static class CompletionConnectionsManifestV1Reader {
         if (bytes.Length is < 1
             or > CompletionConnectionConfigLoader.MaximumInputUtf8Bytes) {
             throw new InvalidDataException(
-                "Completion connections bytes are empty or exceed the 1 MiB V1 bound."
+                "Completion connections bytes are empty or exceed the 1 MiB V2 bound."
             );
         }
         if (bytes.Length >= 3
@@ -154,7 +152,7 @@ internal static class CompletionConnectionsManifestV1Reader {
             if (root.ValueKind is not JsonValueKind.Object
                 || !root.TryGetProperty("v", out _)) {
                 throw new InvalidDataException(
-                    "Completion connections require exact integer version 'v': 1; migrate the manifest before retrying."
+                    "Completion connections require exact integer version 'v': 2; migrate the manifest before retrying."
                 );
             }
             RequireProperties(
@@ -166,11 +164,11 @@ internal static class CompletionConnectionsManifestV1Reader {
             if (version.ValueKind is not JsonValueKind.Number
                 || !string.Equals(
                     version.GetRawText(),
-                    "1",
+                    "2",
                     StringComparison.Ordinal
                 )) {
                 throw new InvalidDataException(
-                    "Completion connections require exact integer version 'v': 1; migrate the manifest before retrying."
+                    "Completion connections require exact integer version 'v': 2; migrate the manifest before retrying."
                 );
             }
 
@@ -231,7 +229,7 @@ internal static class CompletionConnectionsManifestV1Reader {
                 or InvalidOperationException
                 or OverflowException) {
             throw new InvalidDataException(
-                "Completion connections are not a strict bounded V1 document.",
+                "Completion connections are not a strict bounded V2 document.",
                 exception
             );
         }
@@ -339,7 +337,7 @@ internal static class CompletionConnectionsManifestV1Reader {
             required: ["id", "kind", "modelId", "completionSurfaceId"],
             optional: [
                 "baseAddress", "baseAddressEnv", "apiKey", "apiKeyEnv",
-                "maxTokens", "reasoningEffort", "anthropicPromptCacheTtl"
+                "reasoningEffort", "anthropicPromptCacheTtl"
             ]
         );
         return new WireConnection(
@@ -371,34 +369,9 @@ internal static class CompletionConnectionsManifestV1Reader {
                 "apiKeyEnv",
                 MaximumIdentifierUtf8Bytes
             ),
-            OptionalPositivePlainInt32(item, "maxTokens"),
             OptionalReasoningEffort(item),
             OptionalAnthropicPromptCacheTtl(item)
         );
-    }
-
-    private static int? OptionalPositivePlainInt32(
-        JsonElement item,
-        string propertyName
-    ) {
-        if (!item.TryGetProperty(propertyName, out JsonElement value)
-            || value.ValueKind is JsonValueKind.Null) {
-            return null;
-        }
-        string raw = value.GetRawText();
-        if (value.ValueKind is not JsonValueKind.Number
-            || !int.TryParse(
-                raw,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out int parsed
-            )
-            || parsed <= 0) {
-            throw new InvalidDataException(
-                "maxTokens must be null or a positive plain Int32."
-            );
-        }
-        return parsed;
     }
 
     private static CompletionReasoningEffort OptionalReasoningEffort(
@@ -536,7 +509,6 @@ internal static class CompletionConnectionsManifestV1Reader {
         string? ApiKey,
         string? BaseAddressEnv,
         string? ApiKeyEnv,
-        int? MaxTokens,
         CompletionReasoningEffort ReasoningEffort,
         AnthropicPromptCacheTtl AnthropicPromptCacheTtl
     );

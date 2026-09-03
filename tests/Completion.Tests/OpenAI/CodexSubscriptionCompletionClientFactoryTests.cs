@@ -51,8 +51,7 @@ public sealed class CodexSubscriptionCompletionClientFactoryTests {
             Kind = "custom-provider",
             CompletionSurfaceId = "custom-surface",
             BaseAddress = "https://custom.example/",
-            ApiKey = "custom-key",
-            MaxTokens = 2048
+            ApiKey = "custom-key"
         };
 
         ICompletionClient client = factory.Create(connection);
@@ -114,10 +113,6 @@ public sealed class CodexSubscriptionCompletionClientFactoryTests {
                     ApiKeyEnv = "FORBIDDEN_API_KEY"
                 },
                 "apiKeyEnv"
-            },
-            {
-                CodexConnection() with { MaxTokens = 4096 },
-                "MaxTokens"
             },
             {
                 CodexConnection() with {

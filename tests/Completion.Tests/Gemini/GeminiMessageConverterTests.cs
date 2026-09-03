@@ -412,14 +412,14 @@ public sealed class GeminiMessageConverterTests {
             "ConvertToApiRequest",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
             binder: null,
-            types: new[] { typeof(CompletionRequest) },
+            types: new[] { typeof(CompletionRequest), typeof(int) },
             modifiers: null
         );
 
         Assert.NotNull(method);
 
         try {
-            return method!.Invoke(null, new object?[] { request })!;
+            return method!.Invoke(null, new object?[] { request, 65_536 })!;
         }
         catch (TargetInvocationException ex) when (ex.InnerException is not null) {
             ExceptionDispatchInfo.Capture(ex.InnerException).Throw();

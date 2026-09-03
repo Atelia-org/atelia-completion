@@ -10,7 +10,17 @@ namespace Atelia.Completion.Gemini;
 internal static class GeminiMessageConverter {
     private const string DebugCategory = "Provider";
 
-    public static GeminiGenerateContentRequest ConvertToApiRequest(CompletionRequest request) {
+    public static GeminiGenerateContentRequest ConvertToApiRequest(
+        CompletionRequest request,
+        int modelMaximumTokens
+    ) {
+        if (modelMaximumTokens <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(modelMaximumTokens),
+                modelMaximumTokens,
+                "Provider-resolved model maximum must be positive."
+            );
+        }
         var contents = new List<GeminiContent>();
         var pendingToolCalls = new List<PendingToolCall>();
 
@@ -41,7 +51,10 @@ internal static class GeminiMessageConverter {
                     }
                 },
             Tools = BuildToolDefinitions(outputContract.Tools),
-            ToolConfig = BuildToolConfig(outputContract)
+            ToolConfig = BuildToolConfig(outputContract),
+            GenerationConfig = new GeminiGenerationConfig {
+                MaxOutputTokens = modelMaximumTokens
+            }
         };
 
         int contextMessageCount = checked(

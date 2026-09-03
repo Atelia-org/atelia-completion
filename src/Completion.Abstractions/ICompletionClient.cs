@@ -15,6 +15,11 @@ namespace Atelia.Completion.Abstractions;
 /// 限流或串行化，因此本合同不承诺 provider 请求必然并行执行。
 /// lifetime owner 必须在所有调用结束后才 dispose 客户端；调用与 dispose
 /// 的并发不属于本合同。
+/// Completion intentionally exposes no caller-selected output-token ceiling:
+/// implementations omit provider limit fields when omission has
+/// maximum/unlimited semantics and otherwise use only the selected model's
+/// provider-reported maximum. This avoids locally truncating an already
+/// billable generation.
 /// </remarks>
 public interface ICompletionClient {
     /// <summary>

@@ -17,6 +17,7 @@ public sealed class GeminiClient : ICompletionClient {
 
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
+    private readonly ProviderModelMaximumCache _modelMaximums;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "generativelanguage.googleapis.com";
     public string ApiSpecId => "google-gemini-generate-content-v1beta";
@@ -27,6 +28,9 @@ public sealed class GeminiClient : ICompletionClient {
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
         _httpClient = httpClient;
         _ = CompletionHttpRequestUtility.RequireConfiguredBaseAddress(_httpClient, nameof(GeminiClient));
+        _modelMaximums = new ProviderModelMaximumCache(
+            FetchModelMaximumAsync
+        );
 
         DebugUtil.Info(DebugCategory, $"[Gemini] Client initialized base={_httpClient.BaseAddress}");
     }
@@ -50,7 +54,14 @@ public sealed class GeminiClient : ICompletionClient {
     ) {
         DebugUtil.Info(DebugCategory, $"[Gemini] Starting call model={request.ModelId}");
 
-        var apiRequest = GeminiMessageConverter.ConvertToApiRequest(request);
+        int modelMaximumTokens = await _modelMaximums.GetAsync(
+            request.ModelId,
+            cancellationToken
+        ).ConfigureAwait(false);
+        var apiRequest = GeminiMessageConverter.ConvertToApiRequest(
+            request,
+            modelMaximumTokens
+        );
         using var response = await SendStreamingRequestAsync(request.ModelId, apiRequest, cancellationToken);
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -142,6 +153,39 @@ public sealed class GeminiClient : ICompletionClient {
         );
     }
 
+    private async Task<int> FetchModelMaximumAsync(
+        string modelId,
+        CancellationToken cancellationToken
+    ) {
+        using HttpRequestMessage request = CreateModelInfoRequest(modelId);
+        using HttpResponseMessage response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken
+        ).ConfigureAwait(false);
+        using JsonDocument document = await ProviderModelCapabilityResponse
+            .ReadJsonObjectAsync(
+                response,
+                "Gemini",
+                cancellationToken
+            ).ConfigureAwait(false);
+        return ProviderModelCapabilityResponse.RequirePositivePlainInt32(
+            document.RootElement,
+            "outputTokenLimit",
+            "Gemini"
+        );
+    }
+
+    private HttpRequestMessage CreateModelInfoRequest(string modelId) {
+        string relativeUri = $"v1beta/{NormalizeModelPath(modelId)}";
+        var request = new HttpRequestMessage(HttpMethod.Get, relativeUri);
+        request.Headers.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("application/json")
+        );
+        ApplyApiKeyHeader(request);
+        return request;
+    }
+
     private HttpRequestMessage CreateHttpRequest(string modelId, GeminiGenerateContentRequest apiRequest) {
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
         DebugUtil.Trace(DebugCategory, $"[Gemini] Request payload length={json.Length}");
@@ -154,11 +198,15 @@ public sealed class GeminiClient : ICompletionClient {
         };
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
-        if (!string.IsNullOrWhiteSpace(_apiKey)) {
-            request.Headers.Add("x-goog-api-key", _apiKey);
-        }
+        ApplyApiKeyHeader(request);
 
         return request;
+    }
+
+    private void ApplyApiKeyHeader(HttpRequestMessage request) {
+        if (_apiKey is not null) {
+            request.Headers.Add("x-goog-api-key", _apiKey);
+        }
     }
 
     private static string NormalizeModelPath(string modelId) {

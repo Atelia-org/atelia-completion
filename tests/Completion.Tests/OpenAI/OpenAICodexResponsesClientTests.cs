@@ -57,29 +57,6 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Equal("OK", Assert.IsType<ActionBlock.Text>(Assert.Single(result.Message.Blocks)).Content);
     }
 
-    [Fact]
-    public async Task StreamCompletionAsync_MaxTokensFailsBeforeCredentialAndNetwork() {
-        CodexSubscriptionCredential credential = Credential("token", "account", 1);
-        var provider = new ScriptedCredentialProvider(_ => credential);
-        var handler = new CapturingHandler(_ => CompletedResponse("unused"));
-        using var client = CreateClient(
-            provider,
-            handler,
-            credential.AccountFingerprint
-        );
-
-        await Assert.ThrowsAsync<NotSupportedException>(() =>
-            client.StreamCompletionAsync(
-                Request(maxTokens: 10),
-                observer: null,
-                CancellationToken.None
-            )
-        );
-
-        Assert.Equal(0, provider.CallCount);
-        Assert.Empty(handler.Requests);
-    }
-
     [Theory]
     [InlineData("recap_grid.control")]
     [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
@@ -1261,7 +1238,6 @@ public sealed class OpenAICodexResponsesClientTests {
     );
 
     private static CompletionRequest Request(
-        int? maxTokens = null,
         IReadOnlyList<IHistoryMessage>? sharedContext = null
     ) => new(
         "gpt-test",
@@ -1272,8 +1248,7 @@ public sealed class OpenAICodexResponsesClientTests {
             ),
             sharedContext ?? [new ObservationMessage("Reply exactly OK.")]
         ),
-        tailMessages: [],
-        maxTokens: maxTokens
+        tailMessages: []
     );
 
     private static void AssertInvalidFunctionNameRejection(

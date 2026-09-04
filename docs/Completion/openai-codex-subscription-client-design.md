@@ -394,9 +394,12 @@ Codex options 不暴露 `Store`、`IncludeEncryptedReasoning` 或 arbitrary body
 options 也不再提供 `ExtraBody` 逃生口。新增 body field 必须进入
 Codex-specific allowlist、tests 和 request-adapter fingerprint review。
 
-首版支持当前 provider-neutral `ProviderDefault`、`Auto`、`None` 与 `RequiredAny` 投影。由于尚无 pinned
-source fixture 或 opt-in live acceptance 证明 private backend 的 named-choice shape，`RequiredNamed` 在
-credential/file/network side effect 前 fail closed，不会静默降级为 `auto`。
+当前支持 provider-neutral `ProviderDefault`、`Auto`、`None` 与 `RequiredAny` 投影。private backend 仍没有
+pinned source fixture 证明 native named-choice object shape，因此 profile 不声明 native `RequiredNamed` 支持。
+不过，当 output contract 恰好只有一个 tool 且其名称等于 `RequiredToolName` 时，`RequiredNamed` 与字符串
+`tool_choice:"required"` 严格等价；converter 会使用这个既有 wire shape。存在多个 tool 时仍在
+credential/file/network side effect 前 fail closed，不会把 named 约束静默放宽成 required-any 或 `auto`。
+这个 singleton 等价投影不改变 protocol identity，也不要求 bump `ApiSpecId`。
 
 model id 保持显式配置并原样发送，不在 Atelia 硬编码临时 model allowlist。entitlement/catalog mismatch 由 typed provider
 failure 暴露；public OpenAI model catalog 不能作为 subscription backend 的 authority。

@@ -18,7 +18,7 @@ internal sealed class OpenAIResponsesProtocolClientCore {
     private readonly string _streamDisplayName;
     private readonly bool _sanitizeProviderErrors;
     private readonly OpenAIResponsesReasoningMapper _mapReasoningEffort;
-    private readonly bool _supportsRequiredNamedToolChoice;
+    private readonly bool _supportsNativeRequiredNamedToolChoice;
 
     public OpenAIResponsesProtocolClientCore(
         OpenAIResponsesClientOptions requestOptions,
@@ -26,7 +26,7 @@ internal sealed class OpenAIResponsesProtocolClientCore {
         string providerLabel,
         string streamDisplayName,
         OpenAIResponsesReasoningMapper mapReasoningEffort,
-        bool supportsRequiredNamedToolChoice,
+        bool supportsNativeRequiredNamedToolChoice,
         bool sanitizeProviderErrors
     ) {
         _requestOptions = requestOptions
@@ -51,8 +51,8 @@ internal sealed class OpenAIResponsesProtocolClientCore {
             : streamDisplayName;
         _mapReasoningEffort = mapReasoningEffort
             ?? throw new ArgumentNullException(nameof(mapReasoningEffort));
-        _supportsRequiredNamedToolChoice =
-            supportsRequiredNamedToolChoice;
+        _supportsNativeRequiredNamedToolChoice =
+            supportsNativeRequiredNamedToolChoice;
         _sanitizeProviderErrors = sanitizeProviderErrors;
     }
 
@@ -92,7 +92,7 @@ internal sealed class OpenAIResponsesProtocolClientCore {
                 invocation,
                 _apiSpecId,
                 _mapReasoningEffort,
-                _supportsRequiredNamedToolChoice
+                _supportsNativeRequiredNamedToolChoice
             );
         using HttpResponseMessage response = await sendRequestAsync(
             apiRequest,

@@ -96,7 +96,7 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
             "ChatGPT/Codex Responses",
             "ChatGPT Codex Responses",
             ChatGptCodexResponsesProfile.MapReasoningEffort,
-            supportsRequiredNamedToolChoice: false,
+            supportsNativeRequiredNamedToolChoice: false,
             sanitizeProviderErrors: true
         );
 

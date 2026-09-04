@@ -16,7 +16,7 @@ internal static class OpenAIResponsesMessageConverter {
         CompletionDescriptor? targetInvocation = null,
         string expectedApiSpecId = PublicOpenAIResponsesProfile.ApiSpecId,
         OpenAIResponsesReasoningMapper? mapReasoningEffort = null,
-        bool supportsRequiredNamedToolChoice = true
+        bool supportsNativeRequiredNamedToolChoice = true
     ) {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedApiSpecId);
@@ -62,8 +62,8 @@ internal static class OpenAIResponsesMessageConverter {
             Input = inputItems,
             Tools = BuildToolDefinitions(outputContract.Tools),
             ToolChoice = BuildToolChoice(
-                outputContract.ToolChoice,
-                supportsRequiredNamedToolChoice
+                outputContract,
+                supportsNativeRequiredNamedToolChoice
             ),
             Stream = true,
             Store = options.Store,
@@ -120,31 +120,50 @@ internal static class OpenAIResponsesMessageConverter {
     }
 
     private static object? BuildToolChoice(
-        CompletionToolChoice toolChoice,
-        bool supportsRequiredNamedToolChoice
+        CompletionOutputContract outputContract,
+        bool supportsNativeRequiredNamedToolChoice
     )
-        => toolChoice.Kind switch {
+        => outputContract.ToolChoice.Kind switch {
             CompletionToolChoiceKind.ProviderDefault => null,
             CompletionToolChoiceKind.Auto => "auto",
             CompletionToolChoiceKind.None => "none",
             CompletionToolChoiceKind.RequiredAny => "required",
             CompletionToolChoiceKind.RequiredNamed =>
-                supportsRequiredNamedToolChoice
+                supportsNativeRequiredNamedToolChoice
                     ? new OpenAIResponsesNamedToolChoice {
-                        Name = toolChoice.RequiredToolName
+                        Name = outputContract.ToolChoice.RequiredToolName
                             ?? throw new InvalidOperationException(
                                 "RequiredNamed tool choice is missing its tool name."
                             )
                     }
-                    : throw new NotSupportedException(
-                        "This Responses profile has no verified RequiredNamed tool-choice mapping."
-                    ),
+                    : BuildRequiredNamedFallback(outputContract),
             _ => throw new ArgumentOutOfRangeException(
-                nameof(toolChoice),
-                toolChoice.Kind,
+                nameof(outputContract),
+                outputContract.ToolChoice.Kind,
                 "Unknown completion tool choice."
             )
         };
+
+    private static string BuildRequiredNamedFallback(
+        CompletionOutputContract outputContract
+    ) {
+        string requiredToolName = outputContract.ToolChoice.RequiredToolName
+            ?? throw new InvalidOperationException(
+                "RequiredNamed tool choice is missing its tool name."
+            );
+        if (outputContract.Tools.Length == 1
+            && string.Equals(
+                outputContract.Tools[0].Name,
+                requiredToolName,
+                StringComparison.Ordinal
+            )) {
+            return "required";
+        }
+
+        throw new NotSupportedException(
+            "This Responses profile has no verified native RequiredNamed tool-choice mapping, and string 'required' is only equivalent when the output contract contains exactly the named tool."
+        );
+    }
 
     private static void BuildObservationItem(
         ObservationMessage observation,

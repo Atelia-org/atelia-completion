@@ -764,10 +764,14 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_RequiredNamedToolChoiceFailsBeforeCredentialRead() {
+    public async Task StreamCompletionAsync_SingletonRequiredNamedUsesRequiredAndDispatches() {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
-        var handler = new CapturingHandler(_ => CompletedResponse("unused"));
+        var handler = new CapturingHandler(_ => ToolCallResponse(
+            "emit_result",
+            "call-1",
+            "{}"
+        ));
         using var client = CreateClient(
             provider,
             handler,
@@ -784,6 +788,68 @@ public sealed class OpenAICodexResponsesClientTests {
                 "system",
                 new CompletionOutputContract(
                     [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result")
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            request,
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Equal(1, provider.CallCount);
+        CapturedRequest sent = Assert.Single(handler.Requests);
+        using JsonDocument body = JsonDocument.Parse(sent.Body);
+        Assert.Equal(
+            "required",
+            body.RootElement.GetProperty("tool_choice").GetString()
+        );
+        Assert.Equal(
+            "emit_result",
+            Assert.Single(
+                body.RootElement.GetProperty("tools").EnumerateArray()
+            ).GetProperty("name").GetString()
+        );
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        RawToolCall toolCall = Assert.IsType<ActionBlock.ToolCall>(
+            Assert.Single(result.Message.Blocks)
+        ).Call;
+        Assert.Equal("emit_result", toolCall.ToolName);
+        Assert.Equal("call-1", toolCall.ToolCallId);
+        Assert.Equal("{}", toolCall.RawArgumentsJson);
+    }
+
+    [Fact]
+    public async Task StreamCompletionAsync_MultiToolRequiredNamedFailsBeforeCredentialRead() {
+        CodexSubscriptionCredential credential = Credential("token", "account", 1);
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => CompletedResponse("unused"));
+        using var client = CreateClient(
+            provider,
+            handler,
+            credential.AccountFingerprint
+        );
+        var request = new CompletionRequest(
+            "gpt-test",
+            new CompletionPromptPrefix(
+                "system",
+                new CompletionOutputContract(
+                    [
+                        new ToolDefinition(
+                            "emit_result",
+                            "Emit one result.",
+                            new ToolSchema.Object()
+                        ),
+                        new ToolDefinition(
+                            "lookup",
+                            "Look up context.",
+                            new ToolSchema.Object()
+                        )
+                    ],
                     CompletionToolChoice.RequiredNamed("emit_result")
                 ),
                 [new ObservationMessage("emit")]
@@ -1270,6 +1336,17 @@ public sealed class OpenAICodexResponsesClientTests {
     private static HttpResponseMessage CompletedResponse(string text) =>
         EventStreamResponse($$"""
         data: {"type":"response.output_text.delta","delta":{{JsonSerializer.Serialize(text)}}}
+
+        data: {"type":"response.completed"}
+
+        """);
+
+    private static HttpResponseMessage ToolCallResponse(
+        string toolName,
+        string toolCallId,
+        string arguments
+    ) => EventStreamResponse($$$"""
+        data: {"type":"response.function_call_arguments.done","item_id":"fc_1","arguments":{{{JsonSerializer.Serialize(arguments)}}},"item":{"id":"fc_1","type":"function_call","call_id":{{{JsonSerializer.Serialize(toolCallId)}}},"name":{{{JsonSerializer.Serialize(toolName)}}}}}
 
         data: {"type":"response.completed"}
 

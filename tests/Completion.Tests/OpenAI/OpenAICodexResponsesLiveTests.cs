@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Transport;
 using Xunit;
@@ -160,6 +161,88 @@ public sealed class OpenAICodexResponsesLiveTests {
                 );
             }
         }
+    }
+
+    [Fact]
+    [Trait("Category", "LiveE2E")]
+    public async Task LiveE2E_SingletonRequiredNamedReturnsNamedToolCall() {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable(EnableAgentControlEnv),
+                "1",
+                StringComparison.Ordinal
+            )) {
+            return;
+        }
+
+        string authFile = Environment.GetEnvironmentVariable(AuthFileEnv)
+            ?? throw new InvalidOperationException(
+                $"{AuthFileEnv} must name an explicit absolute auth.json path."
+            );
+        if (!Path.IsPathFullyQualified(authFile)) {
+            throw new InvalidOperationException(
+                $"{AuthFileEnv} must be an absolute path."
+            );
+        }
+        string model = Environment.GetEnvironmentVariable(ModelEnv)
+            ?? "gpt-5.6-sol";
+        string originator = Environment.GetEnvironmentVariable(
+            OriginatorEnv
+        ) ?? "atelia-live-tool-probe";
+
+        var provider = new CodexCliAuthFileCredentialProvider(authFile);
+        CodexSubscriptionCredential snapshot =
+            await provider.GetCredentialAsync(CancellationToken.None);
+        using var client = new OpenAICodexResponsesClient(
+            provider,
+            new OpenAICodexResponsesClientOptions {
+                ExpectedAccountFingerprint =
+                    snapshot.AccountFingerprint,
+                Originator = originator,
+                ProductName = "Atelia",
+                ProductVersion = "live-required-named",
+                MaxConcurrentRequests = 1,
+                ReasoningEffort = CompletionReasoningEffort.Max
+            }
+        );
+        ToolDefinition tool = CreateAgentControlTool();
+        var request = new CompletionRequest(
+            model,
+            new CompletionPromptPrefix(
+                "Call recap_grid_control exactly once with action inspect. Do not answer with text.",
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed(
+                        "recap_grid_control"
+                    ),
+                    allowParallelToolCalls: false
+                ),
+                [new ObservationMessage("Inspect the current control state.")]
+            ),
+            tailMessages: []
+        );
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            request,
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            CompletionTerminationKind.Completed,
+            result.Termination.Kind
+        );
+        ActionBlock.ToolCall toolCall = Assert.Single(
+            result.Message.Blocks.OfType<ActionBlock.ToolCall>()
+        );
+        Assert.Equal("recap_grid_control", toolCall.Call.ToolName);
+        Assert.False(string.IsNullOrWhiteSpace(toolCall.Call.ToolCallId));
+        using JsonDocument arguments = JsonDocument.Parse(
+            toolCall.Call.RawArgumentsJson
+        );
+        Assert.Equal(
+            "inspect",
+            arguments.RootElement.GetProperty("action").GetString()
+        );
     }
 
     private static OpenAICodexResponsesClient CreateLiveClient(

@@ -162,7 +162,7 @@ public sealed class OpenAIResponsesMessageConverterTests {
     }
 
     [Fact]
-    public void ConvertToApiRequest_MapsRequiredNamedAndParallelPolicy() {
+    public void ConvertToApiRequest_MapsNativeRequiredNamedAndParallelPolicy() {
         var tool = new ToolDefinition(
             "emit_result",
             "Emit one result.",
@@ -191,6 +191,72 @@ public sealed class OpenAIResponsesMessageConverterTests {
         Assert.Equal("function", choice.Type);
         Assert.Equal("emit_result", choice.Name);
         Assert.False(apiRequest.ParallelToolCalls);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_LowersSingletonRequiredNamedWhenNativeShapeIsUnsupported() {
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result")
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        OpenAIResponsesApiRequest apiRequest =
+            OpenAIResponsesMessageConverter.ConvertToApiRequest(
+                request,
+                supportsNativeRequiredNamedToolChoice: false
+            );
+
+        Assert.Equal("required", apiRequest.ToolChoice);
+        Assert.Equal("emit_result", Assert.Single(apiRequest.Tools!).Name);
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_RejectsMultiToolRequiredNamedWhenNativeShapeIsUnsupported() {
+        var request = new CompletionRequest(
+            "gpt-4.1",
+            new CompletionPromptPrefix(
+                string.Empty,
+                new CompletionOutputContract(
+                    [
+                        new ToolDefinition(
+                            "emit_result",
+                            "Emit one result.",
+                            new ToolSchema.Object()
+                        ),
+                        new ToolDefinition(
+                            "lookup",
+                            "Look up context.",
+                            new ToolSchema.Object()
+                        )
+                    ],
+                    CompletionToolChoice.RequiredNamed("emit_result")
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        NotSupportedException exception = Assert.Throws<
+            NotSupportedException
+        >(() => OpenAIResponsesMessageConverter.ConvertToApiRequest(
+            request,
+            supportsNativeRequiredNamedToolChoice: false
+        ));
+
+        Assert.Contains("exactly the named tool", exception.Message);
     }
 
     [Theory]

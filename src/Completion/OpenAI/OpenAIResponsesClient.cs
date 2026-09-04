@@ -52,7 +52,7 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
             "OpenAI/Responses",
             "OpenAI Responses",
             PublicOpenAIResponsesProfile.MapReasoningEffort,
-            supportsRequiredNamedToolChoice: true,
+            supportsNativeRequiredNamedToolChoice: true,
             sanitizeProviderErrors: false
         );
 

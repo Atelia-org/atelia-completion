@@ -649,12 +649,34 @@ ATELIA_CODEX_SUBSCRIPTION_LIVE_AUTH_FILE=<explicit operator-selected real Codex 
 ATELIA_CODEX_SUBSCRIPTION_LIVE_MODEL=gpt-5.6-sol
 ```
 
+singleton `RequiredNamed` 现场回归使用自己的开关，不与 text 或 Agent Control probe 联动：
+
+```text
+ATELIA_RUN_CODEX_SUBSCRIPTION_SINGLETON_REQUIRED_NAMED_LIVE=1
+ATELIA_CODEX_SUBSCRIPTION_LIVE_AUTH_FILE=<explicit operator-selected real Codex auth file>
+ATELIA_CODEX_SUBSCRIPTION_LIVE_MODEL=gpt-5.6-luna
+```
+
+只运行这一项的命令为：
+
+```bash
+ATELIA_RUN_CODEX_SUBSCRIPTION_SINGLETON_REQUIRED_NAMED_LIVE=1 \
+ATELIA_CODEX_SUBSCRIPTION_LIVE_AUTH_FILE=/absolute/path/to/auth.json \
+ATELIA_CODEX_SUBSCRIPTION_LIVE_MODEL=gpt-5.6-luna \
+dotnet test tests/Completion.Tests/Completion.Tests.csproj -c Release --no-restore -m:1 -nr:false \
+  --filter 'FullyQualifiedName~LiveE2E_SingletonRequiredNamedReturnsNamedToolCall'
+```
+
+该 filter 只命中一个 test。test 内的 transport guard 最多向 provider 放行一次 HTTP request，并在成功后断言
+恰好放行一次；因此正常成功运行对应一次可能计费的 generation。若同时启用或运行其他 live gate，它们各自的请求与
+计费需另算。
+
 规则：
 
 - 不回退真实默认 auth path；
 - 只读 operator 明确指定的真实 file-backed Codex auth file；不复制整份 `auth.json`，尤其不复制 refresh token；
 - 默认不启用 raw/call log；
-- 只发送一次小型请求并要求 semantic terminal；
+- 每个独立 live gate 只发送一次小型请求并要求 semantic terminal；
 - 不故意制造 401、429、refresh、token rotation 或封禁风险；
 - live failure 只说明当前兼容性，不据此推断账号状态。
 
@@ -713,7 +735,8 @@ publish。
     symlink拒绝；
 21. loopback classifier exact 覆盖 `127.0.0.1`、`::1`、wildcard、`0.0.0.0` 与 LAN address；
 22. live smoke 只读 explicit authority file，验证没有复制或 materialize refresh token；Agent Control live acceptance
-    锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；
+    锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；singleton `RequiredNamed` 使用独立
+    single-request gate 锁定 `recall_memos` strict tool 经字符串 `required` 的现场同形；
 23. Responses strict capability 递归覆盖 root/nested/array optional、empty object 与
     `additionalProperties:true`；current declaration 与 historical tool call 的 dotted/超长 function name 都在
     credential/network 前形成 typed local rejection，observer/credential/network 均为零；
@@ -803,7 +826,8 @@ Codex 0.147.0 证据表明它们不是 one-shot HTTP SSE 的认证/协议最低�
 
 opt-in live acceptance 位于 `OpenAICodexResponsesLiveTests`，必须同时提供对应 enable switch 与显式 absolute auth file；
 它不会复制 auth file，默认不会启用 HTTP raw/call log，也不会触发 refresh/故意制造 401。Agent Control shape 使用独立
-enable switch；raw JSONL 还需要显式 fresh absolute path，且只用于短期诊断。
+enable switch；singleton `RequiredNamed` 也使用独立 enable switch，并以 transport guard 保证最多一个 provider request；
+raw JSONL 还需要显式 fresh absolute path，且只用于短期诊断。
 
 2026-08-25 live acceptance：当时曾将operator选定的`/root/.codex/auth.json`从历史遗留`0755`收紧为`0600`后，
 以 `originator=atelia`、model `gpt-5.4` 发出一次小请求，收到 semantic `response.completed`，聚合文本精确为 `OK`。

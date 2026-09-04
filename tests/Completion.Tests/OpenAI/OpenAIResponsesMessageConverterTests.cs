@@ -206,7 +206,8 @@ public sealed class OpenAIResponsesMessageConverterTests {
                 string.Empty,
                 new CompletionOutputContract(
                     [tool],
-                    CompletionToolChoice.RequiredNamed("emit_result")
+                    CompletionToolChoice.RequiredNamed("emit_result"),
+                    allowParallelToolCalls: false
                 ),
                 [new ObservationMessage("emit")]
             ),
@@ -221,6 +222,7 @@ public sealed class OpenAIResponsesMessageConverterTests {
 
         Assert.Equal("required", apiRequest.ToolChoice);
         Assert.Equal("emit_result", Assert.Single(apiRequest.Tools!).Name);
+        Assert.False(apiRequest.ParallelToolCalls);
     }
 
     [Fact]

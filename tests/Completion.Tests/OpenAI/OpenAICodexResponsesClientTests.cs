@@ -788,7 +788,8 @@ public sealed class OpenAICodexResponsesClientTests {
                 "system",
                 new CompletionOutputContract(
                     [tool],
-                    CompletionToolChoice.RequiredNamed("emit_result")
+                    CompletionToolChoice.RequiredNamed("emit_result"),
+                    allowParallelToolCalls: false
                 ),
                 [new ObservationMessage("emit")]
             ),
@@ -813,6 +814,9 @@ public sealed class OpenAICodexResponsesClientTests {
             Assert.Single(
                 body.RootElement.GetProperty("tools").EnumerateArray()
             ).GetProperty("name").GetString()
+        );
+        Assert.False(
+            body.RootElement.GetProperty("parallel_tool_calls").GetBoolean()
         );
         Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
         RawToolCall toolCall = Assert.IsType<ActionBlock.ToolCall>(

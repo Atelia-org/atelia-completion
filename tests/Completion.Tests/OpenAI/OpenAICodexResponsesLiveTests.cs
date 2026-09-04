@@ -17,6 +17,8 @@ public sealed class OpenAICodexResponsesLiveTests {
         "ATELIA_CODEX_SUBSCRIPTION_LIVE_ORIGINATOR";
     private const string EnableAgentControlEnv =
         "ATELIA_RUN_CODEX_SUBSCRIPTION_AGENT_CONTROL_LIVE";
+    private const string EnableSingletonRequiredNamedEnv =
+        "ATELIA_RUN_CODEX_SUBSCRIPTION_SINGLETON_REQUIRED_NAMED_LIVE";
     private const string RawLogPathEnv =
         "ATELIA_CODEX_SUBSCRIPTION_LIVE_RAW_LOG";
 
@@ -167,7 +169,9 @@ public sealed class OpenAICodexResponsesLiveTests {
     [Trait("Category", "LiveE2E")]
     public async Task LiveE2E_SingletonRequiredNamedReturnsNamedToolCall() {
         if (!string.Equals(
-                Environment.GetEnvironmentVariable(EnableAgentControlEnv),
+                Environment.GetEnvironmentVariable(
+                    EnableSingletonRequiredNamedEnv
+                ),
                 "1",
                 StringComparison.Ordinal
             )) {
@@ -184,7 +188,7 @@ public sealed class OpenAICodexResponsesLiveTests {
             );
         }
         string model = Environment.GetEnvironmentVariable(ModelEnv)
-            ?? "gpt-5.6-sol";
+            ?? "gpt-5.6-luna";
         string originator = Environment.GetEnvironmentVariable(
             OriginatorEnv
         ) ?? "atelia-live-tool-probe";
@@ -192,6 +196,9 @@ public sealed class OpenAICodexResponsesLiveTests {
         var provider = new CodexCliAuthFileCredentialProvider(authFile);
         CodexSubscriptionCredential snapshot =
             await provider.GetCredentialAsync(CancellationToken.None);
+        var singleRequestHandler = new SingleRequestHandler(
+            OpenAICodexResponsesClient.CreateProductionHandler()
+        );
         using var client = new OpenAICodexResponsesClient(
             provider,
             new OpenAICodexResponsesClientOptions {
@@ -201,22 +208,23 @@ public sealed class OpenAICodexResponsesLiveTests {
                 ProductName = "Atelia",
                 ProductVersion = "live-required-named",
                 MaxConcurrentRequests = 1,
-                ReasoningEffort = CompletionReasoningEffort.Max
-            }
+                ReasoningEffort = CompletionReasoningEffort.Low
+            },
+            singleRequestHandler
         );
-        ToolDefinition tool = CreateAgentControlTool();
+        ToolDefinition tool = CreateRecallMemosTool();
         var request = new CompletionRequest(
             model,
             new CompletionPromptPrefix(
-                "Call recap_grid_control exactly once with action inspect. Do not answer with text.",
+                "Return exactly one call to recall_memos. Put only canonical-looking memo IDs in memoIds; use an empty array when no memo is relevant. Do not answer with text.",
                 new CompletionOutputContract(
                     [tool],
-                    CompletionToolChoice.RequiredNamed(
-                        "recap_grid_control"
-                    ),
+                    CompletionToolChoice.RequiredNamed("recall_memos"),
                     allowParallelToolCalls: false
                 ),
-                [new ObservationMessage("Inspect the current control state.")]
+                [new ObservationMessage(
+                    "There are no memo corpus entries. Return the selection."
+                )]
             ),
             tailMessages: []
         );
@@ -231,17 +239,21 @@ public sealed class OpenAICodexResponsesLiveTests {
             CompletionTerminationKind.Completed,
             result.Termination.Kind
         );
-        ActionBlock.ToolCall toolCall = Assert.Single(
-            result.Message.Blocks.OfType<ActionBlock.ToolCall>()
+        ActionBlock.ToolCall toolCall = Assert.IsType<ActionBlock.ToolCall>(
+            Assert.Single(result.Message.Blocks)
         );
-        Assert.Equal("recap_grid_control", toolCall.Call.ToolName);
+        Assert.Equal(1, singleRequestHandler.CallCount);
+        Assert.Equal("recall_memos", toolCall.Call.ToolName);
         Assert.False(string.IsNullOrWhiteSpace(toolCall.Call.ToolCallId));
         using JsonDocument arguments = JsonDocument.Parse(
             toolCall.Call.RawArgumentsJson
         );
         Assert.Equal(
-            "inspect",
-            arguments.RootElement.GetProperty("action").GetString()
+            JsonValueKind.Array,
+            arguments.RootElement.GetProperty("memoIds").ValueKind
+        );
+        Assert.Empty(
+            arguments.RootElement.GetProperty("memoIds").EnumerateArray()
         );
     }
 
@@ -270,6 +282,48 @@ public sealed class OpenAICodexResponsesLiveTests {
             .AddJsonLinesGoldenLogSink(rawLogPath)
             .BuildHandler();
         return new OpenAICodexResponsesClient(provider, options, handler);
+    }
+
+    private static ToolDefinition CreateRecallMemosTool() => new(
+        "recall_memos",
+        "Return the selected canonical-looking memo IDs.",
+        new ToolSchema.Object(
+            properties: [new ToolSchema.Property(
+                "memoIds",
+                new ToolSchema.Array(
+                    new ToolSchema.Value(
+                        ToolParamType.String,
+                        minLength: 11,
+                        maxLength: 11,
+                        pattern: "^m1:[0-9a-f]{8}$"
+                    )
+                ),
+                isRequired: true
+            )],
+            additionalProperties: false
+        )
+    );
+
+    private sealed class SingleRequestHandler(
+        HttpMessageHandler innerHandler
+    ) : DelegatingHandler(innerHandler) {
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        ) {
+            int callCount = Interlocked.Increment(ref _callCount);
+            if (callCount != 1) {
+                throw new InvalidOperationException(
+                    "The singleton RequiredNamed live gate permits exactly one provider request."
+                );
+            }
+
+            return base.SendAsync(request, cancellationToken);
+        }
     }
 
     // Mirrors RecapGridAgentControlTool.CanonicalDefinition without taking a

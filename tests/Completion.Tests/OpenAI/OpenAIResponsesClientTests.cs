@@ -105,6 +105,59 @@ public sealed class OpenAIResponsesClientTests {
     }
 
     [Fact]
+    public async Task StreamCompletionAsync_SingletonRequiredNamedUsesNativeNamedChoice() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"type":"response.output_text.delta","delta":"done"}
+
+                data: {"type":"response.completed"}
+
+                """
+                + "\n"
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient);
+        var tool = new ToolDefinition(
+            "emit_result",
+            "Emit one result.",
+            new ToolSchema.Object()
+        );
+        var request = new CompletionRequest(
+            "gpt-5",
+            new CompletionPromptPrefix(
+                "system",
+                new CompletionOutputContract(
+                    [tool],
+                    CompletionToolChoice.RequiredNamed("emit_result"),
+                    allowParallelToolCalls: false
+                ),
+                [new ObservationMessage("emit")]
+            ),
+            tailMessages: []
+        );
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            request,
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        using JsonDocument document = JsonDocument.Parse(
+            Assert.Single(handler.RequestBodies)
+        );
+        JsonElement choice = document.RootElement.GetProperty("tool_choice");
+        Assert.Equal(JsonValueKind.Object, choice.ValueKind);
+        Assert.Equal("function", choice.GetProperty("type").GetString());
+        Assert.Equal("emit_result", choice.GetProperty("name").GetString());
+        Assert.False(
+            document.RootElement.GetProperty("parallel_tool_calls").GetBoolean()
+        );
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_EarlyStop_DoesNotFlushIncompleteFunctionCalls() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {

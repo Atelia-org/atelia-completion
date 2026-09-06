@@ -14,6 +14,16 @@ public sealed record CompletionConnectionsFileConfig(
 );
 
 /// <summary>
+/// A strict connection catalog with no default-selection authority.
+/// Consumers that need a fallback must own and validate it separately.
+/// </summary>
+public sealed record CompletionConnectionCatalogConfig(
+    IReadOnlyList<CompletionConnectionConfig> Connections,
+    IReadOnlyList<string>? SelectableConnectionIds = null,
+    IReadOnlyDictionary<string, string?>? Bindings = null
+);
+
+/// <summary>
 /// Describes one provider connection without a caller-selected output-token
 /// ceiling.
 /// </summary>
@@ -83,6 +93,15 @@ public static class CompletionConnectionConfigLoader {
         ReadOnlySpan<byte> utf8Json
     ) => CompletionConnectionsManifestV2Reader.Decode(utf8Json);
 
+    /// <summary>
+    /// Decodes the strict V3 catalog byte language. The root contains exact
+    /// integer <c>v: 3</c> and connections, may contain selection/binding
+    /// metadata, and must not contain <c>defaultConnectionId</c>.
+    /// </summary>
+    public static CompletionConnectionCatalogConfig DecodeCatalog(
+        ReadOnlySpan<byte> utf8Json
+    ) => CompletionConnectionsCatalogV3Reader.Decode(utf8Json);
+
     /// <summary>Reads a bounded ordinary file and delegates to <see cref="Decode"/>.</summary>
     public static CompletionConnectionsFileConfig LoadFile(string path) {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -112,6 +131,37 @@ public static class CompletionConnectionConfigLoader {
         return Decode(bytes);
     }
 
+    /// <summary>Reads a bounded ordinary file and delegates to <see cref="DecodeCatalog"/>.</summary>
+    public static CompletionConnectionCatalogConfig LoadCatalogFile(
+        string path
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        string resolvedPath = Path.GetFullPath(path);
+        using var stream = new FileStream(
+            resolvedPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.SequentialScan
+        );
+        if (stream.Length is < 1 or > MaximumInputUtf8Bytes) {
+            throw new InvalidDataException(
+                "Completion catalog bytes are empty or exceed the 1 MiB V3 bound."
+            );
+        }
+        int length = checked((int)stream.Length);
+        byte[] bytes = GC.AllocateUninitializedArray<byte>(length);
+        stream.ReadExactly(bytes);
+        if (stream.Length != length || stream.ReadByte() != -1) {
+            throw new InvalidDataException(
+                "Completion catalog file changed during its bounded read."
+            );
+        }
+        return DecodeCatalog(bytes);
+    }
+
     /// <summary>
     /// Resolves environment-backed values and validates an already parsed
     /// shared connection-file payload.
@@ -120,8 +170,77 @@ public static class CompletionConnectionConfigLoader {
         CompletionConnectionsFileConfig config
     ) {
         ArgumentNullException.ThrowIfNull(config);
-        if (config.Connections is not { Count: > 0 }
-            || config.Connections.Count
+        (IReadOnlyList<CompletionConnectionConfig> resolvedConnections,
+            IReadOnlySet<string> connectionIds) = NormalizeConnections(
+                config.Connections
+            );
+
+        string defaultConnectionId = !string.IsNullOrWhiteSpace(config.DefaultConnectionId)
+            ? config.DefaultConnectionId!
+            : resolvedConnections[0].Id;
+
+        RequireConfigBound(
+            defaultConnectionId,
+            CompletionConnectionsManifestV2Reader.MaximumIdentifierUtf8Bytes,
+            "Completion defaultConnectionId"
+        );
+
+        if (!connectionIds.Contains(defaultConnectionId)) { throw new InvalidOperationException($"Completion defaultConnectionId '{defaultConnectionId}' does not match any connection id."); }
+
+        IReadOnlyList<string>? selectableConnectionIds =
+            NormalizeSelectableConnectionIds(
+                config.SelectableConnectionIds,
+                connectionIds,
+                defaultConnectionId
+            );
+        IReadOnlyDictionary<string, string?>? bindings =
+            NormalizeBindings(config.Bindings, connectionIds);
+
+        return CompletionConnectionsManifestV2Reader.Freeze(
+            new CompletionConnectionsFileConfig(
+                resolvedConnections,
+                defaultConnectionId,
+                selectableConnectionIds,
+                bindings
+            )
+        );
+    }
+
+    /// <summary>
+    /// Resolves environment-backed values and validates a programmatic V3
+    /// catalog without inventing a default connection.
+    /// </summary>
+    public static CompletionConnectionCatalogConfig NormalizeAndValidateCatalog(
+        CompletionConnectionCatalogConfig config
+    ) {
+        ArgumentNullException.ThrowIfNull(config);
+        (IReadOnlyList<CompletionConnectionConfig> resolvedConnections,
+            IReadOnlySet<string> connectionIds) = NormalizeConnections(
+                config.Connections
+            );
+        IReadOnlyList<string>? selectableConnectionIds =
+            NormalizeSelectableConnectionIds(
+                config.SelectableConnectionIds,
+                connectionIds,
+                defaultConnectionId: null
+            );
+        IReadOnlyDictionary<string, string?>? bindings =
+            NormalizeBindings(config.Bindings, connectionIds);
+        return CompletionConnectionsCatalogV3Reader.Freeze(new(
+            resolvedConnections,
+            selectableConnectionIds,
+            bindings
+        ));
+    }
+
+    private static (
+        IReadOnlyList<CompletionConnectionConfig> Connections,
+        IReadOnlySet<string> ConnectionIds
+    ) NormalizeConnections(
+        IReadOnlyList<CompletionConnectionConfig> connections
+    ) {
+        if (connections is not { Count: > 0 }
+            || connections.Count
                 > CompletionConnectionsManifestV2Reader
                     .MaximumConnectionCount) {
             throw new InvalidOperationException(
@@ -130,10 +249,12 @@ public static class CompletionConnectionConfigLoader {
         }
 
         var connectionIds = new HashSet<string>(StringComparer.Ordinal);
-        var resolvedConnections = new List<CompletionConnectionConfig>(config.Connections.Count);
+        var resolvedConnections = new List<CompletionConnectionConfig>(
+            connections.Count
+        );
 
-        for (int i = 0; i < config.Connections.Count; i++) {
-            var connection = config.Connections[i] ?? throw new InvalidOperationException($"Completion connection[{i}] must not be null.");
+        for (int i = 0; i < connections.Count; i++) {
+            var connection = connections[i] ?? throw new InvalidOperationException($"Completion connection[{i}] must not be null.");
             RequireNonBlank(connection.Id, $"Completion connection[{i}] must have a non-empty id.");
             RequireConfigBound(
                 connection.Id,
@@ -253,42 +374,13 @@ public static class CompletionConnectionConfigLoader {
 
             resolvedConnections.Add(connection with { CompletionSurfaceId = completionSurfaceId, BaseAddress = baseAddress, ApiKey = apiKey });
         }
-
-        string defaultConnectionId = !string.IsNullOrWhiteSpace(config.DefaultConnectionId)
-            ? config.DefaultConnectionId!
-            : resolvedConnections[0].Id;
-
-        RequireConfigBound(
-            defaultConnectionId,
-            CompletionConnectionsManifestV2Reader.MaximumIdentifierUtf8Bytes,
-            "Completion defaultConnectionId"
-        );
-
-        if (!connectionIds.Contains(defaultConnectionId)) { throw new InvalidOperationException($"Completion defaultConnectionId '{defaultConnectionId}' does not match any connection id."); }
-
-        IReadOnlyList<string>? selectableConnectionIds =
-            NormalizeSelectableConnectionIds(
-                config.SelectableConnectionIds,
-                connectionIds,
-                defaultConnectionId
-            );
-        IReadOnlyDictionary<string, string?>? bindings =
-            NormalizeBindings(config.Bindings, connectionIds);
-
-        return CompletionConnectionsManifestV2Reader.Freeze(
-            new CompletionConnectionsFileConfig(
-                resolvedConnections,
-                defaultConnectionId,
-                selectableConnectionIds,
-                bindings
-            )
-        );
+        return (resolvedConnections, connectionIds);
     }
 
     private static IReadOnlyList<string>? NormalizeSelectableConnectionIds(
         IReadOnlyList<string>? configured,
         IReadOnlySet<string> connectionIds,
-        string defaultConnectionId
+        string? defaultConnectionId
     ) {
         if (configured is null) { return null; }
         if (configured.Count is < 1
@@ -328,7 +420,8 @@ public static class CompletionConnectionConfigLoader {
             }
             normalized.Add(connectionId!);
         }
-        if (!seen.Contains(defaultConnectionId)) {
+        if (defaultConnectionId is not null
+            && !seen.Contains(defaultConnectionId)) {
             throw new InvalidOperationException(
                 "Completion selectableConnectionIds must contain the "
                 + $"default connection id '{defaultConnectionId}'."
@@ -584,15 +677,27 @@ public sealed class CompletionConnectionRegistry : IDisposable,
 
     public CompletionConnectionRegistry(CompletionConnectionsFileConfig config, ICompletionClientFactory factory) {
         ArgumentNullException.ThrowIfNull(config);
-        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
-        Connections = config.Connections;
         DefaultConnectionId = config.DefaultConnectionId ?? throw new ArgumentException("Default connection id must not be null.", nameof(config));
-        _byId = config.Connections.ToDictionary(static x => x.Id, StringComparer.Ordinal);
+        (_factory, Connections, _byId) = Initialize(
+            config.Connections,
+            factory
+        );
+    }
+
+    public CompletionConnectionRegistry(
+        CompletionConnectionCatalogConfig config,
+        ICompletionClientFactory factory
+    ) {
+        ArgumentNullException.ThrowIfNull(config);
+        (_factory, Connections, _byId) = Initialize(
+            config.Connections,
+            factory
+        );
     }
 
     public IReadOnlyList<CompletionConnectionConfig> Connections { get; }
 
-    public string DefaultConnectionId { get; }
+    public string? DefaultConnectionId { get; }
 
     public bool TryGet(string id, out CompletionConnectionConfig connection)
         => _byId.TryGetValue(id, out connection!);
@@ -600,9 +705,34 @@ public sealed class CompletionConnectionRegistry : IDisposable,
     public CompletionConnectionConfig Resolve(string? requestedId) {
         if (!string.IsNullOrWhiteSpace(requestedId) && _byId.TryGetValue(requestedId, out var requested)) { return requested; }
 
+        if (DefaultConnectionId is null) {
+            throw new InvalidOperationException(
+                "Completion connection resolution requires an exact registered "
+                + "connection id because this registry has no default."
+            );
+        }
         return _byId.TryGetValue(DefaultConnectionId, out var fallback)
             ? fallback
-            : throw new InvalidOperationException($"Default connection '{DefaultConnectionId}' is not registered.");
+            : throw new InvalidOperationException(
+                $"Default connection '{DefaultConnectionId}' is not registered."
+            );
+    }
+
+    private static (
+        ICompletionClientFactory Factory,
+        IReadOnlyList<CompletionConnectionConfig> Connections,
+        IReadOnlyDictionary<string, CompletionConnectionConfig> ById
+    ) Initialize(
+        IReadOnlyList<CompletionConnectionConfig> connections,
+        ICompletionClientFactory factory
+    ) {
+        ArgumentNullException.ThrowIfNull(connections);
+        ArgumentNullException.ThrowIfNull(factory);
+        return (
+            factory,
+            connections,
+            connections.ToDictionary(static x => x.Id, StringComparer.Ordinal)
+        );
     }
 
     public ICompletionClient GetClient(string connectionId) {

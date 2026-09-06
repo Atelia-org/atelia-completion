@@ -5,6 +5,26 @@ namespace Atelia.Completion.Tests;
 
 public sealed class CompletionConnectionRegistryLifetimeTests {
     [Fact]
+    public void CatalogRegistry_RequiresExactRegisteredResolution() {
+        CompletionConnectionCatalogConfig catalog =
+            CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(new(
+                Config("visible", "internal").Connections,
+                ["visible"]
+            ));
+        using var registry = new CompletionConnectionRegistry(
+            catalog,
+            new SharedFactory(new SyncClient())
+        );
+
+        Assert.Null(registry.DefaultConnectionId);
+        Assert.Equal("internal", registry.Resolve("internal").Id);
+        Assert.Throws<InvalidOperationException>(() => registry.Resolve(null));
+        Assert.Throws<InvalidOperationException>(() =>
+            registry.Resolve("missing")
+        );
+    }
+
+    [Fact]
     public void Registry_DoesNotApplyConsumerSelectionPolicy() {
         var client = new SyncClient();
         CompletionConnectionsFileConfig config =

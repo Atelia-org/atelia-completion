@@ -8,6 +8,60 @@ namespace Atelia.Completion.Tests;
 
 public sealed class CompletionConnectionConfigLoaderTests {
     [Fact]
+    public void DecodeCatalog_AcceptsStrictV3AndFreezesResult() {
+        CompletionConnectionCatalogConfig catalog =
+            CompletionConnectionConfigLoader.DecodeCatalog(
+                Encoding.UTF8.GetBytes(
+                    "{\"v\":3,\"connections\":[" + Connection()
+                    + "],\"selectableConnectionIds\":[\"main\"],"
+                    + "\"bindings\":{\"feature\":\"main\"}}"
+                )
+            );
+
+        Assert.Equal("main", Assert.Single(catalog.Connections).Id);
+        Assert.Equal(["main"], catalog.SelectableConnectionIds);
+        Assert.Equal("main", catalog.Bindings!["feature"]);
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<string>)catalog.SelectableConnectionIds!)[0] = "other"
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            ((IDictionary<string, string?>)catalog.Bindings)["other"] = null
+        );
+    }
+
+    public static TheoryData<string> InvalidCatalogRoots => new() {
+        "{\"v\":2,\"connections\":[]}",
+        "{\"v\":3,\"connections\":[],\"defaultConnectionId\":\"main\"}",
+        "{\"v\":3,\"connections\":[],\"unknown\":true}",
+        "{\"v\":3}",
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidCatalogRoots))]
+    public void DecodeCatalog_RejectsWrongVersionDefaultAndInvalidRoot(
+        string json
+    ) {
+        Assert.Throws<InvalidDataException>(() =>
+            CompletionConnectionConfigLoader.DecodeCatalog(
+                Encoding.UTF8.GetBytes(json)
+            )
+        );
+    }
+
+    [Fact]
+    public void NormalizeCatalog_DoesNotInventDefaultSelection() {
+        CompletionConnectionCatalogConfig catalog =
+            CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(new(
+                [ProgrammaticConnection("main")],
+                ["main"],
+                new Dictionary<string, string?> { ["feature"] = "main" }
+            ));
+
+        Assert.Equal("main", Assert.Single(catalog.Connections).Id);
+        Assert.Equal(["main"], catalog.SelectableConnectionIds);
+    }
+
+    [Fact]
     public void ConnectionContractHasNoCallerSelectedOutputTokenCeiling() {
         Assert.DoesNotContain(
             typeof(CompletionConnectionConfig).GetProperties(),

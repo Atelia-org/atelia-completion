@@ -26,39 +26,8 @@ internal static class CompletionConnectionsManifestV2Reader {
             manifest.Connections.Count
         ];
         for (int index = 0; index < unresolved.Length; index++) {
-            WireConnection item = manifest.Connections[index];
-            if ((item.BaseAddress is null) == (item.BaseAddressEnv is null)) {
-                throw new InvalidDataException(
-                    "A connection must contain exactly one of baseAddress or baseAddressEnv."
-                );
-            }
-            if (item.ApiKey is not null && item.ApiKeyEnv is not null) {
-                throw new InvalidDataException(
-                    "A connection must contain at most one of apiKey or apiKeyEnv."
-                );
-            }
-            if (item.AnthropicPromptCacheTtl
-                    is not AnthropicPromptCacheTtl.ProviderDefault
-                && !string.Equals(
-                    item.Kind,
-                    "anthropic",
-                    StringComparison.OrdinalIgnoreCase
-                )) {
-                throw new InvalidDataException(
-                    "anthropicPromptCacheTtl is only valid for an anthropic connection."
-                );
-            }
-            unresolved[index] = new CompletionConnectionConfig(
-                item.Id,
-                item.Kind,
-                item.ModelId,
-                item.CompletionSurfaceId,
-                item.BaseAddress ?? string.Empty,
-                item.ApiKey,
-                item.BaseAddressEnv,
-                item.ApiKeyEnv,
-                item.ReasoningEffort,
-                item.AnthropicPromptCacheTtl
+            unresolved[index] = MaterializeConnection(
+                manifest.Connections[index]
             );
         }
 
@@ -235,10 +204,10 @@ internal static class CompletionConnectionsManifestV2Reader {
         }
     }
 
-    private static IReadOnlyList<string>? ParseSelectableConnectionIds(
+    internal static IReadOnlyList<string>? ParseSelectableConnectionIds(
         JsonElement root,
         IReadOnlySet<string> connectionIds,
-        string defaultConnectionId
+        string? defaultConnectionId
     ) {
         if (!root.TryGetProperty(
                 "selectableConnectionIds",
@@ -272,7 +241,8 @@ internal static class CompletionConnectionsManifestV2Reader {
             }
             result.Add(connectionId);
         }
-        if (!seen.Contains(defaultConnectionId)) {
+        if (defaultConnectionId is not null
+            && !seen.Contains(defaultConnectionId)) {
             throw new InvalidDataException(
                 "selectableConnectionIds must contain defaultConnectionId."
             );
@@ -280,7 +250,7 @@ internal static class CompletionConnectionsManifestV2Reader {
         return result;
     }
 
-    private static IReadOnlyDictionary<string, string?>? ParseBindings(
+    internal static IReadOnlyDictionary<string, string?>? ParseBindings(
         JsonElement root,
         IReadOnlySet<string> connectionIds
     ) {
@@ -331,7 +301,7 @@ internal static class CompletionConnectionsManifestV2Reader {
         return result;
     }
 
-    private static WireConnection ParseConnection(JsonElement item) {
+    internal static WireConnection ParseConnection(JsonElement item) {
         RequireProperties(
             item,
             required: ["id", "kind", "modelId", "completionSurfaceId"],
@@ -374,6 +344,44 @@ internal static class CompletionConnectionsManifestV2Reader {
         );
     }
 
+    internal static CompletionConnectionConfig MaterializeConnection(
+        WireConnection item
+    ) {
+        if ((item.BaseAddress is null) == (item.BaseAddressEnv is null)) {
+            throw new InvalidDataException(
+                "A connection must contain exactly one of baseAddress or baseAddressEnv."
+            );
+        }
+        if (item.ApiKey is not null && item.ApiKeyEnv is not null) {
+            throw new InvalidDataException(
+                "A connection must contain at most one of apiKey or apiKeyEnv."
+            );
+        }
+        if (item.AnthropicPromptCacheTtl
+                is not AnthropicPromptCacheTtl.ProviderDefault
+            && !string.Equals(
+                item.Kind,
+                "anthropic",
+                StringComparison.OrdinalIgnoreCase
+            )) {
+            throw new InvalidDataException(
+                "anthropicPromptCacheTtl is only valid for an anthropic connection."
+            );
+        }
+        return new CompletionConnectionConfig(
+            item.Id,
+            item.Kind,
+            item.ModelId,
+            item.CompletionSurfaceId,
+            item.BaseAddress ?? string.Empty,
+            item.ApiKey,
+            item.BaseAddressEnv,
+            item.ApiKeyEnv,
+            item.ReasoningEffort,
+            item.AnthropicPromptCacheTtl
+        );
+    }
+
     private static CompletionReasoningEffort OptionalReasoningEffort(
         JsonElement item
     ) => !item.TryGetProperty("reasoningEffort", out JsonElement value)
@@ -406,7 +414,7 @@ internal static class CompletionConnectionsManifestV2Reader {
             )
         };
 
-    private static string RequireString(
+    internal static string RequireString(
         JsonElement item,
         string propertyName,
         int maximumUtf8Bytes
@@ -465,7 +473,7 @@ internal static class CompletionConnectionsManifestV2Reader {
             $"{propertyName} must be a string."
         );
 
-    private static void RequireProperties(
+    internal static void RequireProperties(
         JsonElement value,
         IReadOnlyList<string> required,
         IReadOnlyList<string> optional
@@ -500,7 +508,7 @@ internal static class CompletionConnectionsManifestV2Reader {
         IReadOnlyDictionary<string, string?>? Bindings
     );
 
-    private sealed record WireConnection(
+    internal sealed record WireConnection(
         string Id,
         string Kind,
         string ModelId,

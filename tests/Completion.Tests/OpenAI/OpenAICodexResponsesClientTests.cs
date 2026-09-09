@@ -730,7 +730,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_RejectsPublicResponsesReasoningBeforeCredentialRead() {
+    public async Task StreamCompletionAsync_OmitsPublicResponsesReasoningWithoutRewritingHistory() {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
         var handler = new CapturingHandler(_ => CompletedResponse("unused"));
@@ -748,19 +748,73 @@ public sealed class OpenAICodexResponsesClientTests {
             )
         );
         CompletionRequest request = Request(
-            sharedContext: [new ActionMessage([publicReasoning])]
+            sharedContext: [
+                new ActionMessage([publicReasoning, new ActionBlock.Text("old answer")]),
+                new ObservationMessage("continue")
+            ]
         );
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        _ = await client.StreamCompletionAsync(
+            request,
+            observer: null,
+            CancellationToken.None
+        );
+
+        Assert.Equal(1, provider.CallCount);
+        string body = Assert.Single(handler.Requests).Body;
+        Assert.DoesNotContain("opaque", body, StringComparison.Ordinal);
+        Assert.Contains("old answer", body, StringComparison.Ordinal);
+        Assert.Same(publicReasoning, Assert.IsType<ActionMessage>(
+            request.PromptPrefix.SharedContextMessages[0]).Blocks[0]);
+    }
+
+    [Theory]
+    [InlineData("unsupported-carrier")]
+    [InlineData("malformed-payload")]
+    [InlineData("non-object-payload")]
+    [InlineData("numeric-type")]
+    [InlineData("non-array-summary")]
+    [InlineData("forged-view")]
+    public async Task StreamCompletionAsync_InvalidSameOriginReasoningIsKnownNoDispatchRejection(
+        string scenario
+    ) {
+        const string privateMarker = "PRIVATE_REASONING_CANARY";
+        CodexSubscriptionCredential credential = Credential("token", "account", 1);
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => CompletedResponse("unused"));
+        using var client = CreateClient(provider, handler, credential.AccountFingerprint);
+        var origin = new CompletionDescriptor(client.Name, client.ApiSpecId, "gpt-test");
+        ActionBlock.ReasoningBlock reasoning = scenario switch {
+            "unsupported-carrier" => new ActionBlock.TextReasoningBlock(privateMarker, origin),
+            "malformed-payload" => new OpenAIResponsesReasoningBlock(privateMarker, origin),
+            "non-object-payload" => new OpenAIResponsesReasoningBlock("[]", origin),
+            "numeric-type" => new OpenAIResponsesReasoningBlock("{\"type\":42}", origin),
+            "non-array-summary" => new OpenAIResponsesReasoningBlock(
+                "{\"type\":\"reasoning\",\"summary\":42}", origin),
+            "forged-view" => new OpenAIResponsesReasoningBlock(
+                """{"type":"reasoning","summary":[]}""", origin, privateMarker),
+            _ => throw new InvalidOperationException()
+        };
+        var observer = new CompletionStreamObserver();
+        int observerEvents = 0;
+        observer.ReceivedTextDelta += _ => observerEvents++;
+        observer.ReceivedReasoningDelta += _ => observerEvents++;
+        observer.ReceivedThinkingBegin += () => observerEvents++;
+        observer.ReceivedThinkingEnd += () => observerEvents++;
+        observer.ReceivedToolCall += _ => observerEvents++;
+
+        var exception = await Assert.ThrowsAsync<CompletionRequestRejectedException>(() =>
             client.StreamCompletionAsync(
-                request,
-                observer: null,
-                CancellationToken.None
-            )
-        );
+                Request([new ActionMessage([reasoning])]), observer, CancellationToken.None));
 
+        Assert.Equal("openai.responses.invalid-reasoning-replay", exception.Termination.ProviderReason);
+        Assert.Equal(["adapter-validation=reasoning-replay"], exception.Errors);
+        Assert.Null(exception.InnerException);
+        Assert.DoesNotContain(privateMarker, exception.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(privateMarker, exception.Termination.Detail ?? "", StringComparison.Ordinal);
         Assert.Equal(0, provider.CallCount);
         Assert.Empty(handler.Requests);
+        Assert.Equal(0, observerEvents);
     }
 
     [Fact]

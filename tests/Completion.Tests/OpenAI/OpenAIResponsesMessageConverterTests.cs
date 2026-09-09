@@ -450,12 +450,12 @@ public sealed class OpenAIResponsesMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
+        var exception = Assert.Throws<CompletionRequestRejectedException>(
             () => OpenAIResponsesMessageConverter.ConvertToApiRequest(request)
         );
 
-        Assert.Contains(nameof(OpenAIResponsesReasoningBlock), exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Cross-provider reasoning replay is not supported", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("openai.responses.invalid-reasoning-replay", exception.Termination.ProviderReason);
+        Assert.Contains("decoded native reasoning block", exception.Termination.Detail, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -486,13 +486,12 @@ public sealed class OpenAIResponsesMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
+        var exception = Assert.Throws<CompletionRequestRejectedException>(
             () => OpenAIResponsesMessageConverter.ConvertToApiRequest(request)
         );
 
-        Assert.Contains(nameof(OpenAIResponsesReasoningBlock), exception.Message, StringComparison.Ordinal);
-        Assert.Contains(nameof(ActionBlock.OpaqueReasoningBlock), exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Cross-provider reasoning replay is not supported", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("openai.responses.invalid-reasoning-replay", exception.Termination.ProviderReason);
+        Assert.Contains("decoded native reasoning block", exception.Termination.Detail, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -516,16 +515,16 @@ public sealed class OpenAIResponsesMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
+        var exception = Assert.Throws<CompletionRequestRejectedException>(
             () => OpenAIResponsesMessageConverter.ConvertToApiRequest(request)
         );
 
-        Assert.Contains("Origin.ApiSpecId", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("openai-responses-v2", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("openai.responses.invalid-reasoning-replay", exception.Termination.ProviderReason);
+        Assert.Contains("exact API profile", exception.Termination.Detail, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ConvertToApiRequest_ReasoningOriginMustMatchFullTargetInvocation() {
+    public void ConvertToApiRequest_ForeignReasoningOnlyActionIsOmitted() {
         var source = new CompletionDescriptor(
             "old-host",
             "openai-responses-v2",
@@ -551,15 +550,14 @@ public sealed class OpenAIResponsesMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => OpenAIResponsesMessageConverter.ConvertToApiRequest(
-                request,
-                targetInvocation: target
-            )
+        var projected = OpenAIResponsesMessageConverter.ConvertToApiRequest(
+            request,
+            targetInvocation: target
         );
 
-        Assert.Contains("requires Origin", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("old-host", exception.Message, StringComparison.Ordinal);
+        Assert.Empty(projected.Input);
+        Assert.Single(Assert.IsType<ActionMessage>(
+            Assert.Single(request.PromptPrefix.SharedContextMessages)).Blocks);
     }
 
     [Fact]
@@ -585,11 +583,12 @@ public sealed class OpenAIResponsesMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
+        var exception = Assert.Throws<CompletionRequestRejectedException>(
             () => OpenAIResponsesMessageConverter.ConvertToApiRequest(request)
         );
 
-        Assert.Contains("PlainText", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("openai.responses.invalid-reasoning-replay", exception.Termination.ProviderReason);
+        Assert.Contains("PlainText", exception.Termination.Detail, StringComparison.Ordinal);
     }
 
     private static void AssertUserMessage(OpenAIResponsesInputItem item, string expectedText) {

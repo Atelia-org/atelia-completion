@@ -421,6 +421,12 @@ reasoning mapping id:        openai-codex-responses-effort-v1
 shared converter 应由 profile 传入 expected ApiSpecId 与 reasoning mapping，而不是继续把
 `openai-responses-v2` 写死。reasoning replay 仍必须满足完整 `Origin == targetInvocation`。
 
+2026-09-09 的模型切换修复将 **历史保存** 与 **本次 replay 资格** 分开：真实 client 总会传入完整 target；
+converter 在 prefix/tail 两侧省略非 exact Origin 的 reasoning block，只保留其旁边的 Text / ToolCall。
+不改写原始 request、journal、reasoning Origin 或 payload，也不把 PlainText 降级为普通 assistant 文本。
+仅由被省略 reasoning 构成的 Action 不产生 wire item；原本空 Action、pending tool-call/result 邻接校验仍严格。
+exact-origin native block 仍按原 payload 回灌；同源 opaque/非 native carrier 不能借此获得 replay authority。
+
 初始 effort mapping 可以由当前 pinned Codex source校准后实现；即使 wire 值与 public Responses 当前相同，也使用独立
 mapping id，避免未来一边变化时 silent drift。
 
@@ -431,6 +437,11 @@ provider-native replay、新增 protocol event/wire shape，或改变哪些 even
 纯 effort mapping 变化只 bump mapping id。已经属于 pinned Responses schema 的 typed content 若被错误计入 success，收紧其
 success eligibility、让既有 `response.completed` terminal 收口为 conservative Incomplete，属于 fail-closed bug fix，不改变
 terminal evidence set，因此不 bump public/Codex v2。
+
+上述 foreign-reasoning omission 同样保持 v2，属于 previously-rejected 输入域扩展，非合法 native replay 的 mapping 变化：
+旧 converter 能成功返回的每个 reasoning 都已经 exact 匹配，因此新 omission guard 对全部旧成功请求恒为 false，
+原 wire 字节不变。内部未提供 target 的调用仍严格拒绝不兼容 reasoning。与 singleton RequiredNamed 等价投影一样，
+这不要求新 identity；frozen canonical commitment、BindExact 和 Started 的显式恢复授权均不变。
 
 ## 7. 错误、重读与重试
 
@@ -445,6 +456,7 @@ terminal evidence set，因此不 bump public/Codex v2。
 | token expired | `AuthOwnerRefreshRequired`，network 前失败 |
 | account mid-process changed | `AuthAccountChanged`，禁止自动切换 |
 | current declaration / historical tool call 的 function name 不满足 Responses profile | converter 在 credential/network 前抛 typed local no-dispatch rejection；只分类这一 exact validator |
+| exact-origin reasoning carrier 不受支持，或 native payload / PlainText 校验失败 | converter 在 credential/network 前抛 typed local no-dispatch rejection；不包含原始 payload 或异常 |
 | HTTP 401 | singleflight 重新读取一次；仅当 generation 已变化时，以 byte-identical body 最多重试一次；unchanged generation 或第二个 401 是 typed pre-stream known rejection |
 | HTTP 403 | typed pre-stream known rejection，不重试，也不声称“封号” |
 | HTTP 429 | typed pre-stream known rejection；durable payload 只保留 adapter-owned status/reason，不复制 `Retry-After` 或 provider metadata；不立即重试、不换账号 |
@@ -467,7 +479,12 @@ Responses function-name validator 在 protocol core 请求 credential 或执行 
 historical `ActionBlock.ToolCall` 的 dotted、超长或其它 profile-invalid name 会抛 provider-neutral
 `CompletionRequestRejectedException`，携带 code-owned `openai.responses.invalid-function-name` 与
 `adapter-validation=function-name`，不复制 rejected name。这个 typed local rejection 证明 request 未 dispatch、observer 零
-delta；其它 converter、serialization 或 replay exception 不得被泛化 catch，仍保持 Started uncertain。
+delta。
+
+reasoning 的精确 carrier/API/Origin 护栏及 `ValidatePlainText` 本地 validator 也使用这一 exception，稳定 reason 为
+`openai.responses.invalid-reasoning-replay`，errors 为 `adapter-validation=reasoning-replay`。这些分支只检查本地输入，
+在 credential/HTTP callback 之前运行，detail 全部 code-owned，不保留原异常、来源标识或内容。
+其它 converter、serialization、credential、transport 或 stream exception 不得被泛化 catch，仍保持 Started uncertain。
 
 同一 exception 也用于 remote known rejection：exhausted 401、403 与 429 在 request callback 尚未把 response 交给 SSE
 parser、observer 零 delta 的位置，翻译为 `CompletionRequestRejectedException`。它只携带

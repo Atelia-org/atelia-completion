@@ -230,6 +230,7 @@ internal static class OpenAIResponsesMessageConverter {
         EnsureNoPendingToolCalls(state, $"assistant action before tool results blockCount={action.Blocks.Count}");
 
         var emittedItemCount = 0;
+        var omittedReasoningCount = 0;
         var pendingToolCalls = new List<PendingToolCall>();
         var textBuffer = new StringBuilder();
 
@@ -252,6 +253,16 @@ internal static class OpenAIResponsesMessageConverter {
 
         foreach (var block in action.Blocks) {
             switch (block) {
+                case ActionBlock.ReasoningBlock reasoningBlock
+                    when targetInvocation is not null
+                        && !Equals(reasoningBlock.Origin, targetInvocation):
+                    // A model/provider switch does not rewrite durable history.
+                    // Foreign reasoning is not a replay candidate for this
+                    // invocation; preserve visible text and tool dependencies,
+                    // but never reinterpret PlainText as provider input.
+                    omittedReasoningCount++;
+                    break;
+
                 case ActionBlock.Text textBlock:
                     textBuffer.Append(textBlock.Content);
                     break;
@@ -284,9 +295,9 @@ internal static class OpenAIResponsesMessageConverter {
                     emittedItemCount++;
                     break;
 
-                case ActionBlock.ReasoningBlock reasoningBlock:
-                    throw new InvalidOperationException(
-                        $"OpenAI Responses replay only supports {nameof(OpenAIResponsesReasoningBlock)}. Cross-provider reasoning replay is not supported (got '{reasoningBlock.GetType().Name}')."
+                case ActionBlock.ReasoningBlock:
+                    throw RejectReasoningReplay(
+                        "OpenAI Responses reasoning replay requires a decoded native reasoning block; the adapter rejected the request before dispatch."
                     );
 
                 default:
@@ -296,9 +307,16 @@ internal static class OpenAIResponsesMessageConverter {
 
         FlushAssistantText();
 
-        if (emittedItemCount == 0) {
+        if (emittedItemCount == 0 && omittedReasoningCount == 0) {
             throw new InvalidOperationException(
                 "Action message has no replayable text, reasoning, or tool call content; nothing to send as assistant turn."
+            );
+        }
+
+        if (omittedReasoningCount > 0) {
+            DebugUtil.Info(
+                DebugCategory,
+                $"[OpenAIResponses] Omitted foreign reasoning blocks={omittedReasoningCount}; visible action items={emittedItemCount}"
             );
         }
 
@@ -338,17 +356,27 @@ internal static class OpenAIResponsesMessageConverter {
         string expectedApiSpecId
     ) {
         if (!string.Equals(reasoningBlock.Origin.ApiSpecId, expectedApiSpecId, StringComparison.Ordinal)) {
-            throw new InvalidOperationException(
-                $"OpenAI Responses reasoning replay requires Origin.ApiSpecId='{expectedApiSpecId}', got '{reasoningBlock.Origin.ApiSpecId}'."
+            throw RejectReasoningReplay(
+                "OpenAI Responses reasoning replay requires the exact API profile; the adapter rejected the request before dispatch."
             );
         }
         if (targetInvocation is not null
             && !Equals(reasoningBlock.Origin, targetInvocation)) {
-            throw new InvalidOperationException(
-                $"OpenAI Responses reasoning replay requires Origin '{targetInvocation}', got '{reasoningBlock.Origin}'."
+            throw RejectReasoningReplay(
+                "OpenAI Responses reasoning replay requires the exact invocation origin; the adapter rejected the request before dispatch."
             );
         }
-        reasoningBlock.ValidatePlainText();
+        try {
+            reasoningBlock.ValidatePlainText();
+        }
+        catch (InvalidOperationException) {
+            // This exact validator only reads the local immutable payload and
+            // its display view. Do not carry its exception/payload into durable
+            // failure metadata, or classify credential/HTTP/stream failures.
+            throw RejectReasoningReplay(
+                "OpenAI Responses reasoning payload or its PlainText view is invalid; the adapter rejected the request before dispatch."
+            );
+        }
 
         try {
             using var document = JsonDocument.Parse(reasoningBlock.RawItemJson);
@@ -384,6 +412,16 @@ internal static class OpenAIResponsesMessageConverter {
             );
         }
     }
+
+    private static CompletionRequestRejectedException RejectReasoningReplay(
+        string detail
+    ) => new(
+        CompletionTermination.Failed(
+            "openai.responses.invalid-reasoning-replay",
+            detail
+        ),
+        ["adapter-validation=reasoning-replay"]
+    );
 
     private static List<OpenAIResponsesTool>? BuildToolDefinitions(ImmutableArray<ToolDefinition> tools) {
         if (tools.IsDefaultOrEmpty) { return null; }

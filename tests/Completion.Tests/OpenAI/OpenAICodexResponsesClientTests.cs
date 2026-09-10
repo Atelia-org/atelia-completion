@@ -769,23 +769,68 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Theory]
-    [InlineData("unsupported-carrier")]
-    [InlineData("malformed-payload")]
-    [InlineData("non-object-payload")]
-    [InlineData("numeric-type")]
-    [InlineData("non-array-summary")]
-    [InlineData("forged-view")]
-    public async Task StreamCompletionAsync_InvalidSameOriginReasoningIsKnownNoDispatchRejection(
-        string scenario
+    [InlineData("gpt-5.6-sol", "gpt-6-astra")]
+    [InlineData("gpt-6-astra", "gpt-5.6-sol")]
+    [InlineData("gpt-5.6-sol", "gpt-5.6-luna")]
+    [InlineData("gpt-5.6-luna", "gpt-5.6-sol")]
+    public async Task StreamCompletionAsync_ProjectsCrossModelNativeReasoningWithoutRewritingHistory(
+        string sourceModel, string targetModel
+    ) {
+        CodexSubscriptionCredential credential = Credential("token", "account", 1);
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(_ => CompletedResponse("done"));
+        using var client = CreateClient(provider, handler, credential.AccountFingerprint);
+        const string raw = """{"id":"rs_old","type":"reasoning","summary":[{"type":"summary_text","text":"summary"}],"encrypted_content":"opaque","future_field":{"keep":[true,2]}}""";
+        var origin = new CompletionDescriptor(client.Name, client.ApiSpecId, sourceModel);
+        var reasoning = new OpenAIResponsesReasoningBlock(raw, origin, "summary");
+        var request = new CompletionRequest(targetModel,
+            new CompletionPromptPrefix("system", CompletionOutputContract.ProviderDefault([]),
+                [new ActionMessage([reasoning, new ActionBlock.Text("old answer")])]),
+            [new ObservationMessage("continue")]);
+
+        CompletionResult result = await client.StreamCompletionAsync(request, null, CancellationToken.None);
+
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        Assert.Equal(1, provider.CallCount);
+        using var body = JsonDocument.Parse(Assert.Single(handler.Requests).Body);
+        Assert.Equal(targetModel, body.RootElement.GetProperty("model").GetString());
+        JsonElement item = body.RootElement.GetProperty("input")[0];
+        using var expected = JsonDocument.Parse(raw);
+        Assert.True(JsonElement.DeepEquals(expected.RootElement, item));
+        Assert.Same(reasoning, Assert.IsType<ActionMessage>(request.PromptPrefix.SharedContextMessages[0]).Blocks[0]);
+        Assert.Equal(origin, reasoning.Origin);
+        Assert.Equal(raw, reasoning.RawItemJson);
+    }
+
+    [Theory]
+    [InlineData("unsupported-carrier", false)]
+    [InlineData("unsupported-carrier", true)]
+    [InlineData("opaque-carrier", false)]
+    [InlineData("opaque-carrier", true)]
+    [InlineData("malformed-payload", false)]
+    [InlineData("malformed-payload", true)]
+    [InlineData("non-object-payload", false)]
+    [InlineData("non-object-payload", true)]
+    [InlineData("numeric-type", false)]
+    [InlineData("numeric-type", true)]
+    [InlineData("non-array-summary", false)]
+    [InlineData("non-array-summary", true)]
+    [InlineData("forged-view", false)]
+    [InlineData("forged-view", true)]
+    public async Task StreamCompletionAsync_InvalidSameProfileReasoningIsKnownNoDispatchRejection(
+        string scenario, bool crossModel
     ) {
         const string privateMarker = "PRIVATE_REASONING_CANARY";
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
         var handler = new CapturingHandler(_ => CompletedResponse("unused"));
         using var client = CreateClient(provider, handler, credential.AccountFingerprint);
-        var origin = new CompletionDescriptor(client.Name, client.ApiSpecId, "gpt-test");
+        var origin = new CompletionDescriptor(client.Name, client.ApiSpecId,
+            crossModel ? "old-model" : "gpt-test");
         ActionBlock.ReasoningBlock reasoning = scenario switch {
             "unsupported-carrier" => new ActionBlock.TextReasoningBlock(privateMarker, origin),
+            "opaque-carrier" => new ActionBlock.OpaqueReasoningBlock("unknown-codec",
+                Encoding.UTF8.GetBytes(privateMarker), origin),
             "malformed-payload" => new OpenAIResponsesReasoningBlock(privateMarker, origin),
             "non-object-payload" => new OpenAIResponsesReasoningBlock("[]", origin),
             "numeric-type" => new OpenAIResponsesReasoningBlock("{\"type\":42}", origin),

@@ -221,8 +221,15 @@ public sealed class OpenAIResponsesClientTests {
         Assert.Equal("http://localhost:8000/prefix/v1/responses", Assert.Single(handler.RequestUris));
     }
 
-    [Fact]
-    public async Task StreamCompletionAsync_UsesMessageConverterForReasoningReplayContinuity() {
+    [Theory]
+    [InlineData("gpt-5", "gpt-5")]
+    [InlineData("gpt-5.6-sol", "gpt-6-astra")]
+    [InlineData("gpt-6-astra", "gpt-5.6-sol")]
+    [InlineData("gpt-5.6-sol", "gpt-5.6-luna")]
+    [InlineData("gpt-5.6-luna", "gpt-5.6-sol")]
+    public async Task StreamCompletionAsync_UsesMessageConverterForReasoningReplayContinuity(
+        string sourceModel, string targetModel
+    ) {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {
                 Content = new StringContent(
@@ -246,7 +253,7 @@ public sealed class OpenAIResponsesClientTests {
 
         var client = new OpenAIResponsesClient(apiKey: null, httpClient: httpClient);
         var request = new CompletionRequest(
-            "gpt-5",
+            targetModel,
             new CompletionPromptPrefix(
                 string.Empty,
                 CompletionOutputContract.ProviderDefault(ImmutableArray<ToolDefinition>.Empty),
@@ -256,7 +263,7 @@ public sealed class OpenAIResponsesClientTests {
                     [
                         new OpenAIResponsesReasoningBlock(
                             """{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"Need tool."}],"encrypted_content":"enc_123"}""",
-                            new CompletionDescriptor("localhost", "openai-responses-v2", "gpt-5"),
+                            new CompletionDescriptor("localhost", "openai-responses-v2", sourceModel),
                             "Need tool."
                         ),
                         new ActionBlock.ToolCall(new RawToolCall("get_weather", "call_123", """{"city":"Paris"}"""))

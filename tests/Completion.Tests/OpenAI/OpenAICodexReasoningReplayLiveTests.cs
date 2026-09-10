@@ -3,23 +3,19 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Xunit;
 
 namespace Atelia.Completion.OpenAI.Tests;
 
 /// <summary>
-/// An opt-in backend experiment, NOT a production projection acceptance test.
-/// A test-only transport replaces input with the existing native converter's
-/// target-less projection. Origin, payload, production policy and live journals
-/// are never modified. Credentials and opaque payloads are never reported.
+/// Opt-in production-client replay acceptance. The transport only verifies
+/// outgoing native items; it never replaces or repairs the request. Origin,
+/// payload and live journals are never modified. Credentials and opaque
+/// payloads are never reported.
 /// </summary>
 public sealed class OpenAICodexReasoningReplayLiveTests {
     private static readonly string[] Models = ["gpt-5.6-sol", "gpt-6-astra", "gpt-5.6-luna"];
-    private static readonly JsonSerializerOptions JsonOptions = new() {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
     private static readonly ToolDefinition Checkpoint = new(
         "checkpoint", "Record the computed result; no external side effects.",
         new ToolSchema.Object([
@@ -95,22 +91,14 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
                     ? new CompletionOutputContract([Checkpoint], CompletionToolChoice.RequiredNamed("checkpoint"), allowParallelToolCalls: false)
                     : new CompletionOutputContract([Checkpoint], CompletionToolChoice.None, allowParallelToolCalls: false),
                 [.. history]), []);
-            // Deliberately bypass model equality ONLY in the experimental wire
-            // projection. API-profile and native-payload validation still run.
-            var projected = OpenAIResponsesMessageConverter.ConvertToApiRequest(request,
-                new OpenAIResponsesClientOptions { ReasoningEffort = CompletionReasoningEffort.Medium },
-                targetInvocation: null, expectedApiSpecId: ChatGptCodexResponsesProfile.ApiSpecId,
-                mapReasoningEffort: ChatGptCodexResponsesProfile.MapReasoningEffort,
-                supportsNativeRequiredNamedToolChoice: false);
             var native = history.OfType<ActionMessage>().SelectMany(action => action.Blocks)
                 .OfType<OpenAIResponsesReasoningBlock>().ToArray();
-            var input = JsonSerializer.SerializeToNode(projected.Input, JsonOptions)!.AsArray();
-            using var handler = new ProbeHandler(input, native, OpenAICodexResponsesClient.CreateProductionHandler());
+            using var handler = new ProbeHandler(native, OpenAICodexResponsesClient.CreateProductionHandler());
             using var client = new OpenAICodexResponsesClient(provider,
                 new OpenAICodexResponsesClientOptions {
                     ExpectedAccountFingerprint = credential.AccountFingerprint,
                     Originator = "atelia-live-reasoning-replay", ProductName = "Atelia",
-                    ProductVersion = "reasoning-replay-probe-v1", MaxConcurrentRequests = 1,
+                    ProductVersion = "reasoning-replay-acceptance-v1", MaxConcurrentRequests = 1,
                     ReasoningEffort = CompletionReasoningEffort.Medium
                 }, handler);
             var timer = Stopwatch.StartNew();
@@ -135,7 +123,7 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
                 handler.CompletedEvent, handler.ReportedModel, handler.EffectiveContext,
                 nativeReasoningItems = native.Length, handler.NativeItemsUnchanged,
                 completed, parserTermination = result?.Termination.Kind.ToString(), errorType, adapterFailureReason,
-                projection = "test-only-targetless-native-input", reasoningContext = "omitted"
+                projection = "production-client-native-input", reasoningContext = "omitted"
             });
             if (completed) { successfulCalls++; }
             return completed ? result!.Message : null;
@@ -159,16 +147,16 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Probe_InputReplacementPreservesNativeItemsAndOtherFields(bool omitContentType) {
+    public async Task Probe_ProductionInputPreservesNativeItemsAndOtherFields(bool omitContentType) {
         const string payload = """{"type":"reasoning","id":"rs_test","encrypted_content":"synthetic-not-a-secret","summary":[],"future":{"preserve":true}}""";
         var native = new OpenAIResponsesReasoningBlock(payload,
             new CompletionDescriptor("chatgpt.com", ChatGptCodexResponsesProfile.ApiSpecId, Models[0]));
         var input = new JsonArray(JsonNode.Parse(payload));
         var original = JsonNode.Parse("""{"model":"gpt-6-astra","instructions":"fixture","input":[],"reasoning":{"effort":"medium","summary":"auto"},"stream":true,"store":false} """)!;
+        original["input"] = input;
         JsonNode expected = original.DeepClone();
-        expected["input"] = input.DeepClone();
         var sink = new FixtureHandler(expected, omitContentType);
-        using var handler = new ProbeHandler(input, [native], sink);
+        using var handler = new ProbeHandler([native], sink);
         using var invoker = new HttpMessageInvoker(handler);
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.invalid/responses") {
             Content = new StringContent(original.ToJsonString())
@@ -188,6 +176,20 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
         Assert.Equal(1, handler.SentCalls);
     }
 
+    [Fact]
+    public async Task Probe_MissingNativeItemIsNotRepairedOrSent() {
+        var native = new OpenAIResponsesReasoningBlock("""{"type":"reasoning","encrypted_content":"fixture"}""",
+            new CompletionDescriptor("chatgpt.com", ChatGptCodexResponsesProfile.ApiSpecId, Models[0]));
+        using var handler = new ProbeHandler([native], new FixtureHandler(new JsonObject(), false));
+        using var invoker = new HttpMessageInvoker(handler);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.invalid/responses") {
+            Content = new StringContent("""{"input":[]}""")
+        };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => invoker.SendAsync(request, CancellationToken.None));
+        Assert.False(handler.NativeItemsUnchanged);
+        Assert.Equal(0, handler.SentCalls);
+    }
+
     private sealed class FixtureHandler(JsonNode expected, bool omitContentType) : HttpMessageHandler {
         public const string Terminal = "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"model\":\"gpt-6-astra\",\"reasoning\":{\"context\":\"all_turns\"}}}\n\n";
         public bool ExactBody { get; private set; }
@@ -201,7 +203,7 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
         }
     }
 
-    private sealed class ProbeHandler(JsonArray input, OpenAIResponsesReasoningBlock[] native,
+    private sealed class ProbeHandler(OpenAIResponsesReasoningBlock[] native,
         HttpMessageHandler inner) : DelegatingHandler(inner) {
         public int SentCalls { get; private set; }
         public int? HttpStatus { get; private set; }
@@ -212,9 +214,7 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) {
             if (SentCalls != 0) { throw new InvalidOperationException("Probe forbids automatic retries."); }
-            var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
-            body["input"] = input.DeepClone();
-            byte[] wire = JsonSerializer.SerializeToUtf8Bytes(body, JsonOptions);
+            byte[] wire = await request.Content!.ReadAsByteArrayAsync(ct);
             using var actual = JsonDocument.Parse(wire);
             var reasoning = actual.RootElement.GetProperty("input").EnumerateArray()
                 .Where(item => item.GetProperty("type").GetString() == "reasoning").ToArray();
@@ -224,9 +224,6 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
                 NativeItemsUnchanged &= JsonElement.DeepEquals(original.RootElement, reasoning[i]);
             }
             if (!NativeItemsUnchanged) { throw new InvalidOperationException("Native item wire equality failed."); }
-            request.Content.Dispose();
-            request.Content = new ByteArrayContent(wire);
-            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
             SentCalls++;
             var response = await base.SendAsync(request, ct);
             HttpStatus = (int)response.StatusCode;

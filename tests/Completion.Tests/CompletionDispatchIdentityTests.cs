@@ -181,29 +181,55 @@ public sealed class CompletionDispatchIdentityTests {
         );
     }
 
-    [Fact]
-    public void CodexResponsesUsesIndependentRequestAdapterIdentity() {
+    [Theory]
+    [InlineData("openai-codex-responses", "chatgpt.com",
+        "sha256:ee134d2333b8a9ef58cbf2c055bef3b70826d0c038b8ad805db81a1f2c296df1")]
+    [InlineData("openai-responses", "api.openai.com",
+        "sha256:2a9f48b1d2896e90a877420859f745341ddb92186d3a46f36c17abc4917c7d98")]
+    public void ResponsesNativeReplayHasVersionedRequestProjectionIdentity(
+        string kind, string clientName, string expectedFingerprint) {
         CompletionConnectionConfig connection = CreateConnection() with {
-            Kind = "openai-codex-responses",
-            CompletionSurfaceId = "openai-codex-responses",
-            BaseAddress = "https://chatgpt.com/backend-api/codex/",
+            Kind = kind,
+            CompletionSurfaceId = kind,
             ApiKey = null,
             ApiKeyEnv = null
         };
         var client = new IdentityCompletionClient(
-            "chatgpt.com",
-            "openai-codex-responses-v2"
+            clientName,
+            kind + "-v2"
         );
 
         string fingerprint = CompletionDispatchIdentityFactory
             .ComputeRequestAdapterFingerprint(client, connection);
 
-        Assert.Equal(
-            "sha256:"
-            + "8c256736bee867f3e135ff8a61b2d8a8"
-            + "5438cae327f3299363cd03910f982fc0",
-            fingerprint
-        );
+        Assert.Equal(expectedFingerprint, fingerprint);
+    }
+
+    [Theory]
+    [InlineData("openai-codex-responses", "chatgpt.com",
+        "sha256:8c256736bee867f3e135ff8a61b2d8a85438cae327f3299363cd03910f982fc0")]
+    [InlineData("openai-responses", "api.openai.com",
+        "sha256:a785a82d3793d4a43c0ea1ef0f74b34a6e670c33bc9ae4c6f4c82f3027b37321")]
+    public void BindExactRejectsPreviousResponsesProjectionWithoutChangingApiSpecId(
+        string kind, string clientName, string previousFingerprint) {
+        CompletionConnectionConfig connection = CreateConnection() with {
+            Kind = kind,
+            CompletionSurfaceId = kind
+        };
+        var factory = new RecordingClientFactory(
+            new IdentityCompletionClient(clientName, kind + "-v2"));
+        using var registry = CreateRegistry(connection, factory);
+        CompletionDispatchIdentity required = CompletionDispatchIdentityFactory.Create(
+            connection, factory.Client) with {
+            RequestAdapterFingerprint = previousFingerprint
+        };
+
+        var unavailable = Assert.IsType<CompletionDispatchBindingResult.Unavailable>(
+            registry.BindExact(required));
+
+        Assert.Equal(CompletionDispatchBindingUnavailableReason
+            .RequestAdapterFingerprintMismatch, unavailable.Reason);
+        Assert.Equal(1, factory.CallCount);
     }
 
     [Fact]

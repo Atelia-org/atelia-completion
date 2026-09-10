@@ -255,11 +255,11 @@ internal static class OpenAIResponsesMessageConverter {
             switch (block) {
                 case ActionBlock.ReasoningBlock reasoningBlock
                     when targetInvocation is not null
-                        && !Equals(reasoningBlock.Origin, targetInvocation):
-                    // A model/provider switch does not rewrite durable history.
-                    // Foreign reasoning is not a replay candidate for this
-                    // invocation; preserve visible text and tool dependencies,
-                    // but never reinterpret PlainText as provider input.
+                        && !HasReplayCompatibleOrigin(reasoningBlock.Origin, targetInvocation):
+                    // Origin remains provenance, not a model compatibility
+                    // whitelist. Keep native reasoning across model switches
+                    // within the exact provider/profile; leave cross-provider
+                    // and cross-profile carriers out of this wire projection.
                     omittedReasoningCount++;
                     break;
 
@@ -361,9 +361,9 @@ internal static class OpenAIResponsesMessageConverter {
             );
         }
         if (targetInvocation is not null
-            && !Equals(reasoningBlock.Origin, targetInvocation)) {
+            && !HasReplayCompatibleOrigin(reasoningBlock.Origin, targetInvocation)) {
             throw RejectReasoningReplay(
-                "OpenAI Responses reasoning replay requires the exact invocation origin; the adapter rejected the request before dispatch."
+                "OpenAI Responses reasoning replay requires the exact provider and API profile; the adapter rejected the request before dispatch."
             );
         }
         try {
@@ -412,6 +412,12 @@ internal static class OpenAIResponsesMessageConverter {
             );
         }
     }
+
+    private static bool HasReplayCompatibleOrigin(
+        CompletionDescriptor origin,
+        CompletionDescriptor target
+    ) => string.Equals(origin.ProviderId, target.ProviderId, StringComparison.Ordinal)
+        && string.Equals(origin.ApiSpecId, target.ApiSpecId, StringComparison.Ordinal);
 
     private static CompletionRequestRejectedException RejectReasoningReplay(
         string detail

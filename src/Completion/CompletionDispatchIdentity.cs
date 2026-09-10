@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 
 namespace Atelia.Completion;
@@ -75,7 +76,8 @@ public static class CompletionDispatchIdentityFactory {
                 connection.Kind,
                 connection.CompletionSurfaceId,
                 ResolveReasoningMappingId(connection),
-                ResolveOutputLimitMappingId(connection)
+                ResolveOutputLimitMappingId(connection),
+                ResolveRequestProjectionMappingId(connection)
             )
         );
     }
@@ -114,6 +116,17 @@ public static class CompletionDispatchIdentityFactory {
         _ => "provider-output-limit-omitted-v1"
     };
 
+    // Projection policy is versioned separately from the provider protocol and
+    // native reasoning carrier identity. Changing a successful request's wire
+    // projection must invalidate a frozen dispatch without rewriting Origin.
+    private static string? ResolveRequestProjectionMappingId(
+        CompletionConnectionConfig connection
+    ) => connection.Kind.Trim().ToLowerInvariant() switch {
+        "openai-responses" or "openai-codex-responses" =>
+            "openai-responses-native-reasoning-replay-v1",
+        _ => null
+    };
+
     private sealed record ConnectionFingerprintDto(
         string ConnectionId,
         string Kind,
@@ -129,7 +142,9 @@ public static class CompletionDispatchIdentityFactory {
         string ConnectionKind,
         string CompletionSurfaceId,
         string ReasoningMappingId,
-        string OutputLimitMappingId
+        string OutputLimitMappingId,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        string? RequestProjectionMappingId
     );
 }
 

@@ -413,35 +413,47 @@ connection kind:             openai-codex-responses
 completionSurfaceId:         openai-codex-responses
 client ApiSpecId:            openai-codex-responses-v2
 reasoning mapping id:        openai-codex-responses-effort-v1
+request projection mapping: openai-responses-native-reasoning-replay-v1
 ```
 
 虽然两条 route 当前共享大部分 Responses JSON/SSE shape，但 direct backend 是独立、未文档化 surface。独立
 `ApiSpecId` 可防止 public `OpenAIResponsesReasoningBlock` 被误认为可在 Codex route replay，反向亦然。
 
-shared converter 应由 profile 传入 expected ApiSpecId 与 reasoning mapping，而不是继续把
-`openai-responses-v2` 写死。reasoning replay 仍必须满足完整 `Origin == targetInvocation`。
+### spec [S-RESPONSES-NATIVE-REPLAY] 来源与回放资格分离
 
-2026-09-09 的模型切换修复将 **历史保存** 与 **本次 replay 资格** 分开：真实 client 总会传入完整 target；
-converter 在 prefix/tail 两侧省略非 exact Origin 的 reasoning block，只保留其旁边的 Text / ToolCall。
-不改写原始 request、journal、reasoning Origin 或 payload，也不把 PlainText 降级为普通 assistant 文本。
-仅由被省略 reasoning 构成的 Action 不产生 wire item；原本空 Action、pending tool-call/result 邻接校验仍严格。
-exact-origin native block 仍按原 payload 回灌；同源 opaque/非 native carrier 不能借此获得 replay authority。
+shared converter 由 profile 传入 expected ApiSpecId 与 reasoning mapping，不把 public profile 写死。
+真实 client 的 reasoning replay 候选 MUST 与目标 invocation 的 `ProviderId`、`ApiSpecId` 精确相同，
+但 MUST NOT 要求 `Model` 相同。模型兼容性由 backend 处理，不维护本地型号白名单。
+
+合法 `OpenAIResponsesReasoningBlock` MUST 保留整个 native JSON item 的值，包括 encrypted_content、id、summary
+和未知扩展字段；不改写原始 request、journal、Origin 或 payload，不把 PlainText 转为普通 assistant 文本。
+Provider/profile 不同的 reasoning 继续仅从本次 projection 省略，旁边的 Text / ToolCall 和历史保持不变。
+同 Provider/profile 的 malformed payload、伪造 PlainText、Opaque/Text 等非 native carrier MUST 在 credential/HTTP
+之前确定性拒绝，即使其来源 Model 不同。空 Action 与工具调用/结果邻接校验不放宽。
+
+2026-09-10 的 [Codex 实验](experiments/2026-09-10-codex-reasoning-replay.md)提供了四个跨模型方向的请求接受证据。
+公共 Responses 采用同一实现是 operator 明确授权的兼容性假设，尚无公共 API live 验证。
+两者共享投影算法不等于 public/Codex 原生载荷可以互投，也不证明 reasoning 被模型实际使用。
 
 初始 effort mapping 可以由当前 pinned Codex source校准后实现；即使 wire 值与 public Responses 当前相同，也使用独立
 mapping id，避免未来一边变化时 silent drift。
 
-identity 仍保持单一 owner：`CompletionDispatchIdentityFactory.ResolveReasoningMappingId(connection)` 新增 exact kind case，
-返回 `openai-codex-responses-effort-v1`；profile 只实现 wire mapping，并以成对测试锁住二者一致，不引入第二套 runtime
-identity source。`openai-codex-responses-v2` 代表整套 request/replay/SSE adapter contract：route、body policy、headers、
-provider-native replay、新增 protocol event/wire shape，或改变哪些 event 构成 terminal evidence，都需要 bump `ApiSpecId`；
-纯 effort mapping 变化只 bump mapping id。已经属于 pinned Responses schema 的 typed content 若被错误计入 success，收紧其
-success eligibility、让既有 `response.completed` terminal 收口为 conservative Incomplete，属于 fail-closed bug fix，不改变
-terminal evidence set，因此不 bump public/Codex v2。
+### spec [S-RESPONSES-PROJECTION-IDENTITY] 投影行为独立版本化
 
-上述 foreign-reasoning omission 同样保持 v2，属于 previously-rejected 输入域扩展，非合法 native replay 的 mapping 变化：
-旧 converter 能成功返回的每个 reasoning 都已经 exact 匹配，因此新 omission guard 对全部旧成功请求恒为 false，
-原 wire 字节不变。内部未提供 target 的调用仍严格拒绝不兼容 reasoning。与 singleton RequiredNamed 等价投影一样，
-这不要求新 identity；frozen canonical commitment、BindExact 和 Started 的显式恢复授权均不变。
+2026-09-10 起替代旧的“所有 replay 变化均升级 ApiSpecId”规则：ApiSpecId 表示 protocol/native carrier 兼容身份，
+本次保持 public/Codex 各自 v2；codec 仍为 `atelia.openai-responses.reasoning-item-json.v1`，历史 Origin 不迁移。
+route、协议字段/SSE shape 或 terminal evidence set 的语义变化仍应审查 ApiSpecId 升级。
+
+`CompletionDispatchIdentityFactory` 是 durable identity 的单一 owner。其 RequestAdapterFingerprint 对两种
+Responses kind 新增 `RequestProjectionMappingId=openai-responses-native-reasoning-replay-v1`，
+显式标识跨模型 native replay；未来该投影规则变化 MUST 更新此 component。
+effort mapping 仍以独立 reasoning mapping id 标识。非 Responses 的 projection component 为 null 且不序列化，
+不改变其他 provider 的现有 fingerprint。没有新连接开关或旧投影兼容执行路径。
+
+上一轮 `116b96f7` 的 omission 没有改变当时旧成功请求的 wire；本次把已可发送请求中被省略的 reasoning 加回来，
+则改变了当前成功输入的投影，MUST 改变 request-adapter identity，不能沿用上一轮的免责理由。
+旧 frozen adapter fingerprint MUST 被 `BindExact` 拒绝；显式 Restart 授权不授予替换冻结投影的权限。
+升级前应使用旧版完成 Prepared/Started 工作，再切换新版。详见 [Galatea 升级边界](../Galatea/runtime.md#模型切换与-reasoning-回放排障)。
 
 ## 7. 错误、重读与重试
 
@@ -456,7 +468,7 @@ terminal evidence set，因此不 bump public/Codex v2。
 | token expired | `AuthOwnerRefreshRequired`，network 前失败 |
 | account mid-process changed | `AuthAccountChanged`，禁止自动切换 |
 | current declaration / historical tool call 的 function name 不满足 Responses profile | converter 在 credential/network 前抛 typed local no-dispatch rejection；只分类这一 exact validator |
-| exact-origin reasoning carrier 不受支持，或 native payload / PlainText 校验失败 | converter 在 credential/network 前抛 typed local no-dispatch rejection；不包含原始 payload 或异常 |
+| 同 ProviderId/ApiSpecId 的 reasoning carrier 不受支持，或 native payload / PlainText 校验失败 | converter 在 credential/network 前抛 typed local no-dispatch rejection；不包含原始 payload 或异常 |
 | HTTP 401 | singleflight 重新读取一次；仅当 generation 已变化时，以 byte-identical body 最多重试一次；unchanged generation 或第二个 401 是 typed pre-stream known rejection |
 | HTTP 403 | typed pre-stream known rejection，不重试，也不声称“封号” |
 | HTTP 429 | typed pre-stream known rejection；durable payload 只保留 adapter-owned status/reason，不复制 `Retry-After` 或 provider metadata；不立即重试、不换账号 |
@@ -481,7 +493,7 @@ historical `ActionBlock.ToolCall` 的 dotted、超长或其它 profile-invalid n
 `adapter-validation=function-name`，不复制 rejected name。这个 typed local rejection 证明 request 未 dispatch、observer 零
 delta。
 
-reasoning 的精确 carrier/API/Origin 护栏及 `ValidatePlainText` 本地 validator 也使用这一 exception，稳定 reason 为
+reasoning 的 carrier、精确 ProviderId/ApiSpecId 护栏及 `ValidatePlainText` 本地 validator 也使用这一 exception，稳定 reason 为
 `openai.responses.invalid-reasoning-replay`，errors 为 `adapter-validation=reasoning-replay`。这些分支只检查本地输入，
 在 credential/HTTP callback 之前运行，detail 全部 code-owned，不保留原异常、来源标识或内容。
 其它 converter、serialization、credential、transport 或 stream exception 不得被泛化 catch，仍保持 Started uncertain。
@@ -704,10 +716,10 @@ dotnet test tests/Completion.Tests/Completion.Tests.csproj -c Release --no-resto
 若以后需要 disposable fixture，必须另行定义 access-token-only live fixture schema、`0600` 创建与可靠销毁规则；不能把
 真实 `auth.json` 的副本称作 disposable fixture。
 
-2026-09-10 新增独立的 opt-in [跨模型 reasoning 回放探针与实测记录](experiments/2026-09-10-codex-reasoning-replay.md)。
-它在测试 transport 内绕过 model equality，默认矩阵最多 17 次串行调用（独立 Astra 对照最多 3 次），
-每次禁止自动重试，仅保存脱敏 metadata。四个目标方向均获得完整成功响应；这不改变 §6.4 的生产投影规则，
-也不将 backend acceptance 等同于模型实际利用 reasoning。
+2026-09-10 的 opt-in [跨模型 reasoning 回放探针与实测记录](experiments/2026-09-10-codex-reasoning-replay.md)
+已升级为生产 client 验收：测试 handler 只检查最终 wire，不再替换 input 或绕过 converter。
+默认矩阵最多 17 次串行调用（独立 Astra 对照最多 3 次），每次禁止自动重试，仅保存脱敏 metadata。
+历史实验与生产验收分别记录，backend acceptance 不等同于模型实际利用 reasoning。
 
 ### WP-5：Atelia-owned OAuth（后续独立提案）
 

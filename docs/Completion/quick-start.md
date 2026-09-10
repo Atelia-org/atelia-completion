@@ -513,16 +513,18 @@ public record RawToolCall(
 provider-specific `ActionBlock.ReasoningBlock`（例如 `AnthropicReasoningBlock`、`OpenAIChatReasoningBlock`、`GeminiReplayBlock`）承载 **provider-native** replay 信息。对这类 block 的共同规则是：
 
 - 不要手工解析后再重组为“通用 thinking 文本”；优先原样保留 provider-native payload；
-- 回灌时 `Origin` 必须是 **当时产生它的那次调用** 的 `CompletionDescriptor`，否则 converter 会拒绝 replay（Anthropic 的 thinking 签名、Gemini 的 `thoughtSignature` 都与调用源绑定）；
+- `Origin` 必须保留 **当时产生它的那次调用** 的 `CompletionDescriptor`；具体回放资格由 provider adapter 判定，不要手工伪造来源来绕过检查；
 - 如果你修改了同一条 `ActionMessage` 里的可见 `Text` / `ToolCall`，也必须同步更新对应 provider replay block；Gemini 路径会对这两份信息做一致性校验，避免出现双真源漂移。
 
 `PlainText` 是统一的明文视图，供 UI 展示 / 日志 / 审计使用——**永远不要** 把它当成可回灌的 provider-native authority。provider 只给出加密负载时（如 Anthropic 的 `redacted_thinking`）它为 `null`；同时存在明文视图与原生 payload 时，provider codec 会校验两者一致。
 
-OpenAI Responses / Codex Responses client 会按本次完整 `CompletionDescriptor` 选择历史 replay 候选：
-切换 model/provider/API 时，非 exact Origin 的 reasoning 仅从本次 wire projection 省略，旁边的 Text / ToolCall 和
-持久化历史不变；同源 native reasoning 继续原样校验回灌。不要修改旧 Origin 来强制匹配新模型。同源 malformed payload、
-伪造 PlainText 或不支持的 carrier 会在 credential/network 前以 `openai.responses.invalid-reasoning-replay`
-确定性拒绝，不伪装为远端结果不确定。其边界与 v2 identity 保持理由见 [Codex adapter 契约 §6.4–7](openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
+OpenAI Responses / Codex Responses client 按精确的 `ProviderId + ApiSpecId` 选择历史 replay 候选，**不要求 Model 相同**。
+同 provider/profile 的 native reasoning 跨模型完整投影；不同 provider/profile 的 reasoning 仅从本次 wire 省略。
+旁边的 Text / ToolCall、持久化历史与 Origin 不变。同 profile 的 malformed payload、伪造 PlainText 或不支持的
+carrier（无论来自哪个模型）在 credential/network 前以 `openai.responses.invalid-reasoning-replay` 确定性拒绝。
+Codex 有实测证据；公共 Responses 使用相同行为是 operator 授权的假设，未进行公共 API live 验证。
+此次 payload ApiSpecId 保持 v2，但 RequestAdapterFingerprint 更新，旧冻结请求不能静默绑定新版投影。
+边界与升级说明见 [Codex adapter 契约 §6.4–7](openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
 
 只依赖 `Completion.Abstractions` 的 offline reader 可能没有加载产生该块的 provider codec。此时 registry 会解码为 `ActionBlock.OpaqueReasoningBlock`：它精确保留 codec id、`Origin`、provider-native payload 与可选 `PlainText`，保证 deserialize → serialize 不改变持久化 authority，而不会再把 debug 文本降级成新的 replay 内容。这是 semantic hard cut；旧版 unknown-codec → `TextReasoningBlock` 的 lossy 解释不再保留。这个 opaque carrier 不授予回灌能力；执行真实 provider 调用的进程仍须注册对应 codec，使相同 payload 解码为 provider-specific block。
 

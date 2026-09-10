@@ -693,7 +693,7 @@ dotnet test tests/Completion.Tests/Completion.Tests.csproj -c Release --no-resto
 - 不回退真实默认 auth path；
 - 只读 operator 明确指定的真实 file-backed Codex auth file；不复制整份 `auth.json`，尤其不复制 refresh token；
 - 默认不启用 raw/call log；
-- 每个独立 live gate 只发送一次小型请求并要求 semantic terminal；
+- 上述 text/tool-shape live gate 各只发送一次小型请求并要求 semantic terminal；
 - 不故意制造 401、429、refresh、token rotation 或封禁风险；
 - live failure 只说明当前兼容性，不据此推断账号状态。
 
@@ -703,6 +703,11 @@ dotnet test tests/Completion.Tests/Completion.Tests.csproj -c Release --no-resto
 
 若以后需要 disposable fixture，必须另行定义 access-token-only live fixture schema、`0600` 创建与可靠销毁规则；不能把
 真实 `auth.json` 的副本称作 disposable fixture。
+
+2026-09-10 新增独立的 opt-in [跨模型 reasoning 回放探针与实测记录](experiments/2026-09-10-codex-reasoning-replay.md)。
+它在测试 transport 内绕过 model equality，默认矩阵最多 17 次串行调用（独立 Astra 对照最多 3 次），
+每次禁止自动重试，仅保存脱敏 metadata。四个目标方向均获得完整成功响应；这不改变 §6.4 的生产投影规则，
+也不将 backend acceptance 等同于模型实际利用 reasoning。
 
 ### WP-5：Atelia-owned OAuth（后续独立提案）
 

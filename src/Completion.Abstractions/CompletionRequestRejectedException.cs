@@ -18,9 +18,9 @@ namespace Atelia.Completion.Abstractions;
 /// raw provider messages, response bodies, credentials, account identifiers,
 /// prompts, or generated content. Printable-ASCII validation only constrains
 /// shape; it is not a taint sanitizer, so adapters must use code-owned values
-/// rather than copying even ASCII-only provider metadata. This type deliberately
-/// has no inner-exception constructor so an unsafe provider exception cannot be
-/// retained accidentally.
+/// rather than copying even ASCII-only provider metadata. Original transport
+/// diagnostics can be retained in <see cref="Exception.InnerException"/>;
+/// that exception is for logs and is not part of the durable rejection fields.
 /// </para>
 /// </remarks>
 public sealed class CompletionRequestRejectedException : Exception {
@@ -33,8 +33,13 @@ public sealed class CompletionRequestRejectedException : Exception {
 
     public CompletionRequestRejectedException(
         CompletionTermination termination,
-        IReadOnlyList<string>? errors = null
-    ) : base("The completion request was authoritatively rejected without a possible completion outcome.") {
+        IReadOnlyList<string>? errors = null,
+        Exception? innerException = null
+    ) : base(
+        "The completion request was authoritatively rejected without a possible completion outcome."
+            + (innerException is null ? "" : $" {innerException.Message}"),
+        innerException
+    ) {
         ArgumentNullException.ThrowIfNull(termination);
         if (termination.Kind is not CompletionTerminationKind.Failed) {
             throw new ArgumentException(

@@ -509,21 +509,13 @@ attempt 精确提交为既有 `CompletionAttemptFailed`；若 Failed append 自�
 SessionJournal event/body schema，因此不额外 bump `ApiSpecId`。
 
 2026-08-26 的真实 invalid-model probe 表明 HTTP 400 body root exact keys 只有 `detail`，没有 `error.code/type/param`。
-`detail` 是 provider free-form message，既不能穿过 redaction boundary，也不足以构成稳定 allowlist，所以当前所有 400
+`detail` 是 provider free-form message，会保留在异常中供诊断，但不足以构成稳定 allowlist，所以当前所有 400
 继续抛 adapter exception，由 SessionJournal fail closed 为 Started uncertain。未来只有新的 live 校准同时给出严格、安全、
 稳定的 machine envelope，并由离线 tests 锁住 exact tuple 后，才可窄化某一类 400；不得把“全部 400”视为 known rejection。
 
-ordinary non-2xx exception 不附 raw response body或 header dump。client 最多读取 16 KiB 的 strict UTF-8 JSON；
-经过字符/长度约束的 `code/type/param/request-id` 只作为显式 opt-in 的 opaque operational properties 暂存，仍视为
-provider-controlled、可能敏感，禁止写入 `Message` / `ToString()`、durable journal 或普通日志。raw `message`、未知字段、
-超限/非法 UTF-8/过深 JSON 与不安全 token 全部丢弃。现有 generic `CompletionHttpRequestUtility` 会把截断 response body
-写入 exception，Codex profile 不得直接复用这条错误文本路径。
+网络失败保留原始 `InnerException` 及其堆栈；non-2xx exception 保留 HTTP status、完整 response body 和 request ID，JSON 中的 `code/type/param` 不做字符白名单过滤。对于 401/403/429，已有 typed known-rejection 的 durable 字段保持原契约，完整 HTTP 错误作为 `InnerException` 保留供日志诊断。
 
-同一 redaction boundary 也必须覆盖 HTTP 200 SSE 内的 `error`、`response.failed` 与 nested provider message。现有
-`OpenAIResponsesStreamParser` 会把部分 provider message 放入 `CompletionResult.Errors`，随后可能由
-`LoggingCompletionClient` 落盘；Codex profile 必须在交给 aggregator 前只投影 allowlisted error code/type/request-id，
-禁止 raw `message`、raw event JSON 与 account/token canary 进入 result、observer 或日志。shared public Responses parser 的
-现有行为保持不变，Codex-specific sanitization 需要独立 contract test。
+Codex 与 public Responses 使用同一个 SSE 错误路径：`error` / `response.failed` 的 provider message 进入 `CompletionResult.Errors` 和 `Termination.Detail`，`response.incomplete` 保留 provider reason，协议异常保留原始诊断。没有 Codex 专属的 error sanitizer。
 
 ## 8. 并发与 Host composition
 
@@ -569,29 +561,13 @@ V2 仍要求 `baseAddress`，所以这里把它当作 operator-readable assertio
 在任何 credential/file/network side effect 前校验 resolved value，client 从同一 profile 构造 transport，禁止三处复制
 常量。`baseAddressEnv` resolve 后 exact 相等可以接受；`apiKey`/`apiKeyEnv` 对这个 kind 必须禁止。
 
-Galatea 启用该 kind 时还必须满足 deployment precondition：
-
-- listen URLs 全部为 loopback；
-- Galatea config 恰好只有一个 configured user；
-- exact 一个 Codex subscription connection/credential owner；
-- 不把 connection 暴露给其他本地用户、LAN 或公网。
-
-当前 Galatea bootstrap template 的 `0.0.0.0` 与 `alice`/`bob` 不满足这些条件；后续 Host integration 应在 startup
-fail closed，而不是只写 warning。该约束属于 Galatea composition，不应污染 provider-neutral
-`Completion.Abstractions`。
-
-当前 Galatea connection catalog 是 host-global，没有 per-user connection ACL。first slice 因而不能声称“多个 Galatea
-user 中只有一个能选择 subscription connection”；只要存在该 kind，就必须以“恰好一个 configured user”实现可执行的
-安全边界，并在任何 client/credential provider side effect 前完成 startup validation。以后若要多个 Galatea user 但只
-授权其中一个，需要 Galatea root config V2 或独立 ACL policy，不是 connections V2。其他本地 OS 用户无法访问、登录
-密码只由本人掌握等仍是 operator precondition，startup 不冒充能证明这些外部事实。
+Galatea 的监听地址与 Completion provider 无关。所有 connection 都通过普通 ASP.NET 配置绑定：有 `listenUrls` 时调用 `UseUrls`，没有时采用 host 默认设置，`Kestrel:Endpoints` 保持框架自身的优先级与 reload 行为。允许 `0.0.0.0`、loopback 和 LAN 监听；不再接管 Kestrel loader，也没有 one-user / one-connection 限制。
 
 ## 9. Logging 与 secret hygiene
 
 - `CodexSubscriptionCredential` 没有 public secret getter，禁止默认 record `ToString()`；private secret fields 使用
   `DebuggerBrowsable(Never)`，serialization/structured-log/debugger canary tests 必须证明不会展开 token/account。
-- `Authorization`、access/refresh/id token、raw account id、auth path 不进入 `DebugUtil`、Completion call log、golden
-  log、exception 或 HTTP API response。
+- client 不主动把认证请求 header 或 credential 对象加入日志。provider 返回的错误正文和底层异常按原样保留，普通 exception/call log 可以包含这些诊断内容。
 - HTTP raw exchange capture 不记录 request headers，这是可复用的安全性质；但它会完整记录 request body 中的 system
   prompt、history、tool schema 与已消费的 provider response，因此不是普通应用日志。它只能由显式 diagnostic harness
   选择一个新的 absolute ephemeral path 来启用；Unix sink 以 `0600` 创建文件，并拒绝追加到非 `0600` 或 symlink 的
@@ -638,14 +614,14 @@ fingerprint 不变。
 - `store=true`/arbitrary body injection 不存在于 Codex public surface；
 - 两个 `ICompletionClient` overload 都显式实现；合法 prompt-cache hints 为 validated no-op；body 省略 output cap；
 - 401 generation-change retry 至多一次；403/429/3xx/5xx 无透明 retry；
-- non-2xx 与 SSE terminal error 都经过 Codex-specific sanitizer；
+- non-2xx 保留完整响应正文与 request ID，SSE terminal error 保留 provider message；
 - typed refusal 只在最终 `response.completed` / `response.incomplete` terminal 后收口为
   `Incomplete(response.refusal)`；refusal body 只作为 transient text，不进入 termination metadata / errors；
 - public/Codex reasoning payload cross-replay fail fast。
 
 ### WP-3：factory、dispatch identity 与 Galatea composition（已实施）
 
-目标：intercept 新 kind，锁定 fingerprint，并满足 loopback/one-user/one-connection startup precondition。
+目标：intercept 新 kind，锁定 fingerprint，并复用普通 ASP.NET 监听配置。
 
 完成标准：
 
@@ -759,15 +735,14 @@ publish。
 13. caller cancellation 在 gate、credential read、HTTP 与 SSE 阶段保持 caller token identity；
 14. synthetic Codex SSE text/tool/reasoning/terminal end-to-end；
 15. metadata/unknown well-formed events 保持 forward-compatible，terminal 前 EOF/[DONE] 仍 fail closed；
-16. non-2xx 与 SSE `error` / `response.failed` 中的 raw message/account/token canary 被 Codex sanitizer 移除；
-    known rejection 只持久化 adapter-owned status/reason；ordinary exception 的 bounded opaque
-    `code/type/param/request-id` 不进入 `Message` / `ToString()`；
+16. non-2xx 与 SSE `error` / `response.failed` 中的具体诊断可从 exception / result / call log 读取；
+    网络异常保留完整 inner-exception chain，known rejection 的 durable 字段与完整 operational diagnostics 分开；
 17. public/Codex reasoning cross-replay 拒绝；
-18. golden/call-log/exception/API response 全文扫描不包含 access/refresh/id/account canary；
+18. client 不主动将认证 header 加入 call log；provider 错误文本保持可见；
 19. manifest/factory/fingerprint/registry lifetime/dispose contract；account fingerprint 跨重启 mismatch；
 20. Linux上不同owner/mode只要OS允许读取就接受；symlink/non-regular拒绝；relative `$CODEX_HOME`与ancestor
     symlink拒绝；
-21. loopback classifier exact 覆盖 `127.0.0.1`、`::1`、wildcard、`0.0.0.0` 与 LAN address；
+21. Codex / 普通 connection 均通过 `listenUrls`、host URLs、`Kestrel:Endpoints` 绑定 `0.0.0.0` 并完成 HTTP 访问；
 22. live smoke 只读 explicit authority file，验证没有复制或 materialize refresh token；Agent Control live acceptance
     锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；singleton `RequiredNamed` 使用独立
     single-request gate 锁定 `recall_memos` strict tool 经字符串 `required` 的现场同形；
@@ -825,14 +800,11 @@ direct backend 是 drift-prone implementation surface。开始 WP-2 与 opt-in l
 - `OpenAIResponsesProtocolClientCore`：public Responses 与 Codex sibling client 共用 projection、SSE reader/parser、
   aggregator，同时保持独立 `ApiSpecId` 与 reasoning mapping entry；
 - `OpenAICodexResponsesClient`：固定 direct SSE route、逐 attempt credential snapshot、默认并发 3、401 仅在
-  generation 改变时单次 byte-identical retry、non-2xx/transport/SSE error 的 code-owned redaction；
+  generation 改变时单次 byte-identical retry；2026-09-12 移除 non-2xx/transport/SSE error redaction，保留原始诊断；
 - Galatea `TextExtractor`：在client边界之外只对pre-response `TransportOutcomeUnknown`进行5次总尝试与
   1s/2s/4s/8s指数退避，不设置独立elapsed deadline；
 - `CodexSubscriptionCompletionClientFactory`：exact intercept 新 kind，验证 canonical surface/base 与 forbidden key；
-- `GalateaCodexSubscriptionComposition`：只有启用新 kind 时才要求 exact one user、exact one Codex connection 和
-  explicit loopback `listenUrls`，并在 server bind/client creation 前 fail closed；Codex mode 还会替换默认可 reload
-  的 `Kestrel:Endpoints` loader，以 code-owned `Listen` endpoints 绑定实际 loopback，防止 appsettings、环境变量或
-  reload 覆盖 `UseUrls` 安全边界。
+- `GalateaCodexSubscriptionComposition`：2026-09-12 移除 Codex 专属 loopback listener 和 Kestrel loader 接管，所有 provider 复用普通 ASP.NET 监听配置。
 
 Galatea 的 Host 环境变量为：
 

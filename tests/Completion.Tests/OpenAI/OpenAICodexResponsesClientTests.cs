@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
@@ -309,7 +310,7 @@ public sealed class OpenAICodexResponsesClientTests {
         ));
 
         Assert.Equal(expectedReason, exception.Reason);
-        Assert.DoesNotContain(
+        Assert.Contains(
             "PROVIDER_ERROR_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
@@ -318,6 +319,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Theory]
+    [InlineData(401, "openai.codex.authentication-rejected")]
     [InlineData(403, "openai.codex.access-denied")]
     [InlineData(429, "openai.codex.rate-limited")]
     public async Task StreamCompletionAsync_AuthoritativePreStreamStatusIsTypedKnownRejection(
@@ -380,13 +382,13 @@ public sealed class OpenAICodexResponsesClientTests {
             exception.Termination.ProviderReason
         );
         Assert.Equal([$"http-status={statusCode}"], exception.Errors);
-        Assert.Null(exception.InnerException);
-        Assert.DoesNotContain(
+        Assert.IsType<OpenAICodexResponsesException>(exception.InnerException);
+        Assert.Contains(
             "PROVIDER_MESSAGE_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(
+        Assert.Contains(
             "ASCII_SECRET",
             exception.ToString(),
             StringComparison.Ordinal
@@ -406,7 +408,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_NonSuccessKeepsProviderMetadataOutOfExceptionTextAndConsumesBodyForRawTee() {
+    public async Task StreamCompletionAsync_NonSuccessPreservesBodyAndMetadataInExceptionAndRawTee() {
         const string rawBody =
             "{\"error\":{\"message\":\"PROMPT_OR_ACCOUNT_CANARY\","
             + "\"code\":\"ASCII_SECRET_CODE_CANARY\","
@@ -459,22 +461,22 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Equal("ASCII_SECRET_TYPE_CANARY", exception.ProviderErrorType);
         Assert.Equal("$ASCII_SECRET_PARAM_CANARY", exception.ProviderErrorParameter);
         Assert.Equal("ASCII_SECRET_REQUEST_CANARY", exception.ProviderRequestId);
-        Assert.DoesNotContain(
+        Assert.Contains(
             "ASCII_SECRET",
             exception.Message,
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(
+        Assert.Contains(
             "ASCII_SECRET",
             exception.ToString(),
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(
+        Assert.Contains(
             "PROMPT_OR_ACCOUNT_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(
+        Assert.Contains(
             "ACCESS_TOKEN_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
@@ -525,7 +527,7 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Null(exception.ProviderErrorCode);
         Assert.Null(exception.ProviderErrorType);
         Assert.Null(exception.ProviderErrorParameter);
-        Assert.DoesNotContain(
+        Assert.Contains(
             "PROVIDER_DETAIL_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
@@ -533,7 +535,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_NonSuccessDropsOversizedBodyDiagnostics() {
+    public async Task StreamCompletionAsync_NonSuccessPreservesLargeBodyDiagnostics() {
         string oversizedBody =
             "{\"error\":{\"message\":\"SECRET_CANARY\","
             + "\"code\":\"unsafe\\ncode\"},\"padding\":\""
@@ -575,11 +577,12 @@ public sealed class OpenAICodexResponsesClientTests {
             CancellationToken.None
         ));
 
-        Assert.Null(exception.ProviderErrorCode);
+        Assert.Equal("unsafe\ncode", exception.ProviderErrorCode);
         Assert.Null(exception.ProviderErrorType);
         Assert.Null(exception.ProviderErrorParameter);
-        Assert.Null(exception.ProviderRequestId);
-        Assert.DoesNotContain(
+        Assert.Equal("unsafe@request", exception.ProviderRequestId);
+        Assert.Contains(oversizedBody, exception.Message);
+        Assert.Contains(
             "SECRET_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
@@ -587,7 +590,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_NonSuccessDropsUnsafeDiagnosticTokens() {
+    public async Task StreamCompletionAsync_NonSuccessPreservesDiagnosticTextWithoutCharacterFiltering() {
         const string rawBody =
             "{\"error\":{\"message\":\"MESSAGE_CANARY\","
             + "\"code\":\"UNSAFE CODE CANARY\","
@@ -629,11 +632,11 @@ public sealed class OpenAICodexResponsesClientTests {
             CancellationToken.None
         ));
 
-        Assert.Null(exception.ProviderErrorCode);
-        Assert.Null(exception.ProviderErrorType);
-        Assert.Null(exception.ProviderErrorParameter);
-        Assert.Null(exception.ProviderRequestId);
-        Assert.DoesNotContain(
+        Assert.Equal("UNSAFE CODE CANARY", exception.ProviderErrorCode);
+        Assert.Equal("unsafe\ntype", exception.ProviderErrorType);
+        Assert.Equal("unsafe@param", exception.ProviderErrorParameter);
+        Assert.Equal("unsafe@request", exception.ProviderRequestId);
+        Assert.Contains(
             "CANARY",
             exception.ToString(),
             StringComparison.Ordinal
@@ -641,7 +644,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_SanitizesSseProviderErrorMessage() {
+    public async Task StreamCompletionAsync_PreservesSseProviderErrorMessage() {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
         var handler = new CapturingHandler(_ => EventStreamResponse(
@@ -663,13 +666,13 @@ public sealed class OpenAICodexResponsesClientTests {
         );
 
         Assert.NotNull(result.Errors);
-        Assert.DoesNotContain(
+        Assert.Contains(
             "PROVIDER_ERROR_CANARY",
             string.Join("\n", result.Errors!),
             StringComparison.Ordinal
         );
         Assert.Contains(
-            "ChatGPT Codex response failed.",
+            "PROVIDER_ERROR_CANARY",
             result.Errors!
         );
     }
@@ -711,7 +714,7 @@ public sealed class OpenAICodexResponsesClientTests {
         );
         Assert.Equal("response.refusal", result.Termination.ProviderReason);
         Assert.Equal(
-            "ChatGPT Codex returned a typed refusal.",
+            "OpenAI Responses returned a typed refusal.",
             result.Termination.Detail
         );
         Assert.Equal(refusalBody, result.Message.GetFlattenedText());
@@ -1011,8 +1014,16 @@ public sealed class OpenAICodexResponsesClientTests {
         ));
     }
 
-    [Fact]
-    public async Task StreamCompletionAsync_TransportFailureDoesNotExposeInnerCanary() {
+    [Theory]
+    [InlineData(HttpRequestError.Unknown)]
+    [InlineData(HttpRequestError.NameResolutionError)]
+    [InlineData(HttpRequestError.ConnectionError)]
+    [InlineData(HttpRequestError.SecureConnectionError)]
+    [InlineData(HttpRequestError.ProxyTunnelError)]
+    [InlineData((HttpRequestError)123456)]
+    public async Task StreamCompletionAsync_TransportFailurePreservesOriginalExceptionChain(
+        HttpRequestError error
+    ) {
         CodexSubscriptionCredential credential = Credential(
             "ACCESS_CANARY",
             "ACCOUNT_CANARY",
@@ -1020,7 +1031,9 @@ public sealed class OpenAICodexResponsesClientTests {
         );
         var provider = new ScriptedCredentialProvider(_ => credential);
         var handler = new ThrowingHandler(
-            "transport echoed Bearer ACCESS_CANARY ACCOUNT_CANARY"
+            "transport echoed Bearer ACCESS_CANARY ACCOUNT_CANARY",
+            error,
+            new IOException("ACCOUNT_CANARY", new SocketException((int)SocketError.ConnectionRefused))
         );
         using var client = CreateClient(
             provider,
@@ -1040,13 +1053,16 @@ public sealed class OpenAICodexResponsesClientTests {
             OpenAICodexResponsesFailureReason.TransportOutcomeUnknown,
             exception.Reason
         );
-        Assert.Null(exception.InnerException);
-        Assert.DoesNotContain(
+        var inner = Assert.IsType<HttpRequestException>(exception.InnerException);
+        Assert.Equal(error, inner.HttpRequestError);
+        var io = Assert.IsType<IOException>(inner.InnerException);
+        Assert.Equal(SocketError.ConnectionRefused, Assert.IsType<SocketException>(io.InnerException).SocketErrorCode);
+        Assert.Contains(
             "ACCESS_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
         );
-        Assert.DoesNotContain(
+        Assert.Contains(
             "ACCOUNT_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
@@ -1054,7 +1070,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_ProtocolFailureDoesNotExposeEventCanary() {
+    public async Task StreamCompletionAsync_ProtocolFailurePreservesEventDiagnostics() {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
         var handler = new CapturingHandler(_ => EventStreamResponse(
@@ -1070,20 +1086,16 @@ public sealed class OpenAICodexResponsesClientTests {
             credential.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        InvalidDataException exception = await Assert.ThrowsAsync<
+            InvalidDataException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
             CancellationToken.None
         ));
 
-        Assert.Equal(
-            OpenAICodexResponsesFailureReason.ProtocolCompatibilityFailure,
-            exception.Reason
-        );
         Assert.Null(exception.InnerException);
-        Assert.DoesNotContain(
+        Assert.Contains(
             "PROVIDER_EVENT_CANARY",
             exception.ToString(),
             StringComparison.Ordinal
@@ -1144,7 +1156,8 @@ public sealed class OpenAICodexResponsesClientTests {
             OpenAICodexResponsesFailureReason.ProtocolCompatibilityFailure,
             exception.Reason
         );
-        Assert.Contains("content category: json", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("application/json", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("response.completed", exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -1314,8 +1327,10 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Equal(caller.Token, exception.CancellationToken);
     }
 
-    [Fact]
-    public async Task LoggingCompletionClient_DoesNotPersistCredentialOrProviderErrorCanaries() {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LoggingCompletionClient_PreservesProviderErrorsWithoutAddingRequestCredentials(bool httpFailure) {
         const string access = "ACCESS_LOG_CANARY";
         const string account = "ACCOUNT_LOG_CANARY";
         const string providerError = "PROVIDER_LOG_CANARY";
@@ -1325,9 +1340,9 @@ public sealed class OpenAICodexResponsesClientTests {
             type = "response.failed",
             response = new { error = new { message = providerError } }
         });
-        var handler = new CapturingHandler(_ => EventStreamResponse(
-            $"data: {failedEvent}\n\n"
-        ));
+        var handler = new CapturingHandler(_ => httpFailure
+            ? new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent(failedEvent) }
+            : EventStreamResponse($"data: {failedEvent}\n\n"));
         using var client = CreateClient(
             provider,
             handler,
@@ -1351,23 +1366,20 @@ public sealed class OpenAICodexResponsesClientTests {
                 directory
             );
 
-            _ = await logging.StreamCompletionAsync(
-                Request(),
-                observer: null,
-                CancellationToken.None
-            );
+            if (httpFailure) {
+                await Assert.ThrowsAsync<CompletionRequestRejectedException>(() =>
+                    logging.StreamCompletionAsync(Request(), observer: null, CancellationToken.None));
+            }
+            else {
+                _ = await logging.StreamCompletionAsync(Request(), observer: null, CancellationToken.None);
+            }
 
             string log = File.ReadAllText(
                 Assert.Single(logging.WrittenCallLogPaths)
             );
             Assert.DoesNotContain(access, log, StringComparison.Ordinal);
             Assert.DoesNotContain(account, log, StringComparison.Ordinal);
-            Assert.DoesNotContain(providerError, log, StringComparison.Ordinal);
-            Assert.Contains(
-                "ChatGPT Codex response failed.",
-                log,
-                StringComparison.Ordinal
-            );
+            Assert.Contains(providerError, log, StringComparison.Ordinal);
         }
         finally {
             Directory.Delete(directory, recursive: true);
@@ -1585,11 +1597,14 @@ public sealed class OpenAICodexResponsesClientTests {
         }
     }
 
-    private sealed class ThrowingHandler(string message) : HttpMessageHandler {
+    private sealed class ThrowingHandler(
+        string message, HttpRequestError error = HttpRequestError.Unknown,
+        Exception? inner = null
+    ) : HttpMessageHandler {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken
-        ) => throw new HttpRequestException(message);
+        ) => throw new HttpRequestException(error, message, inner);
     }
 
     private sealed class GateBlockingHandler : HttpMessageHandler {

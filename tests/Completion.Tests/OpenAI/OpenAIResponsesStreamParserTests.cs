@@ -739,11 +739,9 @@ public sealed class OpenAIResponsesStreamParserTests {
     }
 
     [Fact]
-    public void ParseEvent_ResponseIncompleteFinalOnlyRefusalUsesSanitizedMetadataAndTransientText() {
+    public void ParseEvent_ResponseIncompleteFinalOnlyRefusalUsesTypedMetadataAndTransientText() {
         const string refusalBody = "INCOMPLETE_REFUSAL_BODY_ASCII_SECRET_CANARY";
-        var parser = new OpenAIResponsesStreamParser(
-            sanitizeProviderErrors: true
-        );
+        var parser = new OpenAIResponsesStreamParser();
         var aggregator = new CompletionAggregator(DummyInvocation);
         string terminalEvent = System.Text.Json.JsonSerializer.Serialize(new {
             type = "response.incomplete",
@@ -769,7 +767,7 @@ public sealed class OpenAIResponsesStreamParserTests {
         CompletionResult result = aggregator.Build();
         AssertRefusalTermination(
             result,
-            "ChatGPT Codex returned a typed refusal."
+            "OpenAI Responses returned a typed refusal."
         );
         Assert.Equal(refusalBody, result.Message.GetFlattenedText());
         Assert.Null(result.Errors);

@@ -16,7 +16,6 @@ internal sealed class OpenAIResponsesProtocolClientCore {
     private readonly string _apiSpecId;
     private readonly string _providerLabel;
     private readonly string _streamDisplayName;
-    private readonly bool _sanitizeProviderErrors;
     private readonly OpenAIResponsesReasoningMapper _mapReasoningEffort;
     private readonly bool _supportsNativeRequiredNamedToolChoice;
 
@@ -26,8 +25,7 @@ internal sealed class OpenAIResponsesProtocolClientCore {
         string providerLabel,
         string streamDisplayName,
         OpenAIResponsesReasoningMapper mapReasoningEffort,
-        bool supportsNativeRequiredNamedToolChoice,
-        bool sanitizeProviderErrors
+        bool supportsNativeRequiredNamedToolChoice
     ) {
         _requestOptions = requestOptions
             ?? throw new ArgumentNullException(nameof(requestOptions));
@@ -53,7 +51,6 @@ internal sealed class OpenAIResponsesProtocolClientCore {
             ?? throw new ArgumentNullException(nameof(mapReasoningEffort));
         _supportsNativeRequiredNamedToolChoice =
             supportsNativeRequiredNamedToolChoice;
-        _sanitizeProviderErrors = sanitizeProviderErrors;
     }
 
     public async Task<CompletionResult> StreamCompletionAsync(
@@ -112,9 +109,7 @@ internal sealed class OpenAIResponsesProtocolClientCore {
                 }
             )
         );
-        var parser = new OpenAIResponsesStreamParser(
-            _sanitizeProviderErrors
-        );
+        var parser = new OpenAIResponsesStreamParser();
         bool stoppedEarly = false;
 
         try {
@@ -163,14 +158,6 @@ internal sealed class OpenAIResponsesProtocolClientCore {
         }
         catch (Exception exception) {
             CleanupAfterFailure(parser, aggregator, exception);
-            if (_sanitizeProviderErrors
-                && exception is InvalidDataException) {
-                throw new OpenAICodexResponsesException(
-                    OpenAICodexResponsesFailureReason
-                        .ProtocolCompatibilityFailure,
-                    "ChatGPT Codex stream violated the expected Responses protocol."
-                );
-            }
             throw;
         }
 

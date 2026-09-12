@@ -20,10 +20,6 @@ namespace Atelia.Completion.OpenAI;
 public sealed class OpenAICodexResponsesClient : ICompletionClient,
     IDisposable {
     private const string DebugCategory = "Provider";
-    private const int MaximumNonSuccessBodyBytes = 16 * 1024;
-    private const int MaximumErrorTokenCharacters = 64;
-    private const int MaximumErrorParameterCharacters = 128;
-    private const int MaximumRequestIdCharacters = 128;
     private const string AuthenticationRejectedReason =
         "openai.codex.authentication-rejected";
     private const string AccessDeniedReason =
@@ -96,8 +92,7 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
             "ChatGPT/Codex Responses",
             "ChatGPT Codex Responses",
             ChatGptCodexResponsesProfile.MapReasoningEffort,
-            supportsNativeRequiredNamedToolChoice: false,
-            sanitizeProviderErrors: true
+            supportsNativeRequiredNamedToolChoice: false
         );
 
         DebugUtil.Info(
@@ -181,18 +176,17 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
                 cancellationToken
             ).ConfigureAwait(false);
             if (response.StatusCode is HttpStatusCode.Unauthorized) {
-                response.Dispose();
-                CodexSubscriptionCredential? reloaded =
-                    await ReloadAfterUnauthorizedAsync(
-                        credential,
-                        cancellationToken
+                CodexSubscriptionCredential? reloaded;
+                try {
+                    reloaded = await ReloadAfterUnauthorizedAsync(
+                        credential, cancellationToken
                     ).ConfigureAwait(false);
-                if (reloaded is null) {
-                    throw RequestRejected(
-                        HttpStatusCode.Unauthorized,
-                        AuthenticationRejectedReason
-                    );
+                    if (reloaded is null) {
+                        throw await ClassifyNonSuccessAsync(response, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                 }
+                finally { response.Dispose(); }
                 response = await SendAttemptAsync(
                     body,
                     reloaded,
@@ -219,13 +213,15 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
                     "text/event-stream",
                     StringComparison.OrdinalIgnoreCase
                 )) {
-                response.Dispose();
-                throw Failure(
-                    OpenAICodexResponsesFailureReason
-                        .ProtocolCompatibilityFailure,
-                    "ChatGPT Codex response did not use text/event-stream "
-                        + $"(content category: {ClassifyContentType(mediaType)})."
-                );
+                try {
+                    string responseBody = await response.Content.ReadAsStringAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    throw Failure(
+                        OpenAICodexResponsesFailureReason.ProtocolCompatibilityFailure,
+                        $"ChatGPT Codex response Content-Type was '{response.Content.Headers.ContentType}', expected text/event-stream. Response body: {responseBody}"
+                    );
+                }
+                finally { response.Dispose(); }
             }
             return response;
         }
@@ -287,7 +283,9 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         catch (Exception exception) when (!IsFatal(exception)) {
             throw Failure(
                 OpenAICodexResponsesFailureReason.TransportOutcomeUnknown,
-                "ChatGPT Codex transport failed before a usable streaming response was obtained."
+                "ChatGPT Codex transport failed before a usable streaming response was obtained. "
+                    + exception.Message,
+                innerException: exception
             );
         }
     }
@@ -354,216 +352,74 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         );
     }
 
-    private static async Task<Exception>
-        ClassifyNonSuccessAsync(
-            HttpResponseMessage response,
-            CancellationToken cancellationToken
-        ) {
+    private static async Task<Exception> ClassifyNonSuccessAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken
+    ) {
         HttpStatusCode status = response.StatusCode;
-        BackendFailureDiagnostics diagnostics =
-            await CaptureBackendFailureDiagnosticsAsync(
-                response,
-                cancellationToken
-            ).ConfigureAwait(false);
-        if ((int)status is >= 300 and < 400) {
-            return Failure(
-                OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect,
-                "ChatGPT Codex returned an unexpected redirect; redirects are disabled.",
-                status,
-                diagnostics: diagnostics
+        string body = await response.Content.ReadAsStringAsync(cancellationToken)
+            .ConfigureAwait(false);
+        string? requestId = ReadRequestId(response);
+        string detail = $"ChatGPT Codex request failed with HTTP {(int)status} ({response.ReasonPhrase})."
+            + (requestId is null ? "" : $" Request ID: {requestId}.")
+            + $" Response body: {body}";
+        string? rejectionReason = status switch {
+            HttpStatusCode.Unauthorized => AuthenticationRejectedReason,
+            HttpStatusCode.Forbidden => AccessDeniedReason,
+            HttpStatusCode.TooManyRequests => RateLimitedReason,
+            _ => null
+        };
+        if (rejectionReason is not null) {
+            return new CompletionRequestRejectedException(
+                CompletionTermination.Failed(rejectionReason,
+                    $"ChatGPT Codex rejected the request before streaming with HTTP status {(int)status}."),
+                [$"http-status={(int)status}"],
+                Failure(OpenAICodexResponsesFailureReason.BackendFailure, detail, status)
             );
         }
-        if (status is HttpStatusCode.Unauthorized) {
-            return RequestRejected(
-                status,
-                AuthenticationRejectedReason
-            );
-        }
-        if (status is HttpStatusCode.Forbidden) {
-            return RequestRejected(
-                status,
-                AccessDeniedReason
-            );
-        }
-        if ((int)status == 429) {
-            return RequestRejected(
-                status,
-                RateLimitedReason
-            );
-        }
+
+        BackendFailureDiagnostics diagnostics = ParseBackendFailureDiagnostics(body, requestId);
         return Failure(
-            OpenAICodexResponsesFailureReason.BackendFailure,
-            $"ChatGPT Codex request failed with HTTP status {(int)status}.",
+            (int)status is >= 300 and < 400
+                ? OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect
+                : OpenAICodexResponsesFailureReason.BackendFailure,
+            detail,
             status,
             diagnostics: diagnostics
         );
     }
 
-    private static async Task<BackendFailureDiagnostics>
-        CaptureBackendFailureDiagnosticsAsync(
-            HttpResponseMessage response,
-            CancellationToken cancellationToken
-        ) {
-        string? requestId = ReadSafeRequestId(response);
-        if (response.Content is null
-            || response.Content.Headers.ContentLength
-                is > MaximumNonSuccessBodyBytes) {
-            return new BackendFailureDiagnostics(null, null, null, requestId);
-        }
-
-        byte[] buffer = new byte[MaximumNonSuccessBodyBytes + 1];
+    private static BackendFailureDiagnostics ParseBackendFailureDiagnostics(
+        string body, string? requestId
+    ) {
         try {
-            int length = 0;
-            try {
-                using Stream stream = await response.Content
-                    .ReadAsStreamAsync(cancellationToken)
-                    .ConfigureAwait(false);
-                while (length < buffer.Length) {
-                    int read = await stream.ReadAsync(
-                        buffer.AsMemory(length, buffer.Length - length),
-                        cancellationToken
-                    ).ConfigureAwait(false);
-                    if (read == 0) { break; }
-                    length += read;
-                }
-            }
-            catch (OperationCanceledException) {
-                throw;
-            }
-            catch (Exception exception) when (!IsFatal(exception)) {
-                return new BackendFailureDiagnostics(
-                    null,
-                    null,
-                    null,
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("error", out JsonElement error)
+                && error.ValueKind == JsonValueKind.Object) {
+                return new(
+                    ReadJsonString(error, "code"),
+                    ReadJsonString(error, "type"),
+                    ReadJsonString(error, "param"),
                     requestId
                 );
             }
-
-            if (length > MaximumNonSuccessBodyBytes) {
-                return new BackendFailureDiagnostics(
-                    null,
-                    null,
-                    null,
-                    requestId
-                );
-            }
-
-            using JsonDocument document = JsonDocument.Parse(
-                buffer.AsMemory(0, length),
-                new JsonDocumentOptions {
-                    AllowTrailingCommas = false,
-                    CommentHandling = JsonCommentHandling.Disallow,
-                    MaxDepth = 8
-                }
-            );
-            if (document.RootElement.ValueKind is not JsonValueKind.Object
-                || !document.RootElement.TryGetProperty(
-                    "error",
-                    out JsonElement error)
-                || error.ValueKind is not JsonValueKind.Object) {
-                return new BackendFailureDiagnostics(
-                    null,
-                    null,
-                    null,
-                    requestId
-                );
-            }
-            return new BackendFailureDiagnostics(
-                ReadSafeJsonToken(
-                    error,
-                    "code",
-                    MaximumErrorTokenCharacters
-                ),
-                ReadSafeJsonToken(
-                    error,
-                    "type",
-                    MaximumErrorTokenCharacters
-                ),
-                ReadSafeJsonToken(
-                    error,
-                    "param",
-                    MaximumErrorParameterCharacters
-                ),
-                requestId
-            );
         }
-        catch (JsonException) {
-            return new BackendFailureDiagnostics(null, null, null, requestId);
-        }
-        finally {
-            CryptographicOperations.ZeroMemory(buffer);
-        }
+        catch (JsonException) { /* The complete non-JSON body is already in the exception message. */ }
+        return new(null, null, null, requestId);
     }
 
-    private static string? ReadSafeJsonToken(
-        JsonElement owner,
-        string propertyName,
-        int maximumLength
-    ) {
-        if (!owner.TryGetProperty(propertyName, out JsonElement value)
-            || value.ValueKind is not JsonValueKind.String) {
-            return null;
-        }
-        string? text = value.GetString();
-        return IsSafeDiagnosticToken(text, maximumLength) ? text : null;
-    }
+    private static string? ReadJsonString(JsonElement owner, string propertyName) =>
+        owner.TryGetProperty(propertyName, out JsonElement value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private static string? ReadSafeRequestId(
-        HttpResponseMessage response
-    ) {
-        foreach (string headerName in new[] {
-            "x-request-id",
-            "request-id",
-            "openai-request-id"
-        }) {
-            if (!response.Headers.TryGetValues(
-                    headerName,
-                    out IEnumerable<string>? values)) {
-                continue;
-            }
-            string[] exactValues = values.Take(2).ToArray();
-            if (exactValues.Length == 1
-                && IsSafeDiagnosticToken(
-                    exactValues[0],
-                    MaximumRequestIdCharacters
-                )) {
-                return exactValues[0];
+    private static string? ReadRequestId(HttpResponseMessage response) {
+        foreach (string name in new[] { "x-request-id", "request-id", "openai-request-id" }) {
+            if (response.Headers.TryGetValues(name, out IEnumerable<string>? values)) {
+                return string.Join(", ", values);
             }
         }
         return null;
-    }
-
-    private static bool IsSafeDiagnosticToken(
-        string? value,
-        int maximumLength
-    ) {
-        if (value is not { Length: > 0 }
-            || value.Length > maximumLength) {
-            return false;
-        }
-        return value.All(static character =>
-            char.IsAsciiLetterOrDigit(character)
-            || character is '_' or '-' or '.' or ':' or '/'
-                or '[' or ']' or '$');
-    }
-
-    private static string ClassifyContentType(string? mediaType) {
-        if (string.IsNullOrWhiteSpace(mediaType)) { return "missing"; }
-        if (string.Equals(
-                mediaType,
-                "application/json",
-                StringComparison.OrdinalIgnoreCase
-            )) {
-            return "json";
-        }
-        if (string.Equals(
-                mediaType,
-                "text/html",
-                StringComparison.OrdinalIgnoreCase
-            )) {
-            return "html";
-        }
-        return "other";
     }
 
     private static OpenAICodexResponsesException Failure(
@@ -571,7 +427,8 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         string message,
         HttpStatusCode? statusCode = null,
         TimeSpan? retryAfter = null,
-        BackendFailureDiagnostics? diagnostics = null
+        BackendFailureDiagnostics? diagnostics = null,
+        Exception? innerException = null
     ) => new(
         reason,
         message,
@@ -580,32 +437,9 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         diagnostics?.Code,
         diagnostics?.Type,
         diagnostics?.Parameter,
-        diagnostics?.RequestId
+        diagnostics?.RequestId,
+        innerException
     );
-
-    /// <summary>
-    /// Translates only response statuses that the pinned direct backend has
-    /// authoritatively completed as a pre-stream rejection. This method is
-    /// called before the protocol parser can emit an observer delta. In
-    /// particular, HTTP 400 is intentionally excluded: the calibrated private
-    /// backend currently returns only an unsafe free-form <c>detail</c> field,
-    /// which is insufficient to prove a stable rejection category.
-    /// </summary>
-    private static CompletionRequestRejectedException RequestRejected(
-        HttpStatusCode status,
-        string providerReason
-    ) {
-        // This exception is journaled. Character allowlists are not taint
-        // sanitizers: provider-controlled ASCII can still be a secret. Keep
-        // durable diagnostics strictly adapter-owned and deterministic.
-        string[] errors = [$"http-status={(int)status}"];
-        string detail =
-            $"ChatGPT Codex rejected the request before streaming with HTTP status {(int)status}.";
-        return new CompletionRequestRejectedException(
-            CompletionTermination.Failed(providerReason, detail),
-            errors
-        );
-    }
 
     internal static HttpMessageHandler CreateProductionHandler() =>
         new HttpClientHandler {

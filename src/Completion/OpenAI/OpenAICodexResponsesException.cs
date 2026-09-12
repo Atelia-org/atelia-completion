@@ -18,8 +18,9 @@ public sealed class OpenAICodexResponsesException : Exception {
         string? providerErrorCode = null,
         string? providerErrorType = null,
         string? providerErrorParameter = null,
-        string? providerRequestId = null
-    ) : base(message) {
+        string? providerRequestId = null,
+        Exception? innerException = null
+    ) : base(message, innerException) {
         Reason = reason;
         StatusCode = statusCode;
         RetryAfter = retryAfter;
@@ -36,30 +37,22 @@ public sealed class OpenAICodexResponsesException : Exception {
     public TimeSpan? RetryAfter { get; }
 
     /// <summary>
-    /// Strictly bounded opaque provider error token, when the non-success JSON
-    /// body contained an <c>error.code</c> matching the transport character
-    /// policy. It remains provider-controlled and may be sensitive: do not log
-    /// or persist it. It is never included in <see cref="Exception.Message"/>
-    /// or <see cref="Exception.ToString"/>.
+    /// Provider error code from the non-success JSON response, when present.
     /// </summary>
     public string? ProviderErrorCode { get; }
 
     /// <summary>
-    /// Strictly bounded opaque provider error category. It remains
-    /// provider-controlled and may be sensitive; do not log or persist it.
+    /// Provider error category from the non-success JSON response.
     /// </summary>
     public string? ProviderErrorType { get; }
 
     /// <summary>
-    /// Strictly bounded opaque provider parameter path. It remains
-    /// provider-controlled and may be sensitive; do not log or persist it.
+    /// Provider parameter path from the non-success JSON response.
     /// </summary>
     public string? ProviderErrorParameter { get; }
 
     /// <summary>
-    /// Strictly bounded opaque request identifier from a recognized response
-    /// header. It remains provider-controlled and may be sensitive; do not log
-    /// or persist it.
+    /// Request identifier from a recognized response header.
     /// </summary>
     public string? ProviderRequestId { get; }
 

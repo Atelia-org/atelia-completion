@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -358,6 +359,20 @@ public sealed class AnthropicClient : ICompletionClient {
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken
         ).ConfigureAwait(false);
+        // Some Messages-compatible servers do not implement the Models API.
+        // Authentication, transient transport/server errors and malformed successful
+        // responses must still fail instead of silently becoming cached defaults.
+        if (response.StatusCode is HttpStatusCode.NotFound
+            or HttpStatusCode.MethodNotAllowed
+            or HttpStatusCode.NotImplemented) {
+            cancellationToken.ThrowIfCancellationRequested();
+            int fallback = GetFallbackMaximumTokens(modelId);
+            DebugUtil.Warning(
+                DebugCategory,
+                $"[Anthropic] Model capability endpoint unavailable (HTTP {(int)response.StatusCode}); using fallback max_tokens={fallback}."
+            );
+            return fallback;
+        }
         using JsonDocument document = await ProviderModelCapabilityResponse
             .ReadJsonObjectAsync(
                 response,
@@ -370,6 +385,16 @@ public sealed class AnthropicClient : ICompletionClient {
             "Anthropic"
         );
     }
+
+    // Standard Messages output limits (no Batch/beta extension), checked 2026-09-14:
+    // https://platform.claude.com/docs/en/models/overview
+    // https://platform.claude.com/docs/en/build-with-claude/streaming (max_tokens=128000)
+    // Exact IDs only: aliases and future models keep the conservative fallback.
+    private static int GetFallbackMaximumTokens(string modelId) => modelId switch {
+        "claude-opus-4-6" or "claude-opus-4-7" or "claude-opus-4-8"
+            or "claude-opus-5" => 128_000,
+        _ => 32_768
+    };
 
     private HttpRequestMessage CreateModelInfoRequest(string modelId) {
         var request = new HttpRequestMessage(

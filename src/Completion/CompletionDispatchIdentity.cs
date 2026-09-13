@@ -111,6 +111,8 @@ public static class CompletionDispatchIdentityFactory {
     private static string ResolveOutputLimitMappingId(
         CompletionConnectionConfig connection
     ) => connection.Kind.Trim().ToLowerInvariant() switch {
+        // Missing-endpoint fallback only enables previously rejected requests;
+        // successful model-info projections are unchanged. Preserve frozen bindings.
         "anthropic" => "anthropic-model-info-max-tokens-v1",
         "gemini" => "gemini-model-output-token-limit-v1",
         _ => "provider-output-limit-omitted-v1"

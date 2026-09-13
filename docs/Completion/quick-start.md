@@ -281,7 +281,7 @@ dotnet test tests/Atelia.LiveContextProto.Tests/Atelia.LiveContextProto.Tests.cs
 
 - 本地 `sglang` 服务已经监听 `http://localhost:8000/`
 - 该端点同时支持 OpenAI Chat 与 Anthropic Messages
-- Anthropic surface 还需支持 `GET /v1/models/{modelId}` 并返回正整数 `max_tokens`；没有静态 fallback
+- Anthropic surface 优先通过 `GET /v1/models/{modelId}` 返回正整数 `max_tokens`；接口返回 404/405/501 时使用下文的内置 fallback
 - 本地服务不校验 `model-id` 与 `api-key`，因此测试中的占位值不会影响运行
 
 推荐把它视为**显式运行的本地集成测试**，而不是默认快速单测：
@@ -322,8 +322,8 @@ adapter 内字符串搜索表达 boundary。
 
 **有意不支持 output-token cap**：`CompletionRequest` 与 strict connections V2 都不提供
 `MaxTokens` / `MaxOutputTokens` 一类数字。省略字段即可表达不限量/模型最大值的 provider wire 一律省略；必须
-显式发送数字才能得到该语义时，client 先查询 exact `ModelId` 的官方 model capability，并且只发送 provider
-报告的模型最大值。这里不会再引入
+显式发送数字才能得到该语义时，client 优先查询 exact `ModelId` 的 model capability，发送 provider
+报告的模型最大值；Anthropic 能力接口缺失时使用下文的内置 fallback。这里不会再引入
 per-request、per-connection 或换名后的本地输出预算，避免把已经计费的生成截断成不可用结果。V1
 connections manifest 会被拒绝，V2 中残留的 `maxTokens`（包括 `null`）也会作为 unknown property 被拒绝。
 
@@ -640,8 +640,18 @@ new AnthropicClient(
 走真·Anthropic 时，用 `CompletionHttpTransportFactory.CreateLiveClient(new Uri("https://api.anthropic.com/"))` 创建 `HttpClient`，再把真 key 给 `apiKey`。`ApiSpecId == "messages-v1"`。
 
 Anthropic Messages 的 `max_tokens` 是必填字段。client 在首次使用某个 exact `ModelId` 时先调用
-`GET /v1/models/{modelId}`，严格读取 `ModelInfo.max_tokens`，成功后才发送 Messages POST；成功值按 client
-lifetime/exact id 缓存，并发查询 one-flight，失败或取消不会污染缓存。没有静态 fallback，也没有调用方数字配置。
+`GET /v1/models/{modelId}`，严格读取 `ModelInfo.max_tokens`。当能力接口返回 404、405 或 501 时，改用代码内置回退值：
+
+- 精确 ID `claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`：`128000`。
+- 其他 ID（包括未经核实的别名）：`32768`（32K）。
+
+映射依据是 [官方模型说明](https://platform.claude.com/docs/en/models/overview) 的普通输出上限与
+[官方流式示例](https://platform.claude.com/docs/en/build-with-claude/streaming) 的 `max_tokens=128000`
+（核实于 2026-09-14）；不采用 Batch/beta 扩展上限。回退值不保证等于中转站实际最大值。
+Provider 返回的有效值始终优先。查询值和回退值均按 client lifetime/exact id 缓存，并发查询 one-flight；
+回退会记录 Warning。其他 HTTP 错误、网络错误、取消或畸形成功响应仍失败，不发送 Messages POST，也不缓存为回退值。
+没有调用方数字配置。该回退只扩展原先因能力接口缺失而失败的路径，原有成功请求的转换不变，因此保留
+`anthropic-model-info-max-tokens-v1` identity，让旧冻结请求仍可精确绑定；其他 fingerprint 不匹配仍拒绝恢复。
 
 **Adaptive thinking**：`ProviderDefault` 不发送显式控制，`Disabled` 发送 `thinking.type=disabled`，`Low`～`Max` 发送 `thinking.type=adaptive`、`display=summarized` 与对应的 `output_config.effort`。开启后：
 

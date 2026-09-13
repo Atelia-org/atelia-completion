@@ -175,7 +175,7 @@ public sealed class ProviderModelMaximumTests {
             CancellationToken.None
         );
         _ = await client.StreamCompletionAsync(
-            Request("claude-other"),
+            Request("claude-opus-5"),
             null,
             CancellationToken.None
         );
@@ -209,6 +209,112 @@ public sealed class ProviderModelMaximumTests {
                 );
             }
         );
+    }
+
+    [Fact]
+    public async Task Anthropic_PreFallbackFrozenIdentityBindsAndExecutesAfterCapability404() {
+        var handler = new RecordingHandler((request, _) => Task.FromResult(
+            request.Method == HttpMethod.Get
+                ? new HttpResponseMessage(HttpStatusCode.NotFound) {
+                    Content = new StringContent("404 page not found")
+                }
+                : AnthropicCompletionResponse()
+        ));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+        var connection = new CompletionConnectionConfig(
+            Id: "opus4-6",
+            Kind: "anthropic",
+            ModelId: "claude-opus-4-6",
+            CompletionSurfaceId: "anthropic",
+            BaseAddress: "https://provider.example/"
+        );
+        using var registry = new CompletionConnectionRegistry(
+            new CompletionConnectionsFileConfig([connection], connection.Id),
+            new FixedClientFactory(client)
+        );
+        var frozen = CompletionDispatchIdentityFactory.Create(connection, client) with {
+            // Golden identity from the model-info-only implementation before fallback.
+            RequestAdapterFingerprint =
+                "sha256:4d984ecac3a0632e43ba412b201bc541f7fa7d7b6ffcceeaba4f618338e5cba9"
+        };
+
+        var bound = Assert.IsType<CompletionDispatchBindingResult.Bound>(
+            registry.BindExact(frozen)
+        );
+        CompletionResult result = await bound.Client.StreamCompletionAsync(
+            Request(connection.ModelId), null, CancellationToken.None
+        );
+
+        Assert.True(result.Termination.IsSuccess);
+        Assert.Equal(
+            [HttpMethod.Get, HttpMethod.Post],
+            handler.Requests.Select(static request => request.Method)
+        );
+        using var body = JsonDocument.Parse(handler.Requests.Last().Body!);
+        Assert.Equal(128_000, body.RootElement.GetProperty("max_tokens").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(404, "claude-opus-4-6", 128_000)]
+    [InlineData(404, "claude-opus-4-7", 128_000)]
+    [InlineData(404, "claude-opus-4-8", 128_000)]
+    [InlineData(404, "claude-opus-5", 128_000)]
+    [InlineData(404, "unknown-model", 32_768)]
+    [InlineData(405, "claude-opus-5", 128_000)]
+    [InlineData(501, "unknown-model", 32_768)]
+    [InlineData(404, "claude-opus-5-custom", 32_768)]
+    public async Task Anthropic_MissingModelsEndpointUsesCachedFallback(
+        int status, string modelId, int expectedMaximum
+    ) {
+        var handler = new RecordingHandler((request, _) => Task.FromResult(
+            request.Method == HttpMethod.Get
+                ? new HttpResponseMessage((HttpStatusCode)status) {
+                    Content = new StringContent("404 page not found")
+                }
+                : AnthropicCompletionResponse()
+        ));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        for (int i = 0; i < 2; i++) {
+            _ = await client.StreamCompletionAsync(
+                Request(modelId), null, CancellationToken.None
+            );
+        }
+
+        Assert.Equal(
+            [HttpMethod.Get, HttpMethod.Post, HttpMethod.Post],
+            handler.Requests.Select(static request => request.Method)
+        );
+        foreach (var post in handler.Requests.Where(
+            static request => request.Method == HttpMethod.Post
+        )) {
+            using var body = JsonDocument.Parse(post.Body!);
+            Assert.Equal(expectedMaximum, body.RootElement.GetProperty("max_tokens").GetInt32());
+            Assert.Equal(modelId, body.RootElement.GetProperty("model").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(429)]
+    [InlineData(500)]
+    [InlineData(503)]
+    public async Task Anthropic_OtherCapabilityErrorsDoNotFallBack(int status) {
+        var handler = new RecordingHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage((HttpStatusCode)status)
+        ));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.StreamCompletionAsync(Request("claude-opus-5"), null, CancellationToken.None)
+        );
+
+        Assert.Equal((HttpStatusCode)status, exception.StatusCode);
+        Assert.Equal(HttpMethod.Get, Assert.Single(handler.Requests).Method);
     }
 
     [Theory]
@@ -546,6 +652,10 @@ public sealed class ProviderModelMaximumTests {
             "text/event-stream"
         )
     };
+
+    private sealed class FixedClientFactory(ICompletionClient client) : ICompletionClientFactory {
+        public ICompletionClient Create(CompletionConnectionConfig connection) => client;
+    }
 
     private sealed class RecordingHandler(
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>

@@ -6,7 +6,7 @@ namespace Atelia.Completion.Tests;
 
 public sealed class CompletionDispatchIdentityTests {
     [Fact]
-    public void CreatePreservesWireFingerprintsAndExcludesSecrets() {
+    public void CreatePreservesConnectionIdentityAndExcludesSecrets() {
         CompletionConnectionConfig connection = CreateConnection();
         var client = new IdentityCompletionClient(
             "client-a",
@@ -38,31 +38,15 @@ public sealed class CompletionDispatchIdentityTests {
             + "da4e5c52666959b02dceb9eaaf88275e",
             identity.ConnectionFingerprint
         );
-        Assert.Equal(
-            "sha256:"
-            + "3fa2e051a2424462acd1d2c7096000d9"
-            + "aad88ce524185a5886a87a5ebed4bf72",
-            identity.RequestAdapterFingerprint
-        );
         Assert.Equal(identity, changedSecrets);
     }
 
     [Fact]
-    public void FingerprintsCoverEverySemanticFieldFamily() {
+    public void ConnectionFingerprintCoversEverySemanticFieldFamily() {
         CompletionConnectionConfig connection = CreateConnection();
-        var client = new IdentityCompletionClient(
-            "client-a",
-            "api-a"
-        );
         string connectionBaseline =
             CompletionDispatchIdentityFactory
                 .ComputeConnectionFingerprint(connection);
-        string adapterBaseline =
-            CompletionDispatchIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    client,
-                    connection
-                );
         string[] connectionVariants = [
             CompletionDispatchIdentityFactory
                 .ComputeConnectionFingerprint(
@@ -95,37 +79,6 @@ public sealed class CompletionDispatchIdentityTests {
                     }
                 )
         ];
-        string[] adapterVariants = [
-            CompletionDispatchIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    new IdentityCompletionClient(
-                        "client-b",
-                        "api-a"
-                    ),
-                    connection
-                ),
-            CompletionDispatchIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    new IdentityCompletionClient(
-                        "client-a",
-                        "api-b"
-                    ),
-                    connection
-                ),
-            CompletionDispatchIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    client,
-                    connection with { Kind = "kind-b" }
-                ),
-            CompletionDispatchIdentityFactory
-                .ComputeRequestAdapterFingerprint(
-                    client,
-                    connection with {
-                        CompletionSurfaceId = "surface-b"
-                    }
-                )
-        ];
-
         Assert.All(
             connectionVariants,
             fingerprint => Assert.NotEqual(
@@ -137,26 +90,14 @@ public sealed class CompletionDispatchIdentityTests {
             connectionVariants.Length,
             connectionVariants.Distinct(StringComparer.Ordinal).Count()
         );
-        Assert.All(
-            adapterVariants,
-            fingerprint => Assert.NotEqual(
-                adapterBaseline,
-                fingerprint
-            )
-        );
-        Assert.Equal(
-            adapterVariants.Length,
-            adapterVariants.Distinct(StringComparer.Ordinal).Count()
-        );
     }
 
     [Fact]
-    public void FingerprintsExcludeAnthropicPromptCacheTtlOperationalPolicy() {
+    public void ConnectionFingerprintExcludesAnthropicPromptCacheTtlOperationalPolicy() {
         CompletionConnectionConfig connection = CreateConnection() with {
             Kind = "anthropic",
             CompletionSurfaceId = "anthropic"
         };
-        var client = new IdentityCompletionClient("client-a", "api-a");
         CompletionConnectionConfig changedTtl = connection with {
             AnthropicPromptCacheTtl = AnthropicPromptCacheTtl.OneHour
         };
@@ -168,101 +109,6 @@ public sealed class CompletionDispatchIdentityTests {
             CompletionDispatchIdentityFactory.ComputeConnectionFingerprint(
                 changedTtl
             )
-        );
-        Assert.Equal(
-            CompletionDispatchIdentityFactory.ComputeRequestAdapterFingerprint(
-                client,
-                connection
-            ),
-            CompletionDispatchIdentityFactory.ComputeRequestAdapterFingerprint(
-                client,
-                changedTtl
-            )
-        );
-    }
-
-    [Theory]
-    [InlineData("openai-codex-responses", "chatgpt.com",
-        "sha256:ee134d2333b8a9ef58cbf2c055bef3b70826d0c038b8ad805db81a1f2c296df1")]
-    [InlineData("openai-responses", "api.openai.com",
-        "sha256:2a9f48b1d2896e90a877420859f745341ddb92186d3a46f36c17abc4917c7d98")]
-    public void ResponsesNativeReplayHasVersionedRequestProjectionIdentity(
-        string kind, string clientName, string expectedFingerprint) {
-        CompletionConnectionConfig connection = CreateConnection() with {
-            Kind = kind,
-            CompletionSurfaceId = kind,
-            ApiKey = null,
-            ApiKeyEnv = null
-        };
-        var client = new IdentityCompletionClient(
-            clientName,
-            kind + "-v2"
-        );
-
-        string fingerprint = CompletionDispatchIdentityFactory
-            .ComputeRequestAdapterFingerprint(client, connection);
-
-        Assert.Equal(expectedFingerprint, fingerprint);
-    }
-
-    [Theory]
-    [InlineData("openai-codex-responses", "chatgpt.com",
-        "sha256:8c256736bee867f3e135ff8a61b2d8a85438cae327f3299363cd03910f982fc0")]
-    [InlineData("openai-responses", "api.openai.com",
-        "sha256:a785a82d3793d4a43c0ea1ef0f74b34a6e670c33bc9ae4c6f4c82f3027b37321")]
-    public void BindExactRejectsPreviousResponsesProjectionWithoutChangingApiSpecId(
-        string kind, string clientName, string previousFingerprint) {
-        CompletionConnectionConfig connection = CreateConnection() with {
-            Kind = kind,
-            CompletionSurfaceId = kind
-        };
-        var factory = new RecordingClientFactory(
-            new IdentityCompletionClient(clientName, kind + "-v2"));
-        using var registry = CreateRegistry(connection, factory);
-        CompletionDispatchIdentity required = CompletionDispatchIdentityFactory.Create(
-            connection, factory.Client) with {
-            RequestAdapterFingerprint = previousFingerprint
-        };
-
-        var unavailable = Assert.IsType<CompletionDispatchBindingResult.Unavailable>(
-            registry.BindExact(required));
-
-        Assert.Equal(CompletionDispatchBindingUnavailableReason
-            .RequestAdapterFingerprintMismatch, unavailable.Reason);
-        Assert.Equal(1, factory.CallCount);
-    }
-
-    [Fact]
-    public void RequiredProviderMaximumPoliciesHaveVersionedAdapterIdentities() {
-        var client = new IdentityCompletionClient("client-a", "api-a");
-        CompletionConnectionConfig baseline = CreateConnection();
-
-        string anthropic = CompletionDispatchIdentityFactory
-            .ComputeRequestAdapterFingerprint(
-                client,
-                baseline with {
-                    Kind = "anthropic",
-                    CompletionSurfaceId = "anthropic"
-                }
-            );
-        string gemini = CompletionDispatchIdentityFactory
-            .ComputeRequestAdapterFingerprint(
-                client,
-                baseline with {
-                    Kind = "gemini",
-                    CompletionSurfaceId = "gemini"
-                }
-            );
-
-        Assert.Equal(
-            "sha256:a8ffdd492cb8221235347430e3294ccd"
-                + "156ee89eedc997ebd7d207c22029a717",
-            anthropic
-        );
-        Assert.Equal(
-            "sha256:7aeadb29245f92e37ecc3c1db121323c"
-                + "dd65c52b852b43f5fa4aa5fb73e795ca",
-            gemini
         );
     }
 
@@ -293,6 +139,9 @@ public sealed class CompletionDispatchIdentityTests {
     [Theory]
     [InlineData("kind", CompletionDispatchBindingUnavailableReason.ConnectionKindMismatch)]
     [InlineData("metadata", CompletionDispatchBindingUnavailableReason.ConnectionFingerprintMismatch)]
+    [InlineData("endpoint", CompletionDispatchBindingUnavailableReason.ConnectionFingerprintMismatch)]
+    [InlineData("reasoning", CompletionDispatchBindingUnavailableReason.ConnectionFingerprintMismatch)]
+    [InlineData("surface", CompletionDispatchBindingUnavailableReason.ConnectionFingerprintMismatch)]
     public void BindExactConnectionMismatchDoesNotCreateClient(
         string mismatch,
         CompletionDispatchBindingUnavailableReason expectedReason
@@ -302,9 +151,14 @@ public sealed class CompletionDispatchIdentityTests {
             new IdentityCompletionClient("client-a", "api-a")
         );
         using var registry = CreateRegistry(connection, factory);
-        CompletionConnectionConfig changed = mismatch == "kind"
-            ? connection with { Kind = "kind-b" }
-            : connection with { ModelId = "model-b" };
+        CompletionConnectionConfig changed = mismatch switch {
+            "kind" => connection with { Kind = "kind-b" },
+            "metadata" => connection with { ModelId = "model-b" },
+            "endpoint" => connection with { BaseAddress = "https://b.example/v1/" },
+            "reasoning" => connection with { ReasoningEffort = CompletionReasoningEffort.High },
+            "surface" => connection with { CompletionSurfaceId = "surface-b" },
+            _ => throw new InvalidOperationException()
+        };
         CompletionDispatchIdentity required =
             CompletionDispatchIdentityFactory.Create(
                 changed,
@@ -344,8 +198,7 @@ public sealed class CompletionDispatchIdentityTests {
     [Theory]
     [InlineData("name", CompletionDispatchBindingUnavailableReason.ClientNameMismatch)]
     [InlineData("api", CompletionDispatchBindingUnavailableReason.ClientApiSpecIdMismatch)]
-    [InlineData("fingerprint", CompletionDispatchBindingUnavailableReason.RequestAdapterFingerprintMismatch)]
-    public void BindExactReportsAdapterMismatch(
+    public void BindExactReportsClientMismatch(
         string mismatch,
         CompletionDispatchBindingUnavailableReason expectedReason
     ) {
@@ -364,11 +217,6 @@ public sealed class CompletionDispatchIdentityTests {
         required = mismatch switch {
             "name" => required with { ClientName = "client-b" },
             "api" => required with { ApiSpecId = "api-b" },
-            "fingerprint" => required with {
-                RequestAdapterFingerprint =
-                    "sha256:00000000000000000000000000000000"
-                    + "00000000000000000000000000000000"
-            },
             _ => throw new InvalidOperationException()
         };
 

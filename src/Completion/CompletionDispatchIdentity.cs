@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 
 namespace Atelia.Completion;
@@ -14,13 +13,12 @@ public sealed record CompletionDispatchIdentity(
     string Kind,
     string ConnectionFingerprint,
     string ClientName,
-    string ApiSpecId,
-    string RequestAdapterFingerprint
+    string ApiSpecId
 );
 
 /// <summary>
 /// Creates stable dispatch identities from normalized connection metadata and
-/// the concrete request adapter selected for that connection.
+/// the provider protocol selected for that connection.
 /// </summary>
 public static class CompletionDispatchIdentityFactory {
     private static readonly JsonSerializerOptions JsonOptions = new() {
@@ -38,8 +36,7 @@ public static class CompletionDispatchIdentityFactory {
             connection.Kind,
             ComputeConnectionFingerprint(connection),
             client.Name,
-            client.ApiSpecId,
-            ComputeRequestAdapterFingerprint(client, connection)
+            client.ApiSpecId
         );
     }
 
@@ -59,28 +56,8 @@ public static class CompletionDispatchIdentityFactory {
         );
     }
 
-    // AnthropicPromptCacheTtl is intentionally excluded from both durable
-    // fingerprints. It changes cache cost/retention, not the logical model
-    // request, and may later vary between tool-loop and human-wait phases.
-
-    public static string ComputeRequestAdapterFingerprint(
-        ICompletionClient client,
-        CompletionConnectionConfig connection
-    ) {
-        ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(connection);
-        return ComputeFingerprint(
-            new RequestAdapterFingerprintDto(
-                client.Name,
-                client.ApiSpecId,
-                connection.Kind,
-                connection.CompletionSurfaceId,
-                ResolveReasoningMappingId(connection),
-                ResolveOutputLimitMappingId(connection),
-                ResolveRequestProjectionMappingId(connection)
-            )
-        );
-    }
+    // Prompt cache retention is operational policy, not part of the frozen route.
+    // Adapter fixes use the current implementation; no manual mapping label gates recovery.
 
     private static string ComputeFingerprint<T>(T value) {
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(
@@ -92,43 +69,6 @@ public static class CompletionDispatchIdentityFactory {
         )}";
     }
 
-    private static string ResolveReasoningMappingId(
-        CompletionConnectionConfig connection
-    ) => connection.Kind.Trim().ToLowerInvariant() switch {
-        "anthropic" => "anthropic-adaptive-effort-v1",
-        "openai-responses" => "openai-responses-effort-v1",
-        "openai-codex-responses" =>
-            "openai-codex-responses-effort-v1",
-        "openai-chat" => connection.CompletionSurfaceId switch {
-            "openai-chat/strict" => "openai-chat-effort-v1",
-            "openai-chat/qwen-sglang" => "qwen-thinking-switch-v1",
-            "openai-chat/deepseek-v4" => "deepseek-v4-effort-v1",
-            _ => "reasoning-control-unsupported-v1"
-        },
-        _ => "reasoning-control-unsupported-v1"
-    };
-
-    private static string ResolveOutputLimitMappingId(
-        CompletionConnectionConfig connection
-    ) => connection.Kind.Trim().ToLowerInvariant() switch {
-        // Missing-endpoint fallback only enables previously rejected requests;
-        // successful model-info projections are unchanged. Preserve frozen bindings.
-        "anthropic" => "anthropic-model-info-max-tokens-v1",
-        "gemini" => "gemini-model-output-token-limit-v1",
-        _ => "provider-output-limit-omitted-v1"
-    };
-
-    // Projection policy is versioned separately from the provider protocol and
-    // native reasoning carrier identity. Changing a successful request's wire
-    // projection must invalidate a frozen dispatch without rewriting Origin.
-    private static string? ResolveRequestProjectionMappingId(
-        CompletionConnectionConfig connection
-    ) => connection.Kind.Trim().ToLowerInvariant() switch {
-        "openai-responses" or "openai-codex-responses" =>
-            "openai-responses-native-reasoning-replay-v1",
-        _ => null
-    };
-
     private sealed record ConnectionFingerprintDto(
         string ConnectionId,
         string Kind,
@@ -136,17 +76,6 @@ public static class CompletionDispatchIdentityFactory {
         string CompletionSurfaceId,
         string BaseAddress,
         CompletionReasoningEffort ReasoningEffort
-    );
-
-    private sealed record RequestAdapterFingerprintDto(
-        string ClientName,
-        string ClientApiSpecId,
-        string ConnectionKind,
-        string CompletionSurfaceId,
-        string ReasoningMappingId,
-        string OutputLimitMappingId,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        string? RequestProjectionMappingId
     );
 }
 
@@ -156,7 +85,6 @@ public enum CompletionDispatchBindingUnavailableReason {
     ConnectionFingerprintMismatch,
     ClientNameMismatch,
     ClientApiSpecIdMismatch,
-    RequestAdapterFingerprintMismatch,
 }
 
 public abstract record CompletionDispatchBindingResult {

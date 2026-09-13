@@ -212,7 +212,7 @@ public sealed class ProviderModelMaximumTests {
     }
 
     [Fact]
-    public async Task Anthropic_PreFallbackFrozenIdentityBindsAndExecutesAfterCapability404() {
+    public async Task Anthropic_ExactRouteBindsAndExecutesAfterCapability404() {
         var handler = new RecordingHandler((request, _) => Task.FromResult(
             request.Method == HttpMethod.Get
                 ? new HttpResponseMessage(HttpStatusCode.NotFound) {
@@ -233,11 +233,7 @@ public sealed class ProviderModelMaximumTests {
             new CompletionConnectionsFileConfig([connection], connection.Id),
             new FixedClientFactory(client)
         );
-        var frozen = CompletionDispatchIdentityFactory.Create(connection, client) with {
-            // Golden identity from the model-info-only implementation before fallback.
-            RequestAdapterFingerprint =
-                "sha256:4d984ecac3a0632e43ba412b201bc541f7fa7d7b6ffcceeaba4f618338e5cba9"
-        };
+        var frozen = CompletionDispatchIdentityFactory.Create(connection, client);
 
         var bound = Assert.IsType<CompletionDispatchBindingResult.Bound>(
             registry.BindExact(frozen)

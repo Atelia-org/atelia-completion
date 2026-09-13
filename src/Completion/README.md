@@ -47,7 +47,7 @@ terminal到达后才产生non-success result；terminal前EOF、transport failur
 - Anthropic event types and lifecycle：[Anthropic streaming Messages](https://platform.claude.com/docs/en/build-with-claude/streaming#event-types)
 - Gemini response and finish reasons：[Gemini `generateContent` API](https://ai.google.dev/api/generate-content)
 
-## ChatGPT Codex subscription client（Linux MVP）
+## ChatGPT Codex subscription client（Linux / Windows）
 
 `OpenAICodexResponsesClient` 可以直接作为 `ICompletionClient` 使用，不需要启动 local proxy。它只借用 Codex CLI
 file-backed `auth.json` 的当前 access-token snapshot；Codex CLI 仍是唯一 login/refresh/write-back owner。
@@ -74,17 +74,36 @@ CompletionResult result = await client.StreamCompletionAsync(
     observer: null,
     ct
 );
+
+if (result.Termination.Kind == CompletionTerminationKind.Completed) {
+    string text = result.Message.GetFlattenedText();
+    // 将成功完成的正文交给业务层。
+}
+// Incomplete / Failed 应由调用方单独处理，不能把部分正文当作成功结果。
 ```
 
 运行边界：
 
-- 当前只支持 Linux file-backed credential；provider不解释文件owner/mode，只要求操作系统允许当前进程读取一个
-  non-symlink regular file；operator仍应按OpenAI官方建议把`auth.json`视同密码并自行保护；
+- 支持 Linux / Windows file-backed credential。默认读取 `CODEX_HOME` 下的 `auth.json`；未设置时使用
+  `Environment.SpecialFolder.UserProfile` 下的 `.codex/auth.json`。例如 Windows 用户 `gdtut` 的默认路径是
+  `C:\Users\gdtut\.codex\auth.json`，不需要 WSL 或启动 Codex app-server；
+- `CODEX_HOME` 与显式 auth-file override 都必须是绝对路径，并指向 Codex 的普通凭据文件。
+  两个平台使用同一 `.NET File.OpenHandle` 只读实现，正常跟随 symlink/junction，由 OS 解析路径和判断读取权限；
+- provider 不检查或修改 owner/mode/ACL，不承担 no-follow 路径隔离职责。句柄允许 read/write/delete sharing，
+  同一句柄进行有界双读和长度检查，兼容 Codex 原地重写和原子替换；
 - provider 每个 logical attempt 重读 snapshot，但从不 materialize refresh/id token，不 refresh、不写文件；
 - access token 过期或 backend 401 且文件 generation 未变化时，先运行 Codex 让它 refresh，必要时重新 `codex login`；
 - endpoint 固定为 `https://chatgpt.com/backend-api/codex/responses`，它不是公开稳定 API；
 - `originator` 必须诚实稳定，允许构造时覆盖，不要伪装 `codex_cli_rs`、Pi 或 OpenCode；
 - public OpenAI Responses 与 Codex Responses 使用不同 `ApiSpecId`，两边的 provider-native reasoning payload 不能交叉 replay。
+
+文件存储模式见 [OpenAI 官方 credential storage 文档](https://learn.chatgpt.com/docs/auth#credential-storage)。
+仅存于 OS keyring 的凭据不在此 provider 的支持范围；没有 `auth.json` 时返回 `AuthStorageUnavailable`。
+可选的 `JsonLinesCompletionHttpExchangeFileSink` 仍只支持 Linux；Windows 默认调用不依赖 raw exchange 文件日志。
+
+接入 Player 等调用方时，期限由传入的 `CancellationToken` 控制；`CompletionStreamInterruptedException` 表示
+结果不确定，不能透明重试。`CompletionUsage` 中的 `null` 表示该维度未知，`0` 才是明确报告的零；不要为了适配
+profiler 而补零或推算缺失维度。以上语义在 Linux / Windows 相同。
 
 Galatea 接入、connection shape、安全 preflight、环境变量和 live smoke 见
 [`docs/Completion/openai-codex-subscription-client-design.md`](../../docs/Completion/openai-codex-subscription-client-design.md)。

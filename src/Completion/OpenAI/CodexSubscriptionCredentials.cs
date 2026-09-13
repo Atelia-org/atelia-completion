@@ -137,10 +137,9 @@ public sealed class CodexSubscriptionCredential {
 }
 
 public enum CodexSubscriptionCredentialFailureReason {
-    UnsupportedPlatform,
     CredentialPathInvalid,
     AuthStorageUnavailable,
-    CredentialStorageUnsafe,
+    AuthStorageAccessDenied,
     AuthSnapshotTemporarilyUnreadable,
     AuthSnapshotMalformed,
     UnsupportedAuthMode,
@@ -162,16 +161,14 @@ public sealed class CodexSubscriptionCredentialException : Exception {
     private static string GetSafeMessage(
         CodexSubscriptionCredentialFailureReason reason
     ) => reason switch {
-        CodexSubscriptionCredentialFailureReason.UnsupportedPlatform =>
-            "Codex subscription credential file loading is unsupported on this platform.",
         CodexSubscriptionCredentialFailureReason.CredentialPathInvalid =>
             "The Codex subscription credential path is invalid.",
         CodexSubscriptionCredentialFailureReason.AuthStorageUnavailable =>
             "The Codex authentication file is unavailable.",
-        CodexSubscriptionCredentialFailureReason.CredentialStorageUnsafe =>
-            "The Codex authentication path could not be safely opened as a regular non-symlink file.",
+        CodexSubscriptionCredentialFailureReason.AuthStorageAccessDenied =>
+            "The operating system denied read access to the Codex authentication file.",
         CodexSubscriptionCredentialFailureReason.AuthSnapshotTemporarilyUnreadable =>
-            "The Codex authentication snapshot changed while it was being read.",
+            "The Codex authentication snapshot could not be read consistently or is temporarily unavailable.",
         CodexSubscriptionCredentialFailureReason.AuthSnapshotMalformed =>
             "The Codex authentication snapshot is malformed or unsupported.",
         CodexSubscriptionCredentialFailureReason.UnsupportedAuthMode =>

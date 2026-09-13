@@ -1,8 +1,8 @@
 # OpenAI Codex Subscription Client 设计方案
 
-> 状态：Implemented（Borrowed credential MVP；WP-0 至 WP-3 已落地，WP-4 live acceptance 见 §14）  
-> 日期：2026-08-25  
-> 适用范围：`src/Completion`、`tests/Completion.Tests`，以及选择接入该 client 的 Galatea Host composition  
+> 状态：Implemented（Borrowed credential MVP；WP-0 至 WP-3 已落地，WP-4 live acceptance 见 §14）
+> 日期：2026-08-25
+> 适用范围：`src/Completion`、`tests/Completion.Tests`，以及选择接入该 client 的 Galatea Host composition
 > 协议声明：代码已经实现不代表 ChatGPT backend 成为稳定公共 API；该 direct route 仍是版本钉死的 implementation coupling
 
 ## 1. 结论
@@ -269,28 +269,26 @@ domain-separated account-id fingerprint，不是 token hash，不进入 SessionJ
 
 ### 5.2 文件读取边界
 
-Linux first slice 使用 handle-based、component-safe no-follow、bounded reader，不复用普通 `File.ReadAllText`：
+Atelia 是凭据消费者，使用 .NET 普通只读文件访问，不承担 Codex 存储策略与路径安全隔离职责：
 
-- final file 必须是OS允许当前进程读取的regular file；provider不解释owner、file mode或父目录写权限，
-  也不替operator修改权限；
-- 拒绝final symlink/reparse与non-regular file；ancestor component继续使用no-follow打开；
-- `auth.json`包含access token，operator仍应遵循OpenAI官方文档，将其视同密码并通过文件系统、挂载或
-  credential store保护；这项部署责任不由只读consumer的mode检查代替；
+- 使用 `File.OpenHandle(FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)`，
+  由操作系统解析路径和判断访问权限；正常跟随 file/ancestor symlink 与 Windows junction；
+- 不检查 owner、mode、ACL，不修改权限，不提供逐级 no-follow 或防恶意路径替换的保证；
+- 输入应指向 Codex 的普通 `auth.json`。`CODEX_HOME` 与显式 override 必须是绝对路径，不回退到 process CWD；
 - JSON 文件上限 128 KiB，单个 token 上限 64 KiB，strict UTF-8，depth bounded；
 - critical fields 的 duplicate/case-variant duplicate 必须拒绝；未知字段允许忽略以容纳 Codex schema 演进；
-- 先打开并验证受检 credential directory handle，再通过 anchored `openat`/`openat2` 打开 final file；ancestor/final
-  component 都拒绝 symlink，不能用“先 lexical 检查、后按完整 path open”冒充 TOCTOU-safe；
-- 同一个 final handle 完成 stat/read/parse；检测到 truncate/partial write 时最多重新打开一次，仍失败则返回 typed temporary
-  unreadable error；
-- 不在异常中附带 raw JSON、token prefix/hash、raw account id 或完整 credential path；
+- 每次打开后的同一句柄完成长度检查与双读比较。检测到变化最多重新打开一次，仍变化返回 typed temporary
+  unreadable error；原子替换可以让当前调用返回旧的完整 snapshot，下次调用重开后再发布新 generation；
+- 不在异常中附带 raw JSON、token prefix/hash、raw account id、完整 credential path 或底层 I/O exception；
 - 解析后的原始 byte buffer 在 `finally` 清零。
 
-早期实现曾要求owner匹配并仅接受`0400`/`0600`，这会把只读consumer变成operator存储策略的裁判，
-也会拒绝权限位不能表达真实ACL的挂载。当前contract hard-cut为readability + regular/no-follow边界；
-部署侧仍应优先使用private file或OS credential store，但client不再据mode/owner猜测实际可访问主体。
+此 reader 不再包含 Linux/Windows P/Invoke 或平台白名单；Linux / Windows 均使用同一实现。Windows 默认使用
+`UserProfile\.codex\auth.json`，也支持绝对 `CODEX_HOME`。OS keyring 仍不支持；文件不存在返回
+`AuthStorageUnavailable`，访问被拒绝返回 `AuthStorageAccessDenied`，sharing/lock 等 I/O 故障返回
+`AuthSnapshotTemporarilyUnreadable`。这些错误不代表 consumer 应刷新、写回或修复权限。
 
-Windows/keyring 支持不进入 first slice；对应平台必须明确 `PlatformNotSupported` 或 `AuthStorageUnavailable`，不能静默
-退化为宽松读取。
+凭据存储模式见 [OpenAI 官方文档](https://learn.chatgpt.com/docs/auth#credential-storage)。可选 raw exchange
+文件 sink 是独立的诊断写入功能，仍保持 Linux-only 边界；默认 subscription client 不依赖它。
 
 ### 5.3 expiry 与 generation
 
@@ -462,9 +460,10 @@ effort mapping 仍以独立 reasoning mapping id 标识。非 Responses 的 proj
 | 条件 | 行为 |
 |---|---|
 | file missing/keyring-only/logout | `AuthStorageUnavailable` |
-| partial write/暂时不可读 | bounded reopen 一次；仍失败为 `AuthSnapshotTemporarilyUnreadable` |
+| 双读检测到内容变化 | bounded reopen 一次；仍变化为 `AuthSnapshotTemporarilyUnreadable` |
+| sharing/lock 等文件 I/O 故障 | `AuthSnapshotTemporarilyUnreadable` |
 | 非 `chatgpt` auth mode | `UnsupportedAuthMode` |
-| symlink、non-regular或无法安全anchored-open | `CredentialStorageUnsafe` |
+| 操作系统拒绝读取（包括目录被当作文件） | `AuthStorageAccessDenied` |
 | token expired | `AuthOwnerRefreshRequired`，network 前失败 |
 | account mid-process changed | `AuthAccountChanged`，禁止自动切换 |
 | current declaration / historical tool call 的 function name 不满足 Responses profile | converter 在 credential/network 前抛 typed local no-dispatch rejection；只分类这一 exact validator |
@@ -600,7 +599,7 @@ fingerprint 不变。
 - effective credential 未变时 generation 稳定，token/account 变化时递增；
 - Host provisioned account fingerprint mismatch 跨重启 fail closed；
 - 不 materialize refresh token；
-- readable mode/owner、symlink/non-regular、bounds/duplicate/partial-write/expiry tests 通过；
+- readable mode/owner、symlink traversal、directory rejection、bounds/duplicate/partial-write/expiry tests 通过；
 - credential JSON/structured-log/debugger canary 不可见；
 - 测试只使用显式 temp fixture，不探测真实 home。
 
@@ -740,10 +739,11 @@ publish。
 17. public/Codex reasoning cross-replay 拒绝；
 18. client 不主动将认证 header 加入 call log；provider 错误文本保持可见；
 19. manifest/factory/fingerprint/registry lifetime/dispose contract；account fingerprint 跨重启 mismatch；
-20. Linux上不同owner/mode只要OS允许读取就接受；symlink/non-regular拒绝；relative `$CODEX_HOME`与ancestor
-    symlink拒绝；
+20. Linux/Windows 使用同一 managed reader；正常跟随 file/ancestor symlink；Linux 上不同 owner/mode 只要
+    OS 允许读取就接受；relative `$CODEX_HOME` 拒绝；
 21. Codex / 普通 connection 均通过 `listenUrls`、host URLs、`Kestrel:Endpoints` 绑定 `0.0.0.0` 并完成 HTTP 访问；
-22. live smoke 只读 explicit authority file，验证没有复制或 materialize refresh token；Agent Control live acceptance
+22. live smoke 覆盖 explicit authority file 与默认 Codex home，并核对两者 account fingerprint 一致；只读凭据，
+    不复制或 materialize refresh token；Agent Control live acceptance
     锁定 underscore + optional schema 经 `strict:false` 的真实 backend 兼容性；singleton `RequiredNamed` 使用独立
     single-request gate 锁定 `recall_memos` strict tool 经字符串 `required` 的现场同形；
 23. Responses strict capability 递归覆盖 root/nested/array optional、empty object 与
@@ -794,8 +794,8 @@ direct backend 是 drift-prone implementation surface。开始 WP-2 与 opt-in l
 
 2026-08-25 的 Borrowed credential MVP 已落到以下主链：
 
-- `CodexCliAuthFileCredentialProvider`：只读 file-backed Codex `auth.json`，逐路径组件
-  `openat(O_NOFOLLOW)`，同一 fd 双读校验，不解释owner/mode并拒绝symlink/non-regular，永不读取成 managed string 的
+- `CodexCliAuthFileCredentialProvider`：只读 file-backed Codex `auth.json`；2026-09-14 简化为跨平台
+  `.NET File.OpenHandle`，按 OS 规则跟随路径、同一句柄双读校验，不解释 owner/mode。永不读取成 managed string 的
   `refresh_token`/`id_token`，永不 refresh/write-back；
 - `OpenAIResponsesProtocolClientCore`：public Responses 与 Codex sibling client 共用 projection、SSE reader/parser、
   aggregator，同时保持独立 `ApiSpecId` 与 reasoning mapping entry；

@@ -22,16 +22,16 @@ public sealed class OpenAICodexResponsesLiveTests {
     private const string RawLogPathEnv =
         "ATELIA_CODEX_SUBSCRIPTION_LIVE_RAW_LOG";
 
-    [Fact]
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("Category", "LiveE2E")]
-    public async Task LiveE2E_ExplicitCodexAuthFile_ReturnsExpectedText() {
+    public async Task LiveE2E_CodexAuthFile_ReturnsExpectedText(bool useDefaultProvider) {
         if (!string.Equals(
-                Environment.GetEnvironmentVariable(EnableEnv),
-                "1",
-                StringComparison.Ordinal
-            )) {
-            return;
-        }
+            Environment.GetEnvironmentVariable(EnableEnv),
+            "1",
+            StringComparison.Ordinal
+        )) { return; }
 
         string authFile = Environment.GetEnvironmentVariable(AuthFileEnv)
             ?? throw new InvalidOperationException(
@@ -48,9 +48,18 @@ public sealed class OpenAICodexResponsesLiveTests {
             OriginatorEnv
         ) ?? "atelia-live-smoke";
 
-        var provider = new CodexCliAuthFileCredentialProvider(authFile);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var provider = useDefaultProvider
+            ? new CodexCliAuthFileCredentialProvider()
+            : new CodexCliAuthFileCredentialProvider(authFile);
         CodexSubscriptionCredential snapshot =
-            await provider.GetCredentialAsync(CancellationToken.None);
+            await provider.GetCredentialAsync(deadline.Token);
+        if (useDefaultProvider) {
+            // Keep both smoke cases on the explicitly selected account.
+            CodexSubscriptionCredential explicitSnapshot = await new CodexCliAuthFileCredentialProvider(authFile)
+                .GetCredentialAsync(deadline.Token);
+            Assert.Equal(explicitSnapshot.AccountFingerprint, snapshot.AccountFingerprint);
+        }
         using var client = new OpenAICodexResponsesClient(
             provider,
             new OpenAICodexResponsesClientOptions {
@@ -77,7 +86,7 @@ public sealed class OpenAICodexResponsesLiveTests {
         CompletionResult result = await client.StreamCompletionAsync(
             request,
             observer: null,
-            CancellationToken.None
+            deadline.Token
         );
 
         Assert.Equal(
@@ -91,12 +100,10 @@ public sealed class OpenAICodexResponsesLiveTests {
     [Trait("Category", "LiveE2E")]
     public async Task LiveE2E_ExplicitCodexAuthFile_AcceptsAgentControlToolShape() {
         if (!string.Equals(
-                Environment.GetEnvironmentVariable(EnableAgentControlEnv),
-                "1",
-                StringComparison.Ordinal
-            )) {
-            return;
-        }
+            Environment.GetEnvironmentVariable(EnableAgentControlEnv),
+            "1",
+            StringComparison.Ordinal
+        )) { return; }
 
         string authFile = Environment.GetEnvironmentVariable(AuthFileEnv)
             ?? throw new InvalidOperationException(
@@ -169,14 +176,12 @@ public sealed class OpenAICodexResponsesLiveTests {
     [Trait("Category", "LiveE2E")]
     public async Task LiveE2E_SingletonRequiredNamedReturnsNamedToolCall() {
         if (!string.Equals(
-                Environment.GetEnvironmentVariable(
-                    EnableSingletonRequiredNamedEnv
-                ),
-                "1",
-                StringComparison.Ordinal
-            )) {
-            return;
-        }
+            Environment.GetEnvironmentVariable(
+                EnableSingletonRequiredNamedEnv
+            ),
+            "1",
+            StringComparison.Ordinal
+        )) { return; }
 
         string authFile = Environment.GetEnvironmentVariable(AuthFileEnv)
             ?? throw new InvalidOperationException(
@@ -262,9 +267,7 @@ public sealed class OpenAICodexResponsesLiveTests {
         OpenAICodexResponsesClientOptions options,
         string? rawLogPath
     ) {
-        if (rawLogPath is null) {
-            return new OpenAICodexResponsesClient(provider, options);
-        }
+        if (rawLogPath is null) { return new OpenAICodexResponsesClient(provider, options); }
         if (!Path.IsPathFullyQualified(rawLogPath)) {
             throw new InvalidOperationException(
                 $"{RawLogPathEnv} must be an absolute path."
@@ -277,8 +280,8 @@ public sealed class OpenAICodexResponsesLiveTests {
         }
         HttpMessageHandler handler = new CompletionHttpClientBuilder()
             .UsePrimaryHandler(
-                OpenAICodexResponsesClient.CreateProductionHandler()
-            )
+            OpenAICodexResponsesClient.CreateProductionHandler()
+        )
             .AddJsonLinesGoldenLogSink(rawLogPath)
             .BuildHandler();
         return new OpenAICodexResponsesClient(provider, options, handler);
@@ -332,7 +335,8 @@ public sealed class OpenAICodexResponsesLiveTests {
     private static ToolDefinition CreateAgentControlTool() => new(
         "recap_grid_control",
         "Inspect or mutate the admitted RecapGrid Control state. No authority tokens are accepted from the model.",
-        new ToolSchema.Object([
+        new ToolSchema.Object(
+            [
             new ToolSchema.Property(
                 "action",
                 new ToolSchema.Value(
@@ -373,6 +377,7 @@ public sealed class OpenAICodexResponsesLiveTests {
                 ),
                 isRequired: false
             )
-        ])
+        ]
+        )
     );
 }

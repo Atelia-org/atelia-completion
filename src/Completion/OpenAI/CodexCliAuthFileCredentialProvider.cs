@@ -1,7 +1,5 @@
 using System.Buffers.Text;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -58,12 +56,6 @@ public sealed class CodexCliAuthFileCredentialProvider
         CancellationToken cancellationToken = default
     ) {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsLinux()) {
-            throw Failure(
-                CodexSubscriptionCredentialFailureReason.UnsupportedPlatform
-            );
-        }
-
         await _generationGate.WaitAsync(cancellationToken)
             .ConfigureAwait(false);
         try {
@@ -88,9 +80,7 @@ public sealed class CodexCliAuthFileCredentialProvider
                     parsed.AccountId,
                     parsed.Residency,
                     parsed.ExpiresAt
-                )) {
-                return _lastCredential;
-            }
+                )) { return _lastCredential; }
 
             long generation = checked(_lastGeneration + 1);
             CodexSubscriptionCredential credential =
@@ -113,7 +103,6 @@ public sealed class CodexCliAuthFileCredentialProvider
     public override string ToString()
         => nameof(CodexCliAuthFileCredentialProvider);
 
-    [SupportedOSPlatform("linux")]
     private ParsedCredential ReadCoherentCredential(
         CancellationToken cancellationToken
     ) {
@@ -158,27 +147,44 @@ public sealed class CodexCliAuthFileCredentialProvider
         );
     }
 
-    [SupportedOSPlatform("linux")]
     private byte[] ReadOneSnapshot(CancellationToken cancellationToken) {
-        string? directoryPath = Path.GetDirectoryName(_authFilePath);
-        string fileName = Path.GetFileName(_authFilePath);
-        if (string.IsNullOrWhiteSpace(directoryPath)
-            || string.IsNullOrWhiteSpace(fileName)) {
-            throw Failure(
-                CodexSubscriptionCredentialFailureReason
-                    .CredentialPathInvalid
+        using SafeFileHandle file = OpenSnapshotFile(cancellationToken);
+        return ReadSnapshotBytes(file, cancellationToken);
+    }
+
+    private SafeFileHandle OpenSnapshotFile(CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        try {
+            // Codex owns this store. Follow normal OS path resolution and access
+            // checks; allow the owner to rewrite or replace the file while this
+            // consumer reads a bounded snapshot from one handle.
+            return File.OpenHandle(
+                _authFilePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete
             );
         }
+        catch (Exception exception) when (
+            exception is FileNotFoundException or DirectoryNotFoundException) {
+            throw Failure(CodexSubscriptionCredentialFailureReason.AuthStorageUnavailable);
+        }
+        catch (UnauthorizedAccessException) {
+            throw Failure(CodexSubscriptionCredentialFailureReason.AuthStorageAccessDenied);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or NotSupportedException or PathTooLongException) {
+            throw Failure(CodexSubscriptionCredentialFailureReason.CredentialPathInvalid);
+        }
+        catch (IOException) {
+            throw Failure(CodexSubscriptionCredentialFailureReason.AuthSnapshotTemporarilyUnreadable);
+        }
+    }
 
-        using SafeFileHandle directory = LinuxOpen.OpenDirectoryChain(
-            directoryPath
-        );
-        LinuxOpen.ValidateDirectoryType(directory);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        using SafeFileHandle file = LinuxOpen.OpenFile(directory, fileName);
-        LinuxOpen.ValidateRegularFile(file);
-
+    private byte[] ReadSnapshotBytes(
+        SafeFileHandle file,
+        CancellationToken cancellationToken
+    ) {
         long length;
         try {
             length = RandomAccess.GetLength(file);
@@ -217,9 +223,7 @@ public sealed class CodexCliAuthFileCredentialProvider
                 || !CryptographicOperations.FixedTimeEquals(
                     bytes,
                     comparison
-                )) {
-                throw new SnapshotChangedException();
-            }
+                )) { throw new SnapshotChangedException(); }
 
             return bytes;
         }
@@ -251,9 +255,7 @@ public sealed class CodexCliAuthFileCredentialProvider
             catch (Exception exception) when (IsNonFatalIo(exception)) {
                 throw new SnapshotChangedException();
             }
-            if (read == 0) {
-                throw new SnapshotChangedException();
-            }
+            if (read == 0) { throw new SnapshotChangedException(); }
             total = checked(total + read);
         }
     }
@@ -261,11 +263,13 @@ public sealed class CodexCliAuthFileCredentialProvider
     private static ParsedCredential ParseAuthDocument(
         ReadOnlySpan<byte> bytes
     ) {
-        var reader = new Utf8JsonReader(bytes, new JsonReaderOptions {
-            AllowTrailingCommas = false,
-            CommentHandling = JsonCommentHandling.Disallow,
-            MaxDepth = MaximumJsonDepth
-        });
+        var reader = new Utf8JsonReader(bytes,
+            new JsonReaderOptions {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = MaximumJsonDepth
+            }
+        );
 
         RequireRead(ref reader, JsonTokenType.StartObject);
         var seen = NewPropertySet();
@@ -293,9 +297,7 @@ public sealed class CodexCliAuthFileCredentialProvider
                     break;
             }
         }
-        if (reader.Read()) {
-            throw Malformed();
-        }
+        if (reader.Read()) { throw Malformed(); }
         if (!string.Equals(authMode, ChatGptAuthMode, StringComparison.Ordinal)) {
             throw Failure(
                 CodexSubscriptionCredentialFailureReason.UnsupportedAuthMode
@@ -419,11 +421,13 @@ public sealed class CodexCliAuthFileCredentialProvider
     }
 
     private static JwtMetadata ParseJwtPayload(ReadOnlySpan<byte> payload) {
-        var reader = new Utf8JsonReader(payload, new JsonReaderOptions {
-            AllowTrailingCommas = false,
-            CommentHandling = JsonCommentHandling.Disallow,
-            MaxDepth = MaximumJsonDepth
-        });
+        var reader = new Utf8JsonReader(payload,
+            new JsonReaderOptions {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = MaximumJsonDepth
+            }
+        );
         RequireRead(ref reader, JsonTokenType.StartObject);
         var seen = NewPropertySet();
         DateTimeOffset? expiresAt = null;
@@ -435,9 +439,7 @@ public sealed class CodexCliAuthFileCredentialProvider
             switch (property) {
                 case "exp":
                     if (reader.TokenType is not JsonTokenType.Number
-                        || !reader.TryGetInt64(out long seconds)) {
-                        throw Malformed();
-                    }
+                        || !reader.TryGetInt64(out long seconds)) { throw Malformed(); }
                     try {
                         expiresAt = DateTimeOffset.FromUnixTimeSeconds(seconds);
                     }
@@ -456,9 +458,7 @@ public sealed class CodexCliAuthFileCredentialProvider
                     break;
             }
         }
-        if (reader.Read()) {
-            throw Malformed();
-        }
+        if (reader.Read()) { throw Malformed(); }
 
         // The pinned Codex auth format derives the residency header from
         // managed configuration, not from auth.json. WP-1 therefore carries no
@@ -469,9 +469,7 @@ public sealed class CodexCliAuthFileCredentialProvider
     private static string? ParseOpenAiAuthClaims(
         ref Utf8JsonReader reader
     ) {
-        if (reader.TokenType is JsonTokenType.Null) {
-            return null;
-        }
+        if (reader.TokenType is JsonTokenType.Null) { return null; }
         RequireToken(reader.TokenType, JsonTokenType.StartObject);
         var seen = NewPropertySet();
         string? accountId = null;
@@ -501,9 +499,7 @@ public sealed class CodexCliAuthFileCredentialProvider
         HashSet<string> seen,
         out string property
     ) {
-        if (!reader.Read()) {
-            throw new JsonException();
-        }
+        if (!reader.Read()) { throw new JsonException(); }
         if (reader.TokenType is JsonTokenType.EndObject) {
             property = string.Empty;
             return false;
@@ -526,9 +522,10 @@ public sealed class CodexCliAuthFileCredentialProvider
     ) {
         foreach (string canonical in known) {
             if (string.Equals(
-                    property,
-                    canonical,
-                    StringComparison.OrdinalIgnoreCase)
+                property,
+                canonical,
+                StringComparison.OrdinalIgnoreCase
+            )
                 && !string.Equals(
                     property,
                     canonical,
@@ -560,58 +557,35 @@ public sealed class CodexCliAuthFileCredentialProvider
         ref Utf8JsonReader reader,
         JsonTokenType expected
     ) {
-        if (!reader.Read()) {
-            throw new JsonException();
-        }
+        if (!reader.Read()) { throw new JsonException(); }
         RequireToken(reader.TokenType, expected);
     }
 
     private static void RequireReadValue(ref Utf8JsonReader reader) {
-        if (!reader.Read()) {
-            throw new JsonException();
-        }
+        if (!reader.Read()) { throw new JsonException(); }
     }
 
     private static void RequireToken(
         JsonTokenType actual,
         JsonTokenType expected
     ) {
-        if (actual != expected) {
-            throw Malformed();
-        }
+        if (actual != expected) { throw Malformed(); }
     }
 
     private static string ResolveDefaultAuthFilePath() {
-        string? configured = Environment.GetEnvironmentVariable(
-            CodexHomeEnvironmentVariable
+        return ResolveDefaultAuthFilePath(
+            Environment.GetEnvironmentVariable(CodexHomeEnvironmentVariable),
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
         );
-        string codexHome;
-        if (configured is not null) {
-            if (string.IsNullOrWhiteSpace(configured)
-                || !Path.IsPathFullyQualified(configured)) {
-                throw Failure(
-                    CodexSubscriptionCredentialFailureReason
-                        .CredentialPathInvalid
-                );
-            }
-            codexHome = Path.GetFullPath(configured);
-        }
-        else {
-            string userProfile = Environment.GetFolderPath(
-                Environment.SpecialFolder.UserProfile
-            );
-            if (string.IsNullOrWhiteSpace(userProfile)
-                || !Path.IsPathFullyQualified(userProfile)) {
-                throw Failure(
-                    CodexSubscriptionCredentialFailureReason
-                        .CredentialPathInvalid
-                );
-            }
-            codexHome = Path.Combine(
-                Path.GetFullPath(userProfile),
+    }
+
+    internal static string ResolveDefaultAuthFilePath(string? configured, string userProfile) {
+        string codexHome = configured is not null
+            ? NormalizeExplicitAuthFilePath(configured)
+            : Path.Combine(
+                NormalizeExplicitAuthFilePath(userProfile),
                 ".codex"
             );
-        }
         return Path.Combine(codexHome, AuthFileName);
     }
 
@@ -671,196 +645,4 @@ public sealed class CodexCliAuthFileCredentialProvider
         string? Residency
     );
 
-    [SupportedOSPlatform("linux")]
-    private static class LinuxOpen {
-        private const int OpenReadOnly = 0;
-        private const int OpenNonBlocking = 0x800;
-        private const int OpenDirectoryFlag = 0x10000;
-        private const int OpenNoFollow = 0x20000;
-        private const int OpenCloseOnExec = 0x80000;
-
-        private const int ErrorNoEntry = 2;
-        private const uint LinuxFileTypeMask = 0xF000;
-        private const uint LinuxDirectoryType = 0x4000;
-        private const uint LinuxRegularFileType = 0x8000;
-
-        public static SafeFileHandle OpenDirectoryChain(string path) {
-            string canonical = Path.TrimEndingDirectorySeparator(
-                Path.GetFullPath(path)
-            );
-            string root = Path.GetPathRoot(canonical)
-                ?? throw Failure(
-                    CodexSubscriptionCredentialFailureReason
-                        .CredentialPathInvalid
-                );
-            SafeFileHandle? current = OpenAbsoluteDirectory(root);
-            try {
-                foreach (string component in canonical[root.Length..].Split(
-                             Path.DirectorySeparatorChar,
-                             StringSplitOptions.RemoveEmptyEntries)) {
-                    SafeFileHandle next = OpenDirectoryAt(
-                        current,
-                        component
-                    );
-                    current.Dispose();
-                    current = next;
-                }
-
-                SafeFileHandle result = current;
-                current = null;
-                return result;
-            }
-            finally {
-                current?.Dispose();
-            }
-        }
-
-        public static SafeFileHandle OpenFile(
-            SafeFileHandle directory,
-            string fileName
-        ) {
-            bool addedRef = false;
-            try {
-                directory.DangerousAddRef(ref addedRef);
-                int descriptor = OpenAt(
-                    checked((int)directory.DangerousGetHandle()),
-                    fileName,
-                    OpenReadOnly
-                        | OpenNonBlocking
-                        | OpenNoFollow
-                        | OpenCloseOnExec
-                );
-                return OwnOpenedDescriptor(descriptor);
-            }
-            finally {
-                if (addedRef) {
-                    directory.DangerousRelease();
-                }
-            }
-        }
-
-        private static SafeFileHandle OpenAbsoluteDirectory(string path) {
-            int descriptor = Open(
-                path,
-                OpenReadOnly
-                    | OpenDirectoryFlag
-                    | OpenNoFollow
-                    | OpenCloseOnExec
-            );
-            return OwnOpenedDescriptor(descriptor);
-        }
-
-        private static SafeFileHandle OpenDirectoryAt(
-            SafeFileHandle directory,
-            string component
-        ) {
-            bool addedRef = false;
-            try {
-                directory.DangerousAddRef(ref addedRef);
-                int descriptor = OpenAt(
-                    checked((int)directory.DangerousGetHandle()),
-                    component,
-                    OpenReadOnly
-                        | OpenDirectoryFlag
-                        | OpenNoFollow
-                        | OpenCloseOnExec
-                );
-                return OwnOpenedDescriptor(descriptor);
-            }
-            finally {
-                if (addedRef) {
-                    directory.DangerousRelease();
-                }
-            }
-        }
-
-        public static void ValidateDirectoryType(
-            SafeFileHandle handle
-        ) {
-            if ((ReadMode(handle) & LinuxFileTypeMask) != LinuxDirectoryType) {
-                throw Failure(
-                    CodexSubscriptionCredentialFailureReason
-                        .CredentialStorageUnsafe
-                );
-            }
-        }
-
-        public static void ValidateRegularFile(SafeFileHandle handle) {
-            // Read authority comes from the successful OS open. This
-            // read-only consumer deliberately does not infer authority or
-            // confidentiality from uid/gid or Unix permission bits.
-            if ((ReadMode(handle) & LinuxFileTypeMask) != LinuxRegularFileType) {
-                throw Failure(
-                    CodexSubscriptionCredentialFailureReason
-                        .CredentialStorageUnsafe
-                );
-            }
-        }
-
-        private static SafeFileHandle OwnOpenedDescriptor(int descriptor) {
-            if (descriptor < 0) {
-                int error = Marshal.GetLastPInvokeError();
-                throw Failure(
-                    error == ErrorNoEntry
-                        ? CodexSubscriptionCredentialFailureReason
-                            .AuthStorageUnavailable
-                        : CodexSubscriptionCredentialFailureReason
-                            .CredentialStorageUnsafe
-                );
-            }
-            return new SafeFileHandle(
-                new IntPtr(descriptor),
-                ownsHandle: true
-            );
-        }
-
-        private static uint ReadMode(SafeFileHandle handle) {
-            bool addedRef = false;
-            IntPtr buffer = Marshal.AllocHGlobal(256);
-            try {
-                handle.DangerousAddRef(ref addedRef);
-                int descriptor = checked((int)handle.DangerousGetHandle());
-                if (FStat(descriptor, buffer) != 0) {
-                    throw Failure(
-                        CodexSubscriptionCredentialFailureReason
-                            .AuthSnapshotTemporarilyUnreadable
-                    );
-                }
-
-                int modeOffset = RuntimeInformation.ProcessArchitecture switch {
-                    Architecture.X64 => 24,
-                    Architecture.Arm64 => 16,
-                    _ => throw Failure(
-                        CodexSubscriptionCredentialFailureReason
-                            .UnsupportedPlatform
-                    )
-                };
-                uint mode = unchecked((uint)Marshal.ReadInt32(
-                    buffer,
-                    modeOffset
-                ));
-                return mode;
-            }
-            finally {
-                if (addedRef) {
-                    handle.DangerousRelease();
-                }
-                Marshal.FreeHGlobal(buffer);
-            }
-        }
-
-        [DllImport("libc", EntryPoint = "open", SetLastError = true)]
-        private static extern int Open(string path, int flags);
-
-        [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
-        private static extern int OpenAt(
-            int directoryDescriptor,
-            string path,
-            int flags
-        );
-
-        [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
-        private static extern int FStat(int descriptor, IntPtr value);
-
-    }
 }

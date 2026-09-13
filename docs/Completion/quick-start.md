@@ -65,8 +65,7 @@ await client.StreamCompletionAsync(
 `PromptCacheReuseHint` 有四档：`ConnectionDefault`、`NoReuseExpected`、
 `ReuseExpectedSoon`、`ReuseExpectedAfterPause`。它是 provider-neutral、best-effort 的
 **经济复用提示**，不是隐私或禁止存储保证；不支持精确控制的 provider 可以显式接受为 no-op。
-这些 options 不属于逻辑 `CompletionRequest`，不进入 Prepared manifest、connection fingerprint
-或 request-adapter fingerprint。只实现旧方法的第三方 client 会由默认接口实现接受
+这些 options 不属于逻辑 `CompletionRequest`，不进入 Prepared manifest 或 connection fingerprint。只实现旧方法的第三方 client 会由默认接口实现接受
 `ConnectionDefault`；其他 hint 会 fail fast，防止调用意图被静默丢弃。
 
 `observer` 为必传参数——不需要流式观察时显式传 `null` 即可。没有单独暴露的"增量 chunk 流"公共接口。provider 仍然走流式 HTTP/SSE，但由 client 内部解析并聚合后再返回 `CompletionResult`。
@@ -523,7 +522,8 @@ OpenAI Responses / Codex Responses client 按精确的 `ProviderId + ApiSpecId` 
 旁边的 Text / ToolCall、持久化历史与 Origin 不变。同 profile 的 malformed payload、伪造 PlainText 或不支持的
 carrier（无论来自哪个模型）在 credential/network 前以 `openai.responses.invalid-reasoning-replay` 确定性拒绝。
 Codex 有实测证据；公共 Responses 使用相同行为是 operator 授权的假设，未进行公共 API live 验证。
-此次 payload ApiSpecId 保持 v2，但 RequestAdapterFingerprint 更新，旧冻结请求不能静默绑定新版投影。
+payload ApiSpecId 保持 v2。当前已删除 RequestAdapterFingerprint；冻结的逻辑请求允许由当前 adapter 投影，
+连接、API、原生载荷检查与结果不明时的明确重试授权仍有效。
 边界与升级说明见 [Codex adapter 契约 §6.4–7](openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
 
 只依赖 `Completion.Abstractions` 的 offline reader 可能没有加载产生该块的 provider codec。此时 registry 会解码为 `ActionBlock.OpaqueReasoningBlock`：它精确保留 codec id、`Origin`、provider-native payload 与可选 `PlainText`，保证 deserialize → serialize 不改变持久化 authority，而不会再把 debug 文本降级成新的 replay 内容。这是 semantic hard cut；旧版 unknown-codec → `TextReasoningBlock` 的 lossy 解释不再保留。这个 opaque carrier 不授予回灌能力；执行真实 provider 调用的进程仍须注册对应 codec，使相同 payload 解码为 provider-specific block。
@@ -658,7 +658,7 @@ Provider 返回的有效值始终优先。查询值和回退值均按 client lif
 - 明文 thinking 通过 `CompletionStreamObserver.ReceivedReasoningDelta` 流式推送，并在 `AnthropicReasoningBlock.PlainText` 上留存完整快照；
 - 被安全系统加密的 `redacted_thinking` 块仍会产出 `AnthropicReasoningBlock`（`PlainText == null`），以便原样回灌。
 
-配置驱动的调用方在 `CompletionConnectionConfig.ReasoningEffort`（JSON: `reasoningEffort`）上使用同一组稳定字符串档位。该值会进入 connection fingerprint；provider 映射版本会进入 request-adapter fingerprint，恢复时不会静默沿用不同 reasoning 语义。
+配置驱动的调用方在 `CompletionConnectionConfig.ReasoningEffort`（JSON: `reasoningEffort`）上使用同一组稳定字符串档位。该值会进入 connection fingerprint；恢复仍拒绝连接 reasoning 配置变化，provider 映射使用当前 adapter，不再用手工版本标签阻止修复生效。
 
 当前映射摘要：OpenAI Chat / Responses 使用 `none|low|medium|high|xhigh`；OpenAI Responses 在启用档位下同时请求 `summary=auto`；Qwen 映射为 `enable_thinking` 布尔开关；DeepSeek V4 的 `Disabled` 映射为 `thinking.type=disabled`，启用档位显式发送 `thinking.type=enabled`，并将 `Low|Medium|High` 收敛到 `reasoning_effort=high`、`Max` 映射为 `max`；Anthropic 使用 adaptive thinking 与同名 effort。
 
@@ -671,7 +671,7 @@ Provider 返回的有效值始终优先。查询值和回退值均按 client lif
 }
 ```
 
-非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v10` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection/request-adapter fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。v10 从 connection/request snapshot 删除了 output-cap 字段，并继续显式记录 object schema 的 nullable 语义。`CompletionOutputContract.SemanticFingerprint`采用条件式wire版本：递归schema中没有nullable Object时继续使用原`atelia.completion.output-contract.v1` preimage，保持既有fingerprint；首次出现`ToolSchema.Object.IsNullable=true`时才使用显式提交每个Object nullability的v2 preimage。
+非 Anthropic connection 使用非默认值会在配置加载或 client factory 创建时 fail fast。TTL 是可调整的运行策略：它进入 `atelia.completion.call-log.v10` 的 connection snapshot，方便审计 connection 默认值，但不进入 durable connection fingerprint，因此只改变 TTL 不会令已准备请求失去恢复身份。v10 从 connection/request snapshot 删除了 output-cap 字段，并继续显式记录 object schema 的 nullable 语义。`CompletionOutputContract.SemanticFingerprint`采用条件式wire版本：递归schema中没有nullable Object时继续使用原`atelia.completion.output-contract.v1` preimage，保持既有fingerprint；首次出现`ToolSchema.Object.IsNullable=true`时才使用显式提交每个Object nullability的v2 preimage。
 
 单次调用的 `PromptCacheReuseHint` 优先级如下：当 `enablePromptCaching=false` 时始终不发送 cache breakpoint；否则 `ConnectionDefault` 沿用 connection 的 `AnthropicPromptCacheTtl`，`NoReuseExpected` 不发送 `cache_control`，`ReuseExpectedSoon` 映射到 `5m`，`ReuseExpectedAfterPause` 映射到 `1h`。OpenAI Chat、OpenAI Responses、Gemini 与 DeepSeek 当前接受这些 hint，但只提供 implicit/best-effort 行为，不伪装成显式 breakpoint 保证；Gemini explicit CachedContent 属于独立 resource lifecycle，不在单次 invocation options 中映射。
 

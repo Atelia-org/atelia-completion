@@ -18,7 +18,7 @@ aggregator，但拥有独立的：
 - 固定 backend route；
 - request headers 与 client identity；
 - request-body allowlist；
-- `ApiSpecId`、completion surface 与 request-adapter fingerprint；
+- `ApiSpecId` 与 completion surface；
 - 认证失败、redirect 和 rate-limit 语义。
 
 实施分两阶段：
@@ -44,7 +44,7 @@ aggregator，但拥有独立的：
   invocation 获取新 snapshot，不能把 access token 冻结到 client lifetime。
 - `connections.json` 是 strict V2：字段语言封闭，但 `kind` 与 `completionSurfaceId` 的值域开放。因此新增 kind
   不要求扩张 V2；新增 `credentialId`、`authFile` 等字段则必须另行设计下一版 manifest。
-- connection/request-adapter fingerprint 已排除 API key 等 secret。新实现也不得把 token、account id、auth path
+- connection fingerprint 已排除 API key 等 secret。新实现也不得把 token、account id、auth path
   或 token generation 持久化进 dispatch identity。
 
 ### 2.2 OpenAI 官方文档边界
@@ -390,7 +390,7 @@ Responses Lite profile 导致的本次故障。投影变化同时把 public/Code
 
 Codex options 不暴露 `Store`、`IncludeEncryptedReasoning` 或 arbitrary body injection；公共 OpenAI Chat / Responses
 options 也不再提供 `ExtraBody` 逃生口。新增 body field 必须进入
-Codex-specific allowlist、tests 和 request-adapter fingerprint review。
+Codex-specific allowlist、tests 和 provider 投影行为审查。
 
 当前支持 provider-neutral `ProviderDefault`、`Auto`、`None` 与 `RequiredAny` 投影。private backend 仍没有
 pinned source fixture 证明 native named-choice object shape，因此 profile 不声明 native `RequiredNamed` 支持。
@@ -433,25 +433,17 @@ Provider/profile 不同的 reasoning 继续仅从本次 projection 省略，旁�
 公共 Responses 采用同一实现是 operator 明确授权的兼容性假设，尚无公共 API live 验证。
 两者共享投影算法不等于 public/Codex 原生载荷可以互投，也不证明 reasoning 被模型实际使用。
 
-初始 effort mapping 可以由当前 pinned Codex source校准后实现；即使 wire 值与 public Responses 当前相同，也使用独立
-mapping id，避免未来一边变化时 silent drift。
+### spec [S-RESPONSES-PROJECTION-IDENTITY] 协议身份与当前投影
 
-### spec [S-RESPONSES-PROJECTION-IDENTITY] 投影行为独立版本化
+2026-09-14 起，恢复使用当前 adapter，删除手工 RequestAdapterFingerprint 及 reasoning/output/projection mapping 标签。
+`CompletionDispatchIdentityFactory` 仍是路由身份的 owner；精确绑定保留 connection、client name 和 ApiSpecId 检查。
+ApiSpecId 表示 protocol/native carrier 兼容身份，public/Codex 各自保持 v2；codec 仍为
+`atelia.openai-responses.reasoning-item-json.v1`，历史 Origin 不迁移。route、协议字段/SSE shape 或 terminal evidence set
+发生真正协议语义变化时仍须审查 ApiSpecId，而不是借此恢复手工 adapter 版本门槛。
 
-2026-09-10 起替代旧的“所有 replay 变化均升级 ApiSpecId”规则：ApiSpecId 表示 protocol/native carrier 兼容身份，
-本次保持 public/Codex 各自 v2；codec 仍为 `atelia.openai-responses.reasoning-item-json.v1`，历史 Origin 不迁移。
-route、协议字段/SSE shape 或 terminal evidence set 的语义变化仍应审查 ApiSpecId 升级。
-
-`CompletionDispatchIdentityFactory` 是 durable identity 的单一 owner。其 RequestAdapterFingerprint 对两种
-Responses kind 新增 `RequestProjectionMappingId=openai-responses-native-reasoning-replay-v1`，
-显式标识跨模型 native replay；未来该投影规则变化 MUST 更新此 component。
-effort mapping 仍以独立 reasoning mapping id 标识。非 Responses 的 projection component 为 null 且不序列化，
-不改变其他 provider 的现有 fingerprint。没有新连接开关或旧投影兼容执行路径。
-
-上一轮 `116b96f7` 的 omission 没有改变当时旧成功请求的 wire；本次把已可发送请求中被省略的 reasoning 加回来，
-则改变了当前成功输入的投影，MUST 改变 request-adapter identity，不能沿用上一轮的免责理由。
-旧 frozen adapter fingerprint MUST 被 `BindExact` 拒绝；显式 Restart 授权不授予替换冻结投影的权限。
-升级前应使用旧版完成 Prepared/Started 工作，再切换新版。详见 [Galatea 升级边界](../Galatea/runtime.md#模型切换与-reasoning-回放排障)。
+旧 Prepared v7 的 adapter 字段仅在 codec 边界读取丢弃，v8 不再写入。重试保留冻结逻辑输入，允许当前 native replay
+投影执行；不保证逐字 HTTP wire 相同。原生 carrier 与 Origin 校验保持，显式重试授权也不能改绑模型/连接。
+详见 [Galatea 恢复边界](../Galatea/runtime.md#模型切换与-reasoning-回放排障)。
 
 ## 7. 错误、重读与重试
 
@@ -627,8 +619,8 @@ fingerprint 不变。
 - strict connections V2 不含 output-cap 字段；
 - existing known kinds 的 fingerprint byte-identical；
 - token/account/path rotation 不改变 durable fingerprint；
-- kind/surface/base/ApiSpec/mapping 变化会改变相应 identity；
-- frozen fingerprint 与 `BindExact` mismatch tests 锁定 adapter version；
+- kind/surface/base 变化由 connection identity 检查，ApiSpec 由独立协议身份检查；
+- `BindExact` mismatch tests 锁定连接与协议边界；2026-09-14 起移除手工 adapter version 门槛；
 - Codex factory 在 credential/file/network side effect 前完成 kind、surface、canonical endpoint 与 forbidden key validation；
 - two-user Galatea + Codex connection 在任何 client/credential provider call 前 startup fail closed；
 - registry 复用 client，但不同 invocation 会取得新 credential snapshot；

@@ -7,7 +7,7 @@ namespace Atelia.Completion.OpenAI;
 /// Adds the pinned ChatGPT Codex subscription connection kind while preserving
 /// the existing factory behavior for every other Completion connection.
 /// </summary>
-public sealed class CodexSubscriptionCompletionClientFactory
+public sealed partial class CodexSubscriptionCompletionClientFactory
     : ICompletionClientFactory {
     public const string ConnectionKind =
         ChatGptCodexResponsesProfile.ConnectionKind;

@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Atelia.Completion.OpenAI.Tests;
 
-public sealed class CodexSubscriptionCompletionClientFactoryTests {
+public sealed partial class CodexSubscriptionCompletionClientFactoryTests {
     private const string ExpectedAccountFingerprint =
         "sha256:00000000000000000000000000000000"
         + "00000000000000000000000000000000";

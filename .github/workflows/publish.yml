@@ -87,4 +87,5 @@ jobs:
           path: |
             ${{ runner.temp }}/completion-tests
             ${{ runner.temp }}/completion-feed
+            ${{ runner.temp }}/completion-package-smoke/package-smoke-results.json
           if-no-files-found: ignore

@@ -1,12 +1,16 @@
 # Atelia.Completion.Tools - 快速上手（面向使用者）
 
-`net10.0`；依赖 Abstractions 与 Diagnostics，不依赖 Completion 的 provider 实现。首次公开目标 `0.1.0-preview.1` 尚未发布，当前使用本地候选包，发布前更新此状态。本包使用 MIT 许可证。
+`net10.0`；依赖 Abstractions 与 Diagnostics，不依赖 Completion 的 provider 实现。本包使用 MIT 许可证。
+
+```powershell
+dotnet add package Atelia.Completion.Tools --version 0.1.0-preview.1
+```
 
 `ToolSession` 面向顺序使用、非线程安全。执行序号不会自动提供持久化、事务或 exactly-once；副作用提交、恢复与世界仲裁仍归宿主。Release 库内部的 Trace/Info 调用可能已被编译裁掉，需要源码 Debug 联调才能恢复。
 
 > **读者**：要把宿主能力或结构化产物暴露给 LLM tool calling 的上层应用作者。
 > **不读这份**：要修改 schema 反射、raw JSON 绑定或执行器内部实现的人。那类工作请直接看 `Declaration/ReflectedToolDefinitionBuilder.cs`、`ObjectInputToolRuntime.cs` 和对应测试。
-> **配套阅读**：`Atelia.Completion` 的 client / `CompletionRequest` 用法见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)。首次发布前 tag 链接可能尚不可访问。本 README 只覆盖 tool 的定义、注册、执行和回灌。
+> **配套阅读**：`Atelia.Completion` 的 client / `CompletionRequest` 用法见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)。本 README 只覆盖 tool 的定义、注册、执行和回灌。
 
 ---
 
@@ -79,6 +83,25 @@ using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 
+var host = new EchoTools();
+var echoTool = MethodToolWrapper.FromMethod(
+    host,
+    typeof(EchoTools).GetMethod(nameof(EchoTools.EchoAsync))!
+);
+
+var registry = new ToolRegistry([echoTool]);
+var session = registry.CreateSession(
+    items: new Dictionary<string, object?> { ["scope"] = "quick-start" }
+);
+
+var execution = await session.ExecuteAsync(
+    new RawToolCall("workspace.echo", "call-1", """{"text":"hello"}"""),
+    CancellationToken.None
+);
+
+Console.WriteLine(execution.ExecuteResult.GetFlattenedText());
+// hello|quick-start|1
+
 public sealed class EchoTools {
     [Tool("workspace.echo", "Echo text and expose session scope.")]
     public ValueTask<ToolExecuteResult> EchoAsync(
@@ -107,25 +130,6 @@ public sealed record class EchoInput(
     [property: JsonPropertyName("text")]
     string Text
 );
-
-var host = new EchoTools();
-var echoTool = MethodToolWrapper.FromMethod(
-    host,
-    typeof(EchoTools).GetMethod(nameof(EchoTools.EchoAsync))!
-);
-
-var registry = new ToolRegistry([echoTool]);
-var session = registry.CreateSession(
-    items: new Dictionary<string, object?> { ["scope"] = "quick-start" }
-);
-
-var execution = await session.ExecuteAsync(
-    new RawToolCall("workspace.echo", "call-1", """{"text":"hello"}"""),
-    CancellationToken.None
-);
-
-Console.WriteLine(execution.ExecuteResult.GetFlattenedText());
-// hello|quick-start|1
 ```
 
 ### 3.2 这个例子里真正发生了什么
@@ -183,18 +187,6 @@ using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 
-[Description("Draft outline submitted by the model.")]
-public sealed class OutlineDraft {
-    [Description("Document title.")]
-    [MinLength(3)]
-    [JsonPropertyName("title")]
-    public string Title { get; init; } = string.Empty;
-
-    [Description("Top-level sections.")]
-    [JsonPropertyName("sections")]
-    public IReadOnlyList<string> Sections { get; init; } = [];
-}
-
 var acceptedDrafts = new List<OutlineDraft>();
 
 var submitDraft = ArtifactToolWrapper<OutlineDraft>.Create(
@@ -218,6 +210,18 @@ var execution = await session.ExecuteAsync(
 
 Console.WriteLine(execution.ExecuteResult.GetFlattenedText());
 // saved:Atelia Tools|1
+
+[Description("Draft outline submitted by the model.")]
+public sealed class OutlineDraft {
+    [Description("Document title.")]
+    [MinLength(3)]
+    [JsonPropertyName("title")]
+    public string Title { get; init; } = string.Empty;
+
+    [Description("Top-level sections.")]
+    [JsonPropertyName("sections")]
+    public IReadOnlyList<string> Sections { get; init; } = [];
+}
 ```
 
 ### 4.2 什么时候优先用它
@@ -273,6 +277,9 @@ var request = new CompletionRequest(
 );
 
 var completion = await client.StreamCompletionAsync(request, null, cancellationToken);
+if (completion.Termination.Kind != CompletionTerminationKind.Completed) {
+    throw new InvalidOperationException($"Completion ended: {completion.Termination.Kind}");
+}
 history.Add(completion.Message);
 
 if (completion.Message.ToolCalls.Count > 0) {
@@ -380,10 +387,10 @@ var definition = ReflectedToolDefinitionBuilder.BuildDefinitionUsingTypeDescript
 
 本 README 中的主路径样例已经落实成可执行测试，方便以后改 API 时及时发现文档漂移：
 
-- `tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs`
-- `tests/Completion.Tests/Tools/MethodToolWrapperTests.cs`
-- `tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs`
-- `tests/Completion.Tests/Tools/ToolSessionTests.cs`
+- [tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs)
+- [tests/Completion.Tests/Tools/MethodToolWrapperTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/tests/Completion.Tests/Tools/MethodToolWrapperTests.cs)
+- [tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs)
+- [tests/Completion.Tests/Tools/ToolSessionTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/tests/Completion.Tests/Tools/ToolSessionTests.cs)
 
 只跑这批样例可用：
 

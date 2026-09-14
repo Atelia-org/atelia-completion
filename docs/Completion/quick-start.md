@@ -17,7 +17,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Atelia.Completion" Version="$(CompletionPackageVersion)" />
+    <PackageReference Include="Atelia.Completion" Version="0.1.0-preview.1" />
   </ItemGroup>
 </Project>
 ```
@@ -65,38 +65,14 @@ sealed class OfflineHandler : HttpMessageHandler {
 }
 ```
 
-先在新仓按 [README](../../README.md#源码开发与候选包) 生成一个唯一版本候选包。此时首次公开目标 `0.1.0-preview.1` 尚未发布，示例必须使用实际候选版本。创建显式 `NuGet.Config`，把四个 Atelia 包准确映射到该候选 feed；其他依赖可从 nuget.org 还原：
-
-```xml
-<configuration>
-  <packageSources>
-    <clear />
-    <add key="completion" value="ABSOLUTE_PATH_TO_CANDIDATE_FEED" />
-    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-  </packageSources>
-  <packageSourceMapping>
-    <clear />
-    <packageSource key="completion">
-      <package pattern="Atelia.Diagnostics" />
-      <package pattern="Atelia.Completion.Abstractions" />
-      <package pattern="Atelia.Completion" />
-      <package pattern="Atelia.Completion.Tools" />
-    </packageSource>
-    <packageSource key="nuget.org"><package pattern="*" /></packageSource>
-  </packageSourceMapping>
-</configuration>
-```
-
-在示例目录执行，将版本替换成刚才 Pack 的实际值；独立缓存避免以前还原过的同版包掩盖来源：
+在示例目录执行，使用 nuget.org 还原明确版本的包；无需检出本仓或准备本地 feed：
 
 ```powershell
-$version = 'ACTUAL_CANDIDATE_VERSION'
-$env:NUGET_PACKAGES = Join-Path $PWD '.packages'
-dotnet restore CompletionExample.csproj --configfile NuGet.Config -p:CompletionPackageVersion=$version
-dotnet run --project CompletionExample.csproj -c Release --no-restore -p:CompletionPackageVersion=$version
+dotnet restore CompletionExample.csproj --source https://api.nuget.org/v3/index.json
+dotnet run --project CompletionExample.csproj -c Release --no-restore
 ```
 
-也可直接运行新仓 `eng/Test-Package.ps1 -Version <实际版本> -FeedDirectory <绝对feed路径> -WorkDirectory <新临时目录>`，由脚本完成隔离的包消费验证。公开版本完整可取得后，普通项目只需明确版本 `PackageReference` 与 nuget.org；无需本地 feed 或源码检出。
+包还原需要网络；示例执行只使用内存中的 HTTP fixture。修改库本身时，唯一版本开发包与独立缓存的验证方法见 [源码开发与候选包](../../README.md#源码开发与候选包)，可使用 `eng/Test-Package.ps1` 完成隔离的包消费验证。
 
 ## 2. 换成真实服务
 

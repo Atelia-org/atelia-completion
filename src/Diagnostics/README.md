@@ -1,6 +1,10 @@
 # Atelia.Diagnostics
 
-`netstandard2.0` 通用调试库，可单独引用；不依赖 Completion 或 Tools。首次公开目标为 `0.1.0-preview.1`，目前尚未发布，先使用明确版本本地候选包。发布前更新此状态。
+`netstandard2.0` 通用调试库，可单独引用；不依赖 Completion 或 Tools。
+
+```powershell
+dotnet add package Atelia.Diagnostics --version 0.1.0-preview.1
+```
 
 ```csharp
 using Atelia.Diagnostics;
@@ -25,4 +29,4 @@ DebugUtil.Warning("Example", "Example warning");
 
 下游自己的 Debug 调用点可以保留 Trace/Info，但已发布 Diagnostics 的默认 sink 级别仍由 Diagnostics 自身构建配置决定。要显示这些调用，首次使用前同时设置类别与 `ATELIA_DEBUG_FILE_LEVEL=Trace` / `ATELIA_DEBUG_CONSOLE_LEVEL=Trace`。Warning/Error 与显式 `Log` 没有 Conditional 裁剪，仍受 sink 级别和控制台类别控制。
 
-实现见 [对应版本源码](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Diagnostics/DebugUtil.cs)；首次发布前 tag 链接可能尚不可访问。本包使用 MIT 许可证。
+实现见 [对应版本源码](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Diagnostics/DebugUtil.cs)。本包使用 MIT 许可证。

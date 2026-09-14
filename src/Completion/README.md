@@ -1,8 +1,12 @@
 # Completion transport-liveness contract
 
-`Atelia.Completion` 面向 `net10.0`，依赖 Abstractions 与 Diagnostics。首次公开目标 `0.1.0-preview.1` 尚未发布，当前使用本地候选包；发布前更新此状态。本包使用 MIT 许可证。
+`Atelia.Completion` 面向 `net10.0`，依赖 Abstractions 与 Diagnostics。本包使用 MIT 许可证。
 
-完整离线 public client 示例与 HttpClient 所有权见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)。首次发布前 tag 链接可能尚不可访问。Release 包中已裁掉的 Trace/Info 调用无法由环境变量恢复；需要库内详细调试时使用源码 Debug 联调。
+```powershell
+dotnet add package Atelia.Completion --version 0.1.0-preview.1
+```
+
+完整离线 public client 示例与 HttpClient 所有权见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)。Release 包中已裁掉的 Trace/Info 调用无法由环境变量恢复；需要库内详细调试时使用源码 Debug 联调。
 
 `Completion`只判断能够从HTTP/SSE链路和provider协议中直接观察到的事实，不猜测LLM是否仍在工作。
 一次streaming调用没有elapsed-operation timeout，也没有stream-idle timeout；不可见reasoning、排队或长时间

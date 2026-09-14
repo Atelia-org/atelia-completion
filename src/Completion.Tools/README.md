@@ -1,8 +1,12 @@
 # Atelia.Completion.Tools - 快速上手（面向使用者）
 
+`net10.0`；依赖 Abstractions 与 Diagnostics，不依赖 Completion 的 provider 实现。首次公开目标 `0.1.0-preview.1` 尚未发布，当前使用本地候选包，发布前更新此状态。本包使用 MIT 许可证。
+
+`ToolSession` 面向顺序使用、非线程安全。执行序号不会自动提供持久化、事务或 exactly-once；副作用提交、恢复与世界仲裁仍归宿主。Release 库内部的 Trace/Info 调用可能已被编译裁掉，需要源码 Debug 联调才能恢复。
+
 > **读者**：要把宿主能力或结构化产物暴露给 LLM tool calling 的上层应用作者。
 > **不读这份**：要修改 schema 反射、raw JSON 绑定或执行器内部实现的人。那类工作请直接看 `Declaration/ReflectedToolDefinitionBuilder.cs`、`ObjectInputToolRuntime.cs` 和对应测试。
-> **配套阅读**：`Atelia.Completion` 的 client / `CompletionRequest` 用法见 [../docs/Completion/quick-start.md](../../docs/Completion/quick-start.md)。本 README 只覆盖 tool 的定义、注册、执行和回灌。
+> **配套阅读**：`Atelia.Completion` 的 client / `CompletionRequest` 用法见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)。首次发布前 tag 链接可能尚不可访问。本 README 只覆盖 tool 的定义、注册、执行和回灌。
 
 ---
 
@@ -65,7 +69,7 @@ CompletionPromptPrefix.OutputContract.Tools / ToolResultsMessage
 1. 写一个输入 DTO。
 2. 写一个标了 `[Tool]` 的方法。
 3. 用 `MethodToolWrapper.FromMethod(...)` 或 `FromDelegate(...)` 包装。
-4. 注册到 `ToolRegistry`，再由 `ToolExecutor` 执行。
+4. 注册到 `ToolRegistry`，由 `registry.CreateSession(...)` 创建 `ToolSession`，再调用 `session.ExecuteAsync(...)`。
 
 ### 3.1 最小示例
 

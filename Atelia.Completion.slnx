@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Diagnostics/Diagnostics.csproj" />
+    <Project Path="src/Completion.Abstractions/Completion.Abstractions.csproj" />
+    <Project Path="src/Completion/Completion.csproj" />
+    <Project Path="src/Completion.Tools/Completion.Tools.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Completion.Tests/Completion.Tests.csproj" />
+  </Folder>
+</Solution>

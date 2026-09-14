@@ -1,0 +1,90 @@
+name: Publish completion packages
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New immutable package version, for example 0.1.0-preview.1
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: completion-nuget-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: nuget
+    env:
+      ATELIA_RUN_LOCAL_LLM_E2E: '0'
+      ATELIA_RUN_CODEX_REASONING_REPLAY_LIVE: '0'
+      ATELIA_RUN_CODEX_SUBSCRIPTION_LIVE: '0'
+      ATELIA_RUN_CODEX_SUBSCRIPTION_AGENT_CONTROL_LIVE: '0'
+      ATELIA_RUN_CODEX_SUBSCRIPTION_SINGLETON_REQUIRED_NAMED_LIVE: '0'
+      OPENROUTER_API_KEY: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require the matching immutable release tag
+        shell: pwsh
+        env:
+          COMPLETION_VERSION: ${{ inputs.version }}
+        run: |
+          $version = $env:COMPLETION_VERSION
+          if ($version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[a-z0-9]+([.-][a-z0-9]+)*)?$') { throw 'Invalid package version.' }
+          $expectedRef = "refs/tags/v$version"
+          if ($env:GITHUB_REF -cne $expectedRef) { throw "Dispatch this workflow from tag v$version, not '$env:GITHUB_REF'." }
+          $tagCommit = (& git rev-parse --verify "$expectedRef^{commit}" | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "Cannot resolve release tag $expectedRef." }
+          $headCommit = (& git rev-parse --verify HEAD | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $headCommit -cne $tagCommit) { throw 'Checked-out HEAD does not match the selected release tag.' }
+          Write-Host "Publishing identity: $expectedRef -> $headCommit"
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Validate release artifacts
+        shell: pwsh
+        env:
+          COMPLETION_VERSION: ${{ inputs.version }}
+        run: |
+          dotnet build Atelia.Completion.slnx -c Release -t:Rebuild
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test tests/Completion.Tests/Completion.Tests.csproj -c Release --no-build --filter 'Category!=LiveE2E&Category!=LocalE2E' --logger trx --results-directory (Join-Path $env:RUNNER_TEMP 'completion-tests')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $feed = Join-Path $env:RUNNER_TEMP 'completion-feed'
+          ./eng/Pack.ps1 -Version $env:COMPLETION_VERSION -OutputDirectory $feed
+          ./eng/Test-Package.ps1 -Version $env:COMPLETION_VERSION -FeedDirectory $feed -WorkDirectory (Join-Path $env:RUNNER_TEMP 'completion-package-smoke')
+      # NUGET_USER is the individual login (Robird); the trusted policy names package owner Atelia.
+      # Configure the policy for this repository, publish.yml and environment nuget before dispatch.
+      - uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish verified packages in dependency order
+        shell: pwsh
+        env:
+          COMPLETION_VERSION: ${{ inputs.version }}
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          $feed = Join-Path $env:RUNNER_TEMP 'completion-feed'
+          $manifest = Get-Content (Join-Path $feed "manifest.$env:COMPLETION_VERSION.json") -Raw | ConvertFrom-Json
+          $headCommit = (& git rev-parse --verify HEAD | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $manifest.sourceRevision -cne $headCommit -or $manifest.version -cne $env:COMPLETION_VERSION) { throw 'Manifest identity does not match the selected release.' }
+          foreach ($package in $manifest.packages) {
+            $path = Join-Path $feed $package.file
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine $package.sha256) { throw "Package changed after validation: $($package.id)" }
+            $symbols = Join-Path $feed $package.symbolsFile
+            if ((Get-FileHash -LiteralPath $symbols -Algorithm SHA256).Hash -ine $package.symbolsSha256) { throw "Symbols changed after validation: $($package.id)" }
+            dotnet nuget push $path --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: completion-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/completion-tests
+            ${{ runner.temp }}/completion-feed
+          if-no-files-found: ignore

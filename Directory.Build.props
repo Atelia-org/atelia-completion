@@ -1,0 +1,15 @@
+<Project>
+  <PropertyGroup>
+    <AssemblyName>Atelia.$(MSBuildProjectName)</AssemblyName>
+    <RootNamespace>Atelia.$(MSBuildProjectName)</RootNamespace>
+    <PackageId>Atelia.$(MSBuildProjectName)</PackageId>
+    <RepositoryUrl>https://github.com/Atelia-org/atelia-completion</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <_CompletionLibrary Condition="'$(MSBuildProjectName)' == 'Diagnostics' Or '$(MSBuildProjectName)' == 'Completion.Abstractions' Or '$(MSBuildProjectName)' == 'Completion' Or '$(MSBuildProjectName)' == 'Completion.Tools'">true</_CompletionLibrary>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(_CompletionLibrary)' == 'true'">
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+</Project>

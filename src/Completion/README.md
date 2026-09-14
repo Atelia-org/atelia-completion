@@ -1,5 +1,9 @@
 # Completion transport-liveness contract
 
+`Atelia.Completion` 面向 `net10.0`，依赖 Abstractions 与 Diagnostics。首次公开目标 `0.1.0-preview.1` 尚未发布，当前使用本地候选包；发布前更新此状态。本包使用 MIT 许可证。
+
+完整离线 public client 示例与 HttpClient 所有权见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)。首次发布前 tag 链接可能尚不可访问。Release 包中已裁掉的 Trace/Info 调用无法由环境变量恢复；需要库内详细调试时使用源码 Debug 联调。
+
 `Completion`只判断能够从HTTP/SSE链路和provider协议中直接观察到的事实，不猜测LLM是否仍在工作。
 一次streaming调用没有elapsed-operation timeout，也没有stream-idle timeout；不可见reasoning、排队或长时间
 没有SSE frame都不是失败证据。`HttpClient.Timeout`统一为`Timeout.InfiniteTimeSpan`，调用方只能通过自己传入的
@@ -106,4 +110,4 @@ if (result.Termination.Kind == CompletionTerminationKind.Completed) {
 profiler 而补零或推算缺失维度。以上语义在 Linux / Windows 相同。
 
 Galatea 接入、connection shape、安全 preflight、环境变量和 live smoke 见
-[`docs/Completion/openai-codex-subscription-client-design.md`](../../docs/Completion/openai-codex-subscription-client-design.md)。
+[`docs/Completion/openai-codex-subscription-client-design.md`](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/openai-codex-subscription-client-design.md)。

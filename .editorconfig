@@ -1,0 +1,332 @@
+# top-most EditorConfig file
+root = true
+
+# All files
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Code files
+[*.{cs,csx,vb,vbx}]
+indent_style = space
+indent_size = 4
+
+# XML project files
+[*.{csproj,vbproj,vcxproj,vcxproj.filters,proj,projitems,shproj}]
+indent_style = space
+indent_size = 4
+tab_width = 4
+dotnet_style_operator_placement_when_wrapping = beginning_of_line
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+dotnet_style_require_accessibility_modifiers = always:suggestion
+
+# XML config files
+[*.{props,targets,ruleset,config,nuspec,resx,vsixmanifest,vsct}]
+indent_style = space
+indent_size = 2
+
+# JSON files
+[*.{json,json5,webmanifest}]
+indent_style = space
+indent_size = 2
+
+# YAML files
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Markdown files
+[*.{md,mdx}]
+indent_style = space
+indent_size = 2
+# trim_trailing_whitespace = false
+
+# Web files
+[*.{htm,html,js,jsm,ts,tsx,css,sass,scss,less,svg,vue}]
+indent_style = space
+indent_size = 2
+
+# Batch files
+[*.{cmd,bat}]
+end_of_line = crlf
+
+# Bash files
+[*.sh]
+end_of_line = lf
+
+# PowerShell scripts
+[*.ps1]
+end_of_line = crlf
+
+# Visual Studio solution files
+[*.sln]
+end_of_line = crlf
+
+# C# files - K&R style preferences (left brace on same line)
+[*.cs]
+
+# Indentation preferences
+csharp_indent_block_contents = true         # 显式：缩进普通代码块内容（函数体/if/for 等）
+csharp_indent_braces = false                # 不对大括号本身再额外缩进（保持与左边界对齐）
+csharp_indent_case_contents = true
+# 有独立 { } 块时不再再额外加一层
+csharp_indent_case_contents_when_block = false
+csharp_indent_switch_labels = true
+csharp_indent_labels = flush_left
+# 初始化器缩进（缺失会导致对象/集合初始化器内元素顶格）
+csharp_indent_object_initializer = true
+csharp_indent_collection_initializer = true
+csharp_indent_array_initializer = true
+# 如需让 case 内出现额外 { } 时仍缩进一层，把 csharp_indent_case_contents_when_block 改为 true。
+# 之前未显式声明 csharp_indent_block_contents，且曾给格式键加过 :warning 导致解析失败被忽略，触发函数体 "不缩进" 现象。
+# 若需要一次性修正历史奇怪缩进，可临时把 csharp_preserve_single_line_blocks 设为 false 后执行 dotnet format，再改回。
+
+# New line preferences - K&R style (braces on same line)
+# NOTE: Formatting (whitespace/new_line/indent/spacing) 选项本身不支持 :warning/:error 等严重级别后缀；
+# 只能写纯值。之前加 :error 导致解析失败而被忽略，回退为默认换行。请勿再为这些键添加 severity。
+csharp_new_line_before_open_brace = none
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = false
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
+
+# Space preferences
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_parentheses = false
+csharp_space_before_colon_in_inheritance_clause = true
+csharp_space_after_colon_in_inheritance_clause = true
+# csharp_space_around_binary_operators = before_and_after
+# 多方协商结果 (2025-08-27)：
+#   Gemini: 支持 before_and_after 以提升词法可读性与视觉分隔。
+#   Claude: 数据驱动分析显示紧凑格式有明显效率收益，但承认实施成本问题。
+#   GPT: 建议基于实际样本做AB对比。
+#
+#   Gemini混合方案 (方案D): 通过Roslyn自定义工具实现算术运算符紧凑、逻辑/比较运算符保留空格。
+#   技术可行性: ✅ 已通过PoC验证 (见 discussion_examples/RoslynAnalyzerPoC)
+#   实施成本: ⚠️  需要1-2月开发周期，当前资源受限
+#
+#   **当前决策**: 暂时保持 before_and_after，将混合方案列为未来增强项目。
+#   **触发条件**: 当Nexus Agent可用或开发资源充足时重新评估。
+csharp_space_around_binary_operators = before_and_after
+csharp_space_between_method_declaration_empty_parameter_list_parentheses = false
+csharp_space_between_method_call_name_and_opening_parenthesis = false
+csharp_space_between_method_call_empty_parameter_list_parentheses = false
+
+# Wrapping preferences
+csharp_preserve_single_line_statements = true
+csharp_preserve_single_line_blocks = true
+
+# StyleCop: 禁止一行多语句（调试/断点友好）。需要 StyleCop.Analyzers 包。
+
+# dotnet_diagnostic.X0001.severity = none      # 已被 MT0005 取代; 保留行避免旧分支 merge 再次开启
+dotnet_diagnostic.MT0005.severity = none     # 禁用候选规则
+dotnet_diagnostic.X0001.severity = none     # 禁用实验性规则
+dotnet_diagnostic.X0002.severity = none     # 禁用实验性规则
+
+#用自定义的MT0008取代IDE0011 / csharp_prefer_braces (始终大括号安全)。MT0008的唯一区别是仅插入花括号而不插入换行，实现花括号与换行的解耦。
+dotnet_diagnostic.IDE0011.severity = none
+#csharp_prefer_braces = false
+
+dotnet_diagnostic.RS2007.severity = none   # 临时关闭发布跟踪格式警告（待后续打包前再修复）
+dotnet_diagnostic.RS2008.severity = none   # 临时关闭发布跟踪未启用/规则登记警告
+dotnet_diagnostic.CS1591.severity = none   # 临时关闭发布跟踪未启用/规则登记警告
+
+# ---------------------------------------------------------------------------
+# LLM 协作模式降噪策略 (Phase 1): 关闭当前无自动修复/与既定紧凑 K&R 风格冲突的规则
+# 目标：显著减少风格告警面板噪声，只保留少量高价值/将来会自研 CodeFix 的规则
+# 后续 Phase 2 将用自研 Analyzer (MT000x) 逐步替换需要的子集
+# ---------------------------------------------------------------------------
+dotnet_diagnostic.SA1500.severity = none   # Braces share line (与当前 K&R + 压缩策略冲突)
+dotnet_diagnostic.SA1501.severity = none   # 单行语句限制 (暂不强制，待自研精细策略)
+dotnet_diagnostic.SA1503.severity = none   # 单行嵌套语句 (与总是大括号策略重复 / 已由 IDE0011 覆盖)
+dotnet_diagnostic.SA1513.severity = none   # 关闭强制闭括号后空行
+dotnet_diagnostic.SA1515.severity = none   # 单行注释前空行
+dotnet_diagnostic.SA1516.severity = none   # 成员之间空行
+dotnet_diagnostic.SA1518.severity = none   # 末尾空行
+
+dotnet_diagnostic.SA1633.severity = none   # 文件头注释缺失 - 当前不强制版权头
+
+dotnet_diagnostic.SA1200.severity = none   # using 必须在 namespace 内 - 允许顶层集中
+dotnet_diagnostic.SA1201.severity = none   # 元素顺序 (class/struct 等) - 自研再定
+dotnet_diagnostic.SA1202.severity = none   # public/ private 排序 - 暂不强制
+dotnet_diagnostic.SA1208.severity = none   # System* 排序优先
+dotnet_diagnostic.SA1210.severity = none   # using 字母序
+dotnet_diagnostic.SA1101.severity = none   # 必须 this. 前缀 - 与简洁策略冲突
+
+dotnet_diagnostic.SA1309.severity = none   # 下划线字段命名 - 现有代码大量使用, 延后统一
+dotnet_diagnostic.SA1313.severity = none   # 参数命名 (下划线 / 大小写) - 延后
+
+dotnet_diagnostic.SA1413.severity = none   # 尾随逗号 - 后续若需要稳定 diff 改为自研规则
+
+dotnet_diagnostic.SA1000.severity = none   # 关键字后空格 - 由 formatter 已基本覆盖
+dotnet_diagnostic.SA1009.severity = none   # 右括号后空格 - 非关键约束
+dotnet_diagnostic.SA1116.severity = none   # 多行参数起始行规则 - 暂不强制
+dotnet_diagnostic.SA1117.severity = none   # 参数同/分行一致性 - 暂不强制
+dotnet_diagnostic.SA1118.severity = none   # 参数跨多行 - 暂不强制
+dotnet_diagnostic.SA1122.severity = none   # 用 string.Empty 替换 "" - 微收益
+
+dotnet_diagnostic.SA0001.severity = none   # XML 注释分析禁用信息 - 不需要提示
+
+# 保留/仍在关注：
+#   SA1107 (多语句同一行) -> warning (调试与可读性)
+# 如需恢复某条，将 severity 调整为 suggestion/warning。
+
+# Code style rules
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+dotnet_style_predefined_type_for_locals_parameters_members = true:suggestion
+dotnet_style_predefined_type_for_member_access = true:suggestion
+dotnet_style_require_accessibility_modifiers = always:suggestion
+dotnet_style_readonly_field = true:suggestion
+
+# Expression-level preferences
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_explicit_tuple_names = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:suggestion
+dotnet_style_prefer_inferred_tuple_names = true:suggestion
+dotnet_style_prefer_inferred_anonymous_type_member_names = true:suggestion
+
+# 禁止在声明后立即使用语句
+dotnet_diagnostic.SA1503.severity = suggestion
+# 要求元素访问后换行
+dotnet_diagnostic.SA1519.severity = suggestion
+
+# C# expression-level preferences
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_style_deconstructed_variable_declaration = true:suggestion
+csharp_prefer_simple_default_expression = true:suggestion
+csharp_style_pattern_local_over_anonymous_function = true:suggestion
+csharp_style_inlined_variable_declaration = true:suggestion
+
+# C# expression-bodied members
+# Gemini (2025-08-27): Proposal to unify member bodies for LLM tooling consistency.
+# Using block bodies for all members reduces syntactic variations, simplifying automated refactoring and analysis.
+# Setting to 'false:suggestion' for a transitional period.
+csharp_style_expression_bodied_methods = false:suggestion
+csharp_style_expression_bodied_constructors = false:suggestion
+csharp_style_expression_bodied_operators = false:suggestion
+csharp_style_expression_bodied_properties = false:suggestion
+csharp_style_expression_bodied_indexers = false:suggestion
+csharp_style_expression_bodied_accessors = false:suggestion
+
+# Pattern matching preferences
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+
+# Null-checking preferences
+csharp_style_throw_expression = true:suggestion
+csharp_style_conditional_delegate_call = true:suggestion
+
+# Modifier preferences
+csharp_preferred_modifier_order = public,private,protected,internal,static,extern,new,virtual,abstract,sealed,override,readonly,unsafe,volatile,async:suggestion
+
+# Variable preferences
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+csharp_using_directive_placement = outside_namespace:silent
+csharp_style_expression_bodied_lambdas = true:silent
+csharp_style_expression_bodied_local_functions = false:silent
+csharp_style_namespace_declarations = block_scoped:silent
+csharp_style_namespace_declarations = file_scoped:suggestion
+csharp_style_prefer_method_group_conversion = true:silent
+csharp_style_prefer_top_level_statements = true:silent
+csharp_style_prefer_primary_constructors = true:suggestion
+csharp_prefer_system_threading_lock = true:suggestion
+csharp_prefer_static_local_function = true:suggestion
+csharp_prefer_static_anonymous_function = true:suggestion
+csharp_style_prefer_readonly_struct = true:suggestion
+csharp_style_prefer_readonly_struct_member = true:suggestion
+
+# AI 友好附加代码风格（减少冗余语法 / 提升语义压缩度）
+dotnet_style_prefer_simplified_boolean_expressions = true:suggestion
+dotnet_style_prefer_compound_assignment = true:suggestion
+dotnet_style_prefer_simplified_interpolation = true:suggestion
+# .NET 8+ 支持集合表达式（若使用更低版本可注释掉）
+dotnet_style_prefer_collection_expression = true:suggestion
+
+#### LLM协作增强草案 (GPT提案区块) #############################################
+# 目的: 把“机器友好”与“人类可读”两种关注点显式化，以便逐条决策。
+# 使用方式: 逐项评审后把决定版解除注释, 未采用的方案可留存历史对比。
+
+# 1. 表达式体成员 (可选收紧: 减少多态写法, 便于批量替换)
+# 当前: 方法/构造/运算符禁止表达式体, 属性/索引器/访问器允许
+# 备选(严格全部禁用):
+#   csharp_style_expression_bodied_properties = false:silent
+#   csharp_style_expression_bodied_indexers  = false:silent
+#   csharp_style_expression_bodied_accessors = false:silent
+
+# 2. 空行规约 (尚未启用) – 可考虑引入自定义分析器以限制连续空行 > 1
+#   理由: 行窗口密度提升, LLM读取上下文效率更高 (Claude, Gemini, GPT 一致)
+
+# 3. 最大行宽 (未设定): 保留不限制有利于信息密度; 若引入换行, 建议 >160 以减少“格式噪声”。
+
+# 4. 诊断严苛度策略:
+#   结构性(括号/换行) -> error
+#   风格偏好(表达式体/var) -> suggestion
+#   可安全自动修复项 -> warning 可促进统一
+
+# 5. 运算符空格策略决策模板 (记录最后一次结论日期):
+#   2025-08-27 : 暂维持 before_and_after (待团队基于可读 vs 密度基准做一次AB对比)
+
+###############################################################################
+
+[*.cs]
+#### 命名样式 ####
+
+# 命名规则
+
+dotnet_naming_rule.interface_should_be_begins_with_i.severity = suggestion
+dotnet_naming_rule.interface_should_be_begins_with_i.symbols = interface
+dotnet_naming_rule.interface_should_be_begins_with_i.style = begins_with_i
+
+dotnet_naming_rule.types_should_be_pascal_case.severity = suggestion
+dotnet_naming_rule.types_should_be_pascal_case.symbols = types
+dotnet_naming_rule.types_should_be_pascal_case.style = pascal_case
+
+dotnet_naming_rule.non_field_members_should_be_pascal_case.severity = suggestion
+dotnet_naming_rule.non_field_members_should_be_pascal_case.symbols = non_field_members
+dotnet_naming_rule.non_field_members_should_be_pascal_case.style = pascal_case
+
+# 符号规范
+
+dotnet_naming_symbols.interface.applicable_kinds = interface
+dotnet_naming_symbols.interface.applicable_accessibilities = public, internal, private, protected, protected_internal, private_protected
+dotnet_naming_symbols.interface.required_modifiers =
+
+dotnet_naming_symbols.types.applicable_kinds = class, struct, interface, enum
+dotnet_naming_symbols.types.applicable_accessibilities = public, internal, private, protected, protected_internal, private_protected
+dotnet_naming_symbols.types.required_modifiers =
+
+dotnet_naming_symbols.non_field_members.applicable_kinds = property, event, method
+dotnet_naming_symbols.non_field_members.applicable_accessibilities = public, internal, private, protected, protected_internal, private_protected
+dotnet_naming_symbols.non_field_members.required_modifiers =
+
+# 命名样式
+
+dotnet_naming_style.begins_with_i.required_prefix = I
+dotnet_naming_style.begins_with_i.required_suffix =
+dotnet_naming_style.begins_with_i.word_separator =
+dotnet_naming_style.begins_with_i.capitalization = pascal_case
+
+dotnet_naming_style.pascal_case.required_prefix =
+dotnet_naming_style.pascal_case.required_suffix =
+dotnet_naming_style.pascal_case.word_separator =
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+# （已去重）上面的 pascal_case 样式重复定义已移除，保持单一定义避免解析冗余。

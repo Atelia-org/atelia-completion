@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+.atelia/
+artifacts/
+TestResults/
+*.trx
+*.user

@@ -305,7 +305,7 @@ src/Completion.Tools/
 - Completion 层不感知 "Turn"概念；`ICompletionClient.StreamCompletionAsync` 是无状态的
 - `observer` 参数为必传；不观察时显式传 `null`
 - Turn 内 `LlmProfile` 锁定的不变量与校验全部位于 `Agent.Core/AgentEngine.cs`
-- 详见 [docs/Agent/memory-notebook.md](../Agent/memory-notebook.md) 的"Turn 与 LlmProfile 锁定"小节
+- 详见原 Atelia [docs/Agent/memory-notebook.md](https://github.com/Atelia-org/atelia/blob/c66d84654408321aab00a66aeb53e1dd19a44679/docs/Agent/memory-notebook.md) 的"Turn 与 LlmProfile 锁定"小节
 - 该约束为 provider-native replay block 奠定前提：`ActionBlock.ReasoningBlock.Origin` 与 Turn lock 同构，`ProjectInvocationContext` 仅在 `Origin == TargetInvocation` 且存在显式 Turn 起点时在 ActiveTurnTail 保留 replay-compatible block，Stable Prefix 始终剩离。Anthropic 路径已端到端落地；OpenAI reasoning_content 仍丢弃；Gemini `GeminiReplayBlock` 走同一套边界。
 
 ---

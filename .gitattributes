@@ -1,0 +1,45 @@
+# Global text normalization: repository stores LF, working tree uses LF by default
+* text=auto eol=lf
+
+# Windows-specific files: keep CRLF in working tree (still LF in repo)
+*.sln text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Shell scripts: enforce LF in working tree
+*.sh text eol=lf
+
+# Markdown files: allow trailing whitespace (used for hard line breaks)
+*.md -whitespace
+*.mdx -whitespace
+
+# Common binary formats (no line ending normalization)
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.webp -text
+*.ico -text
+*.pdf -text
+*.zip -text
+*.gz -text
+*.7z -text
+*.rar -text
+*.tar -text
+*.xz -text
+*.mp4 -text
+*.mov -text
+*.avi -text
+*.wmv -text
+*.dll -text
+*.exe -text
+*.pdb -text
+*.nupkg -text
+
+# Fonts and other binaries
+*.woff -text
+*.woff2 -text
+*.ttf -text
+*.eot -text
+*.otf -text

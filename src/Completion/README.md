@@ -18,7 +18,8 @@ dotnet add package Atelia.Completion --version 0.1.0-preview.1
 delta 与 date；正文读取失败不会抹掉已观察到的状态码，response 仍会释放。
 `CompletionStreamInterruptedException` 现在继承 `CompletionFailureException`，不再继承 `IOException`；
 Codex 的 HTTP/transport 失败也使用共享异常，旧 Codex-specific 异常只表达 protocol compatibility。
-异常诊断正文仍可能包含 provider 数据，不应用作 UI 安全文本或持久业务原因；宿主应只发布归一化错误码。
+HTTP 异常诊断正文限制为归一化单行的前 512 字符；结构化 code 从完整错误响应解析，不因诊断截断丢失。
+该摘录仍可能包含 provider 数据，不应用作 UI 安全文本或持久业务原因；宿主应只发布归一化错误码。
 
 Chat/Gemini 在 finish terminal 后不再等待 trailing usage。若终止 frame 未带 usage，
 相应计量字段就是 unknown；完整业务结果不能因可选计量迟到而丢失。

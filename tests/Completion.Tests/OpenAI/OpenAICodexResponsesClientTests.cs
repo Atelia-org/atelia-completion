@@ -501,7 +501,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_NonSuccessPreservesLargeBodyDiagnostics() {
+    public async Task StreamCompletionAsync_NonSuccessBoundsLargeBodyDiagnostics() {
         string oversizedBody =
             "{\"error\":{\"message\":\"SECRET_CANARY\","
             + "\"code\":\"unsafe\\ncode\"},\"padding\":\""
@@ -544,7 +544,9 @@ public sealed class OpenAICodexResponsesClientTests {
         ));
 
         Assert.Equal("unsafe\ncode", exception.Failure.ProviderCode);
-        Assert.Contains(oversizedBody, exception.Message);
+        Assert.EndsWith(oversizedBody[..512], exception.Message);
+        Assert.True(exception.Message.Length < 640);
+        Assert.DoesNotContain(oversizedBody, exception.Message);
         Assert.Contains(
             "SECRET_CANARY",
             exception.ToString(),

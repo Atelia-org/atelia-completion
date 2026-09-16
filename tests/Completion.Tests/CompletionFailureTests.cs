@@ -10,6 +10,24 @@ using Xunit;
 namespace Atelia.Completion.Tests;
 
 public sealed class CompletionFailureTests {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LongErrorBody_DiagnosticsAreBoundedWithoutLosingFailureFacts(bool includeDiagnosticBody) {
+        string body = "{\n\"padding\":\"" + new string('x', 20_000)
+            + "\",\"error\":{\"code\":\"insufficient_quota\",\"message\":\"TRAILING_PRIVATE_TEXT\"}}";
+        using var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests) { Content = new StringContent(body) };
+        response.Headers.RetryAfter = new(TimeSpan.FromSeconds(123));
+        var exception = await CompletionHttpRequestUtility.CreateHttpFailureAsync(response, "fixture request", default, includeDiagnosticBody);
+        Assert.Equal(new(CompletionFailureKind.Http, 429, "insufficient_quota", TimeSpan.FromSeconds(123)), exception.Failure);
+        const string prefix = "fixture request failed with HTTP status 429.";
+        Assert.Equal(includeDiagnosticBody ? prefix + " Response body: " + body.ReplaceLineEndings(" ").Trim()[..512] : prefix,
+            exception.Message);
+        Assert.DoesNotContain("TRAILING_PRIVATE_TEXT", exception.ToString());
+        Assert.DoesNotContain("insufficient_quota", exception.Message);
+        Assert.Null(exception.InnerException);
+    }
+
     [Fact]
     public async Task TransportCancellationWithoutCallerCancellation_IsClassified() {
         using var http = new HttpClient(new Handler(_ => throw new TaskCanceledException("transport timeout"))) {

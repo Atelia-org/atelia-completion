@@ -6,6 +6,7 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.Completion;
 
 internal static class CompletionHttpRequestUtility {
+    private const int MaxErrorBodyLength = 512;
     private const int MaxTransportFailureSummaryLength = 512;
 
     public static Uri NormalizeBaseAddress(Uri baseAddress) {
@@ -140,7 +141,7 @@ internal static class CompletionHttpRequestUtility {
         return new CompletionFailureException(
             new(CompletionFailureKind.Http, (int)response.StatusCode, code, ReadRetryAfter(response)),
             $"{displayName} failed with HTTP status {(int)response.StatusCode}."
-                + (includeDiagnosticBody ? $" Response body: {body}" : string.Empty),
+                + (includeDiagnosticBody ? $" Response body: {Truncate(NormalizeSingleLine(body), MaxErrorBodyLength)}" : string.Empty),
             includeDiagnosticBody ? readFailure : null);
     }
 

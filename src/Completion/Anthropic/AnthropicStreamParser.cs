@@ -438,7 +438,7 @@ internal sealed class AnthropicStreamParser {
         FinalizeTerminalStreamingState(aggregator);
         DebugUtil.Warning(DebugCategory, $"[Anthropic] API error type={errorType}: {errorMessage}");
         aggregator.AppendError(errorMessage);
-        aggregator.MarkFailed(errorType, errorMessage);
+        aggregator.MarkFailed(errorType, errorMessage, errorType);
         _terminalEventObserved = true;
     }
 

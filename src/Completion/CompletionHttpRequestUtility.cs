@@ -1,10 +1,11 @@
-using System.Net;
 using System.Net.Http;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Atelia.Completion.Abstractions;
 
 namespace Atelia.Completion;
 
 internal static class CompletionHttpRequestUtility {
-    private const int MaxErrorBodyLength = 512;
     private const int MaxTransportFailureSummaryLength = 512;
 
     public static Uri NormalizeBaseAddress(Uri baseAddress) {
@@ -53,7 +54,7 @@ internal static class CompletionHttpRequestUtility {
         if (string.IsNullOrWhiteSpace(requestDisplayName)) { throw new ArgumentException("Request display name must not be blank.", nameof(requestDisplayName)); }
 
         using (httpRequest) {
-            var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            var response = await SendAsync(httpClient, httpRequest, cancellationToken);
             if (response.IsSuccessStatusCode) {
                 var mediaType = response.Content.Headers.ContentType?.MediaType;
                 if (string.Equals(mediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase)) {
@@ -67,24 +68,80 @@ internal static class CompletionHttpRequestUtility {
                 );
             }
 
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            var statusCode = response.StatusCode;
-            response.Dispose();
-            throw CreateRequestFailure(requestDisplayName, statusCode, errorBody);
+            using (response) {
+                throw await CreateHttpFailureAsync(response, requestDisplayName, cancellationToken);
+            }
         }
     }
 
-    public static HttpRequestException CreateRequestFailure(string requestDisplayName, HttpStatusCode statusCode, string errorBody) {
-        if (string.IsNullOrWhiteSpace(requestDisplayName)) { throw new ArgumentException("Request display name must not be blank.", nameof(requestDisplayName)); }
+    internal static async Task<HttpResponseMessage> SendAsync(
+        HttpClient client, HttpRequestMessage request, CancellationToken cancellationToken
+    ) {
+        try {
+            return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or OperationCanceledException) {
+            throw TransportFailure(exception);
+        }
+    }
 
-        var normalizedBody = NormalizeSingleLine(errorBody);
-        normalizedBody = Truncate(normalizedBody, MaxErrorBodyLength);
+    internal static async Task<Stream> OpenStreamAsync(HttpContent content, CancellationToken cancellationToken) {
+        try {
+            return await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or OperationCanceledException) {
+            throw TransportFailure(exception);
+        }
+    }
 
-        return new HttpRequestException(
-            $"{requestDisplayName} failed status={(int)statusCode} body={normalizedBody}",
-            inner: null,
-            statusCode: statusCode
-        );
+    internal static CompletionFailureException TransportFailure(Exception exception) =>
+        new(new(CompletionFailureKind.Transport), "Completion transport I/O failed.", exception);
+
+    internal static TimeSpan? ReadRetryAfter(HttpResponseMessage response, DateTimeOffset? now = null) {
+        var header = response.Headers.RetryAfter;
+        TimeSpan? delay = header?.Delta ?? (header?.Date - (now ?? DateTimeOffset.UtcNow));
+        return delay is { Ticks: >= 0 } ? delay : null;
+    }
+
+    internal static string? ReadProviderCode(JsonNode? envelope) {
+        if (envelope is not JsonObject obj) { return null; }
+        JsonObject error = obj["error"] as JsonObject ?? obj;
+        foreach (string field in new[] { "code", "status", "type" }) {
+            if (error[field] is JsonValue value && value.TryGetValue<string>(out string? code)
+                && !string.IsNullOrWhiteSpace(code)) { return code; }
+        }
+        return null;
+    }
+
+    internal static async Task<CompletionFailureException> CreateHttpFailureAsync(
+        HttpResponseMessage response, string displayName, CancellationToken cancellationToken,
+        bool includeDiagnosticBody = true
+    ) {
+        string? code = null;
+        string? body = null;
+        Exception? readFailure = null;
+        try {
+            body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            try { code = ReadProviderCode(JsonNode.Parse(body)); }
+            catch (JsonException) { /* Non-JSON bodies do not erase authoritative HTTP status. */ }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or OperationCanceledException) {
+            readFailure = exception;
+        }
+        return new CompletionFailureException(
+            new(CompletionFailureKind.Http, (int)response.StatusCode, code, ReadRetryAfter(response)),
+            $"{displayName} failed with HTTP status {(int)response.StatusCode}."
+                + (includeDiagnosticBody ? $" Response body: {body}" : string.Empty),
+            includeDiagnosticBody ? readFailure : null);
     }
 
     public static string FormatTransportFailureSummary(Exception exception) {

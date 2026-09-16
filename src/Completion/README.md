@@ -13,14 +13,26 @@ dotnet add package Atelia.Completion --version 0.1.0-preview.1
 没有SSE frame都不是失败证据。`HttpClient.Timeout`统一为`Timeout.InfiniteTimeSpan`，调用方只能通过自己传入的
 `CancellationToken`取消。
 
+源码变更（尚未发布）：`CompletionFailureInfo(Kind, HttpStatusCode, ProviderCode, RetryAfter)`
+是调用异常与 provider Failed 结果共用的事实合同，不包含重试策略。HTTP 的 Retry-After 同时接受
+delta 与 date；正文读取失败不会抹掉已观察到的状态码，response 仍会释放。
+`CompletionStreamInterruptedException` 现在继承 `CompletionFailureException`，不再继承 `IOException`；
+Codex 的 HTTP/transport 失败也使用共享异常，旧 Codex-specific 异常只表达 protocol compatibility。
+异常诊断正文仍可能包含 provider 数据，不应用作 UI 安全文本或持久业务原因；宿主应只发布归一化错误码。
+
+Chat/Gemini 在 finish terminal 后不再等待 trailing usage。若终止 frame 未带 usage，
+相应计量字段就是 unknown；完整业务结果不能因可选计量迟到而丢失。
+Anthropic/Gemini 的共享 capability preflight 在最后 waiter 取消时会取消并等待 fetch 清理；
+清理未完成前不启动替代 fetch。其他仍在等待同一 fetch 的调用不受单个 waiter 取消影响。
+
 ## 共享边界
 
-- 成功HTTP响应必须声明`text/event-stream`；状态码、建连、读取和解码错误按原始transport/protocol错误传播。
+- 成功HTTP响应必须声明`text/event-stream`；HTTP、建连、打开和读取流的错误以 `CompletionFailureException.Failure` 报告结构化事实（Transport/Http、状态码、provider code、Retry-After）。parser/observer/投影异常不归类为网络错误。
 - 所有Provider共享`CompletionSseEventReader`：按SSE空行提交frame，支持CR/LF/CRLF、多行`data:`、注释、
   UTF-8 BOM与replacement decoding；EOF时未提交的半个frame不会交给parser。
 - 只有下表中的provider terminal evidence才能确定远端结果。显式terminal到达后立即返回，不等待连接EOF。
 - 已收到合法frame但在terminal evidence前EOF，抛出`CompletionStreamInterruptedException`。这表示远端结果不确定，
-  runtime不得透明重试或把它伪装为LLM拒答。唯一的窄兼容例外是Anthropic：所有content block均已关闭、
+  库不透明重试，也不把它伪装为LLM拒答；宿主按调用业务语义决定是否重算，可能重复计费。唯一的窄兼容例外是Anthropic：所有content block均已关闭、
   已收到非空`message_delta.stop_reason`、随后无pending frame的clean EOF但缺少data-free `message_stop`时，按该stop reason结束。
 - caller cancellation保持原`CancellationToken`；observer cleanup失败不得覆盖原始read/cancellation异常。
 - 未被当前版本识别、但外层event envelope合法的字段或事件保持forward-compatible；已知事件缺少必需shape、
@@ -110,7 +122,7 @@ if (result.Termination.Kind == CompletionTerminationKind.Completed) {
 可选的 `JsonLinesCompletionHttpExchangeFileSink` 仍只支持 Linux；Windows 默认调用不依赖 raw exchange 文件日志。
 
 接入 Player 等调用方时，期限由传入的 `CancellationToken` 控制；`CompletionStreamInterruptedException` 表示
-结果不确定，不能透明重试。`CompletionUsage` 中的 `null` 表示该维度未知，`0` 才是明确报告的零；不要为了适配
+结果不确定，库不自动重试，宿主可以按纯生成等业务语义重新调用。HTTP 401/403/429 同样通过共享失败事实报告；401 后 credential generation 确实变化时仍只允许一次立即认证协商，不对 429/5xx/断流增加内部重试。`CompletionUsage` 中的 `null` 表示该维度未知，`0` 才是明确报告的零；不要为了适配
 profiler 而补零或推算缺失维度。以上语义在 Linux / Windows 相同。
 
 Galatea 接入、connection shape、安全 preflight、环境变量和 live smoke 见

@@ -5,11 +5,10 @@ namespace Atelia.Completion.Abstractions;
 /// outcome.
 /// </summary>
 /// <remarks>
-/// A provider adapter may throw this exception only after proving either that
-/// local deterministic validation rejected the request before credential or
-/// network dispatch, or that the remote endpoint authoritatively rejected the
-/// request before any observer delta was emitted. In both cases the request
-/// cannot still produce an <see cref="ActionMessage"/>. Transport failures,
+/// A provider adapter may throw this exception only when local deterministic
+/// validation rejected the request before credential or network dispatch.
+/// HTTP endpoint rejection is reported through <see cref="CompletionFailureException"/>,
+/// not this local request-contract exception. Transport failures,
 /// cancellation, redirects, server failures, malformed protocol data, or
 /// interrupted streams do not satisfy that proof.
 /// <para>

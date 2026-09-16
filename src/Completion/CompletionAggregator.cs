@@ -32,6 +32,7 @@ public sealed class CompletionAggregator {
     private readonly List<ActionBlock> _blocks = new();
     private readonly StringBuilder _contentBuilder = new();
     private CompletionTermination? _termination;
+    private CompletionFailureInfo? _failure;
     private List<string>? _errors;
     private CompletionUsage _usage = CompletionUsage.Unknown;
     private bool _thinkingInProgress;
@@ -165,8 +166,9 @@ public sealed class CompletionAggregator {
         UpdateTermination(CompletionTermination.Incomplete(providerReason, detail));
     }
 
-    public void MarkFailed(string? providerReason = null, string? detail = null) {
+    public void MarkFailed(string? providerReason = null, string? detail = null, string? providerCode = null) {
         UpdateTermination(CompletionTermination.Failed(providerReason, detail));
+        _failure = new(CompletionFailureKind.Provider, ProviderCode: providerCode);
     }
 
     /// <summary>
@@ -216,7 +218,8 @@ public sealed class CompletionAggregator {
             _termination ?? CompletionTermination.Incomplete(
                 detail: "Completion stream ended without an explicit terminal status."
             ),
-            _usage
+            _usage,
+            _failure
         );
     }
 

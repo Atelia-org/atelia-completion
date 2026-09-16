@@ -95,7 +95,9 @@ Codex 文件凭据支持 Windows/Linux。客户端借用 access-token snapshot�
 
 - `Completed`：协议确认完成后，才将 `Message.GetFlattenedText()` 交给成功业务处理；正文合规与业务格式仍需宿主验证。
 - `Incomplete` / `Failed`：属于明确非成功结果，不能把部分正文当作成功。具体 terminal 规则以 [传输合同](../../src/Completion/README.md) 为准。
-- `CompletionStreamInterruptedException`：terminal 前流中断，远端结果不确定；不能透明重试。HTTP/协议错误按实际异常传播。
+- `CompletionFailureException.Failure`：统一的 Transport/Http 失败事实，包含可用的 HTTP 状态、provider code 与 Retry-After。`CompletionStreamInterruptedException` 继承它，表示 terminal 前 EOF，远端结果未知。库不自动重试；宿主按业务语义决定是否再次生成，接受可能重复计算/计费。parser/observer/请求投影错误不冒充 transport 失败。
+- `CompletionResult.Failure`：provider 明确失败的结构化事实；现有 Completed/Incomplete/Failed 分类不变。HTTP 401/403/429 是环境失败，不属于本地 `CompletionRequestRejectedException`。只使用稳定 code 判定策略，不匹配错误正文。
+- 权威 terminal 到达立即返回，不等待后续可选 usage；未收到的 usage 保持 unknown。
 - transport 没有 operation/idle timeout。调用者通过 CancellationToken 控制期限；接入已有 RequestTimeout 的宿主时，用 linked CTS 保留该期限，并区分用户取消与超时。无需期限的宿主也应传递实际生命周期 token。
 - `CompletionUsage` 的 `null` 表示未知，`0` 是明确报告的零；不要为了填满 profiler 推算缺失维度。usage 是可观测信息，不进入持久请求身份。
 

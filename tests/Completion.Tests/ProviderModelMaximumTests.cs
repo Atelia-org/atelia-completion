@@ -12,6 +12,34 @@ namespace Atelia.Completion.Tests;
 
 public sealed class ProviderModelMaximumTests {
     [Fact]
+    public async Task Cache_LastWaiterCancellationDrainsBeforeReplacementFetch() {
+        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
+        var cache = new ProviderModelMaximumCache(async (_, token) => {
+            if (Interlocked.Increment(ref calls) != 1) { return 8192; }
+            using var registration = token.Register(() => canceled.TrySetResult());
+            // Simulate a read/cleanup that acknowledges cancellation but has not exited.
+            await cleanup.Task;
+            token.ThrowIfCancellationRequested();
+            return 4096;
+        });
+        using var caller = new CancellationTokenSource();
+        Task<int> first = cache.GetAsync("same", caller.Token);
+        caller.Cancel();
+        await canceled.Task;
+        Task<int> second = cache.GetAsync("same", CancellationToken.None);
+        Assert.False(first.IsCompleted);
+        Assert.False(second.IsCompleted);
+        Assert.Equal(1, Volatile.Read(ref calls));
+        cleanup.SetResult();
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        Assert.Equal(caller.Token, exception.CancellationToken);
+        Assert.Equal(8192, await second);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task Cache_OwnerCallerCancellationDoesNotCancelSharedFetch() {
         var fetchStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
@@ -305,11 +333,11 @@ public sealed class ProviderModelMaximumTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new AnthropicClient(null, httpClient);
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+        var exception = await Assert.ThrowsAsync<CompletionFailureException>(() =>
             client.StreamCompletionAsync(Request("claude-opus-5"), null, CancellationToken.None)
         );
 
-        Assert.Equal((HttpStatusCode)status, exception.StatusCode);
+        Assert.Equal(status, exception.Failure.HttpStatusCode);
         Assert.Equal(HttpMethod.Get, Assert.Single(handler.Requests).Method);
     }
 
@@ -365,8 +393,8 @@ public sealed class ProviderModelMaximumTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new AnthropicClient(KeyCanary, httpClient);
 
-        HttpRequestException status = await Assert.ThrowsAsync<
-            HttpRequestException
+        CompletionFailureException status = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request("claude-retry"),
             null,
@@ -536,7 +564,7 @@ public sealed class ProviderModelMaximumTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new GeminiClient(KeyCanary, httpClient);
 
-        Exception status = await Assert.ThrowsAsync<HttpRequestException>(() =>
+        Exception status = await Assert.ThrowsAsync<CompletionFailureException>(() =>
             client.StreamCompletionAsync(
                 Request("gemini-retry"), null, CancellationToken.None
             )

@@ -64,7 +64,7 @@ public sealed class GeminiClient : ICompletionClient {
         );
         using var response = await SendStreamingRequestAsync(request.ModelId, apiRequest, cancellationToken);
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var stream = await CompletionHttpRequestUtility.OpenStreamAsync(response.Content, cancellationToken);
 
         var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
@@ -87,8 +87,7 @@ public sealed class GeminiClient : ICompletionClient {
                 if (frame.Data is null) { continue; }
 
                 parser.ParseEvent(frame.Data, aggregator);
-                if (parser.TerminalEventObserved
-                    && !parser.PostTerminalUsageAllowed) {
+                if (parser.TerminalEventObserved) {
                     break;
                 }
                 if (!parser.TerminalEventObserved
@@ -158,9 +157,8 @@ public sealed class GeminiClient : ICompletionClient {
         CancellationToken cancellationToken
     ) {
         using HttpRequestMessage request = CreateModelInfoRequest(modelId);
-        using HttpResponseMessage response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
+        using HttpResponseMessage response = await CompletionHttpRequestUtility.SendAsync(
+            _httpClient, request,
             cancellationToken
         ).ConfigureAwait(false);
         using JsonDocument document = await ProviderModelCapabilityResponse

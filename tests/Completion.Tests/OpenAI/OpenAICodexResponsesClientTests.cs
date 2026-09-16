@@ -223,19 +223,16 @@ public sealed class OpenAICodexResponsesClientTests {
         observer.ReceivedThinkingEnd += () => observerEventCount++;
         observer.ReceivedToolCall += _ => observerEventCount++;
 
-        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
-            CompletionRequestRejectedException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer,
             CancellationToken.None
         ));
 
-        Assert.Equal(
-            "openai.codex.authentication-rejected",
-            exception.Termination.ProviderReason
-        );
-        Assert.Equal(["http-status=401"], exception.Errors);
+        Assert.Equal(CompletionFailureKind.Http, exception.Failure.Kind);
+        Assert.Equal(401, exception.Failure.HttpStatusCode);
         Assert.Equal(0, observerEventCount);
         Assert.Equal(2, provider.CallCount);
         Assert.Single(handler.Requests);
@@ -256,37 +253,33 @@ public sealed class OpenAICodexResponsesClientTests {
             first.AccountFingerprint
         );
 
-        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
-            CompletionRequestRejectedException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
             CancellationToken.None
         ));
 
-        Assert.Equal(
-            "openai.codex.authentication-rejected",
-            exception.Termination.ProviderReason
-        );
-        Assert.Equal(["http-status=401"], exception.Errors);
+        Assert.Equal(CompletionFailureKind.Http, exception.Failure.Kind);
+        Assert.Equal(401, exception.Failure.HttpStatusCode);
         Assert.Equal(2, provider.CallCount);
         Assert.Equal(2, handler.Requests.Count);
     }
 
     [Theory]
-    [InlineData(400, OpenAICodexResponsesFailureReason.BackendFailure)]
-    [InlineData(408, OpenAICodexResponsesFailureReason.BackendFailure)]
-    [InlineData(409, OpenAICodexResponsesFailureReason.BackendFailure)]
-    [InlineData(422, OpenAICodexResponsesFailureReason.BackendFailure)]
-    [InlineData(500, OpenAICodexResponsesFailureReason.BackendFailure)]
-    [InlineData(301, OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect)]
-    [InlineData(302, OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect)]
-    [InlineData(303, OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect)]
-    [InlineData(307, OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect)]
-    [InlineData(308, OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect)]
-    public async Task StreamCompletionAsync_NonRetryableStatusSendsOneRequest(
-        int statusCode,
-        OpenAICodexResponsesFailureReason expectedReason
+    [InlineData(400)]
+    [InlineData(408)]
+    [InlineData(409)]
+    [InlineData(422)]
+    [InlineData(500)]
+    [InlineData(301)]
+    [InlineData(302)]
+    [InlineData(303)]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task StreamCompletionAsync_HttpStatusNeverRetriesInsideLibrary(
+        int statusCode
     ) {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
@@ -301,15 +294,16 @@ public sealed class OpenAICodexResponsesClientTests {
             credential.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
             CancellationToken.None
         ));
 
-        Assert.Equal(expectedReason, exception.Reason);
+        Assert.Equal(CompletionFailureKind.Http, exception.Failure.Kind);
+        Assert.Equal(statusCode, exception.Failure.HttpStatusCode);
         Assert.Contains(
             "PROVIDER_ERROR_CANARY",
             exception.ToString(),
@@ -319,12 +313,11 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Theory]
-    [InlineData(401, "openai.codex.authentication-rejected")]
-    [InlineData(403, "openai.codex.access-denied")]
-    [InlineData(429, "openai.codex.rate-limited")]
-    public async Task StreamCompletionAsync_AuthoritativePreStreamStatusIsTypedKnownRejection(
-        int statusCode,
-        string expectedProviderReason
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(429)]
+    public async Task StreamCompletionAsync_HttpFailureCarriesSharedFactsWithoutRetry(
+        int statusCode
     ) {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
         var provider = new ScriptedCredentialProvider(_ => credential);
@@ -365,24 +358,12 @@ public sealed class OpenAICodexResponsesClientTests {
         observer.ReceivedThinkingEnd += () => observerEventCount++;
         observer.ReceivedToolCall += _ => observerEventCount++;
 
-        CompletionRequestRejectedException exception = await Assert.ThrowsAsync<
-            CompletionRequestRejectedException
-        >(() => client.StreamCompletionAsync(
-            Request(),
-            observer,
-            CancellationToken.None
-        ));
-
-        Assert.Equal(
-            CompletionTerminationKind.Failed,
-            exception.Termination.Kind
-        );
-        Assert.Equal(
-            expectedProviderReason,
-            exception.Termination.ProviderReason
-        );
-        Assert.Equal([$"http-status={statusCode}"], exception.Errors);
-        Assert.IsType<OpenAICodexResponsesException>(exception.InnerException);
+        CompletionFailureException exception = await Assert.ThrowsAsync<CompletionFailureException>(
+            () => client.StreamCompletionAsync(Request(), observer, CancellationToken.None));
+        Assert.Equal(CompletionFailureKind.Http, exception.Failure.Kind);
+        Assert.Equal(statusCode, exception.Failure.HttpStatusCode);
+        Assert.Equal("ASCII_SECRET_CODE_CANARY", exception.Failure.ProviderCode);
+        Assert.Equal(statusCode == 429 ? TimeSpan.FromSeconds(5) : (TimeSpan?)null, exception.Failure.RetryAfter);
         Assert.Contains(
             "PROVIDER_MESSAGE_CANARY",
             exception.ToString(),
@@ -391,16 +372,6 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Contains(
             "ASCII_SECRET",
             exception.ToString(),
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            "ASCII_SECRET",
-            exception.Termination.Detail ?? string.Empty,
-            StringComparison.Ordinal
-        );
-        Assert.DoesNotContain(
-            "ASCII_SECRET",
-            string.Join("\n", exception.Errors),
             StringComparison.Ordinal
         );
         Assert.Equal(0, observerEventCount);
@@ -448,19 +419,16 @@ public sealed class OpenAICodexResponsesClientTests {
             credential.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
             CancellationToken.None
         ));
 
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
-        Assert.Equal("ASCII_SECRET_CODE_CANARY", exception.ProviderErrorCode);
-        Assert.Equal("ASCII_SECRET_TYPE_CANARY", exception.ProviderErrorType);
-        Assert.Equal("$ASCII_SECRET_PARAM_CANARY", exception.ProviderErrorParameter);
-        Assert.Equal("ASCII_SECRET_REQUEST_CANARY", exception.ProviderRequestId);
+        Assert.Equal((int)HttpStatusCode.BadRequest, exception.Failure.HttpStatusCode);
+        Assert.Equal("ASCII_SECRET_CODE_CANARY", exception.Failure.ProviderCode);
         Assert.Contains(
             "ASCII_SECRET",
             exception.Message,
@@ -489,7 +457,7 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Fact]
-    public async Task StreamCompletionAsync_DetailOnlyBadRequestRemainsOutcomeUnknown() {
+    public async Task StreamCompletionAsync_DetailOnlyBadRequestReportsHttpWithoutProviderCode() {
         CodexSubscriptionCredential credential = Credential(
             "token",
             "account",
@@ -511,8 +479,8 @@ public sealed class OpenAICodexResponsesClientTests {
             credential.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
@@ -520,13 +488,11 @@ public sealed class OpenAICodexResponsesClientTests {
         ));
 
         Assert.Equal(
-            OpenAICodexResponsesFailureReason.BackendFailure,
-            exception.Reason
+            CompletionFailureKind.Http,
+            exception.Failure.Kind
         );
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
-        Assert.Null(exception.ProviderErrorCode);
-        Assert.Null(exception.ProviderErrorType);
-        Assert.Null(exception.ProviderErrorParameter);
+        Assert.Equal((int)HttpStatusCode.BadRequest, exception.Failure.HttpStatusCode);
+        Assert.Null(exception.Failure.ProviderCode);
         Assert.Contains(
             "PROVIDER_DETAIL_CANARY",
             exception.ToString(),
@@ -569,18 +535,15 @@ public sealed class OpenAICodexResponsesClientTests {
             credential.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
             CancellationToken.None
         ));
 
-        Assert.Equal("unsafe\ncode", exception.ProviderErrorCode);
-        Assert.Null(exception.ProviderErrorType);
-        Assert.Null(exception.ProviderErrorParameter);
-        Assert.Equal("unsafe@request", exception.ProviderRequestId);
+        Assert.Equal("unsafe\ncode", exception.Failure.ProviderCode);
         Assert.Contains(oversizedBody, exception.Message);
         Assert.Contains(
             "SECRET_CANARY",
@@ -624,18 +587,15 @@ public sealed class OpenAICodexResponsesClientTests {
             credential.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
             CancellationToken.None
         ));
 
-        Assert.Equal("UNSAFE CODE CANARY", exception.ProviderErrorCode);
-        Assert.Equal("unsafe\ntype", exception.ProviderErrorType);
-        Assert.Equal("unsafe@param", exception.ProviderErrorParameter);
-        Assert.Equal("unsafe@request", exception.ProviderRequestId);
+        Assert.Equal("UNSAFE CODE CANARY", exception.Failure.ProviderCode);
         Assert.Contains(
             "CANARY",
             exception.ToString(),
@@ -1041,8 +1001,8 @@ public sealed class OpenAICodexResponsesClientTests {
             credential.AccountFingerprint
         );
 
-        OpenAICodexResponsesException exception = await Assert.ThrowsAsync<
-            OpenAICodexResponsesException
+        CompletionFailureException exception = await Assert.ThrowsAsync<
+            CompletionFailureException
         >(() => client.StreamCompletionAsync(
             Request(),
             observer: null,
@@ -1050,8 +1010,8 @@ public sealed class OpenAICodexResponsesClientTests {
         ));
 
         Assert.Equal(
-            OpenAICodexResponsesFailureReason.TransportOutcomeUnknown,
-            exception.Reason
+            CompletionFailureKind.Transport,
+            exception.Failure.Kind
         );
         var inner = Assert.IsType<HttpRequestException>(exception.InnerException);
         Assert.Equal(error, inner.HttpRequestError);
@@ -1327,6 +1287,32 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Equal(caller.Token, exception.CancellationToken);
     }
 
+    [Fact]
+    public async Task StreamCompletionAsync_CancellationDoesNotAffectConcurrentInvocation() {
+        CodexSubscriptionCredential credential = Credential("token", "account", 1);
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var stream = new CancellationWaitingStream();
+        int calls = 0;
+        var handler = new CapturingHandler(_ => Interlocked.Increment(ref calls) == 1
+            ? new HttpResponseMessage(HttpStatusCode.OK) {
+                Content = new StreamContent(stream) {
+                    Headers = { ContentType = new("text/event-stream") }
+                }
+            }
+            : CompletedResponse("second"));
+        using var client = CreateClient(provider, handler, credential.AccountFingerprint);
+        using var caller = new CancellationTokenSource();
+        Task<CompletionResult> first = client.StreamCompletionAsync(Request(), null, caller.Token);
+        await stream.Entered;
+        CompletionResult second = await client.StreamCompletionAsync(Request(), null);
+        caller.Cancel();
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        Assert.Equal(caller.Token, exception.CancellationToken);
+        Assert.Equal(CompletionTerminationKind.Completed, second.Termination.Kind);
+        Assert.Equal("second", second.Message.GetFlattenedText());
+        Assert.Equal(2, calls);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -1367,7 +1353,7 @@ public sealed class OpenAICodexResponsesClientTests {
             );
 
             if (httpFailure) {
-                await Assert.ThrowsAsync<CompletionRequestRejectedException>(() =>
+                await Assert.ThrowsAsync<CompletionFailureException>(() =>
                     logging.StreamCompletionAsync(Request(), observer: null, CancellationToken.None));
             }
             else {

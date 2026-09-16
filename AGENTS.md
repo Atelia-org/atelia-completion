@@ -7,7 +7,7 @@
 ## 必须保持的边界
 
 - `Completion.Abstractions` 不依赖 Diagnostics；Tools 不依赖 provider 实现。不要为白盒消费添加跨仓 IVT 或扩大 public API。
-- 只有 Completed 正文适合进入成功业务路径。Incomplete/Failed 不能冒充成功，terminal 前流中断表示结果不确定，不能透明重试。
+- 只有 Completed 正文适合进入成功业务路径。Incomplete/Failed 不能冒充成功，terminal 前流中断表示远端结果未知；库不擅自重试，宿主按业务语义决定是否重新生成（可能重复计算/计费）。HTTP/transport 失败通过 CompletionFailureException.Failure 报告事实，provider terminal 失败通过 CompletionResult.Failure 报告；不解析自然语言错误文本作策略。
 - transport 不设置 operation/idle timeout；期限归宿主 CancellationToken，取消保留 caller token。已有宿主 RequestTimeout 应在宿主边界转成 token，不能在适配时丢失。
 - usage 的 null 表示未知，零需要实际依据；reasoning 原生 payload 的 Origin 与协议身份必须保持，不能当正文或跨协议任意回放。
 - `ToolSession` 顺序使用，非线程安全。参数绑定和权限失败不执行业务方法；执行序号不构成持久化、事务或 exactly-once 保证。副作用提交归宿主。

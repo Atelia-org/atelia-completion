@@ -82,7 +82,7 @@ internal static class CompletionSseEventReader {
         bool hasId = false;
         long? retryMilliseconds = null;
 
-        while (await reader.ReadLineAsync(cancellationToken)
+        while (await ReadLineAsync(reader, cancellationToken)
             .ConfigureAwait(false) is { } line) {
             if (firstLine) {
                 firstLine = false;
@@ -173,5 +173,15 @@ internal static class CompletionSseEventReader {
             if (character is < '0' or > '9') { return false; }
         }
         return true;
+    }
+
+    private static async ValueTask<string?> ReadLineAsync(StreamReader reader, CancellationToken cancellationToken) {
+        try { return await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or HttpRequestException or OperationCanceledException) {
+            throw CompletionHttpRequestUtility.TransportFailure(exception);
+        }
     }
 }

@@ -80,7 +80,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
         );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var stream = await CompletionHttpRequestUtility.OpenStreamAsync(response.Content, cancellationToken);
 
         var aggregator = new CompletionAggregator(invocation, observer);
         aggregator.MergeUsage(
@@ -116,8 +116,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
                 }
 
                 parser.ParseEvent(frame.Data, aggregator);
-                if (parser.TerminalEventObserved
-                    && !_dialect.RequestStreamUsage) {
+                if (parser.TerminalEventObserved) {
                     break;
                 }
 

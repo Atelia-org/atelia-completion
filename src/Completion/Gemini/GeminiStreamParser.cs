@@ -358,7 +358,7 @@ internal sealed class GeminiStreamParser {
         EmitReplayBlockIfNeeded(aggregator);
         DebugUtil.Warning(DebugCategory, $"[Gemini] API error: {errorMessage}");
         aggregator.AppendError(errorMessage);
-        aggregator.MarkFailed(errorStatus ?? "error", errorMessage);
+        aggregator.MarkFailed(errorStatus ?? "error", errorMessage, errorStatus);
         _terminalEventObserved = true;
     }
 

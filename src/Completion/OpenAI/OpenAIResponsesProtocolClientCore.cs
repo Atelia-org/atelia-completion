@@ -95,8 +95,8 @@ internal sealed class OpenAIResponsesProtocolClientCore {
             apiRequest,
             cancellationToken
         ).ConfigureAwait(false);
-        await using Stream stream = await response.Content
-            .ReadAsStreamAsync(cancellationToken)
+        await using Stream stream = await CompletionHttpRequestUtility
+            .OpenStreamAsync(response.Content, cancellationToken)
             .ConfigureAwait(false);
 
         var aggregator = new CompletionAggregator(invocation, observer);

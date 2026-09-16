@@ -24,12 +24,18 @@ internal sealed class ProviderModelMaximumCache(
         ArgumentException.ThrowIfNullOrWhiteSpace(modelId);
 
         while (true) {
+            cancellationToken.ThrowIfCancellationRequested();
             var candidate = new CacheEntry(this, modelId);
             CacheEntry entry = _entries.GetOrAdd(modelId, candidate);
             if (!ReferenceEquals(entry, candidate)) {
                 candidate.DisposeUnused();
             }
             if (!entry.TryAcquire(out Task<int> operation)) {
+                // A retired fetch still owns its I/O until cleanup finishes.
+                // New callers must not create an overlapping replacement.
+                try { await operation.WaitAsync(cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch { /* Only a new fetch may serve this caller. */ }
                 RemoveExact(modelId, entry);
                 continue;
             }
@@ -40,8 +46,14 @@ internal sealed class ProviderModelMaximumCache(
             }
             finally {
                 if (entry.ReleaseWaiter(operation)) {
-                    RemoveExact(modelId, entry);
-                    entry.CancelSharedFetch();
+                    try { entry.CancelSharedFetch(); }
+                    finally {
+                        // Keep ownership even when the underlying fetch ignores cancellation.
+                        // Draining must not replace the original caller cancellation.
+                        try { await operation.ConfigureAwait(false); }
+                        catch { }
+                        RemoveExact(modelId, entry);
+                    }
                 }
             }
         }
@@ -114,7 +126,7 @@ internal sealed class ProviderModelMaximumCache(
         public bool TryAcquire(out Task<int> operation) {
             lock (_gate) {
                 if (_retired) {
-                    operation = null!;
+                    operation = Operation.Value;
                     return false;
                 }
                 _waiterCount++;
@@ -180,11 +192,9 @@ internal static class ProviderModelCapabilityResponse {
     ) {
         ArgumentNullException.ThrowIfNull(response);
         if (!response.IsSuccessStatusCode) {
-            throw new HttpRequestException(
-                $"{providerDisplayName} model capability request failed with HTTP status {(int)response.StatusCode}.",
-                inner: null,
-                response.StatusCode
-            );
+            throw await CompletionHttpRequestUtility.CreateHttpFailureAsync(
+                response, $"{providerDisplayName} model capability request", cancellationToken,
+                includeDiagnosticBody: false);
         }
         if (response.Content.Headers.ContentLength
                 is > MaximumResponseBytes) {
@@ -193,14 +203,20 @@ internal static class ProviderModelCapabilityResponse {
             );
         }
 
-        await using Stream stream = await response.Content
-            .ReadAsStreamAsync(cancellationToken)
+        await using Stream stream = await CompletionHttpRequestUtility
+            .OpenStreamAsync(response.Content, cancellationToken)
             .ConfigureAwait(false);
         using var buffer = new MemoryStream();
         byte[] chunk = GC.AllocateUninitializedArray<byte>(8192);
         while (true) {
-            int read = await stream.ReadAsync(chunk, cancellationToken)
-                .ConfigureAwait(false);
+            int read;
+            try { read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+                throw new OperationCanceledException(cancellationToken);
+            }
+            catch (Exception exception) when (exception is IOException or HttpRequestException or OperationCanceledException) {
+                throw CompletionHttpRequestUtility.TransportFailure(exception);
+            }
             if (read == 0) { break; }
             if (buffer.Length + read > MaximumResponseBytes) {
                 throw new InvalidDataException(

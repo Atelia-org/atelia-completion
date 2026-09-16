@@ -33,13 +33,15 @@ public sealed record CompletionResult {
         CompletionDescriptor invocation,
         IReadOnlyList<string>? errors = null,
         CompletionTermination? termination = null,
-        CompletionUsage? usage = null
+        CompletionUsage? usage = null,
+        CompletionFailureInfo? failure = null
     ) {
         Message = message ?? throw new ArgumentNullException(nameof(message));
         Invocation = invocation ?? throw new ArgumentNullException(nameof(invocation));
         Errors = errors;
         Termination = termination ?? CompletionTermination.Completed();
         Usage = usage ?? CompletionUsage.Unknown;
+        Failure = failure;
     }
 
     /// <summary>Canonical action 消息体。历史回灌请使用此字段。</summary>
@@ -77,6 +79,9 @@ public sealed record CompletionResult {
         get => _usage;
         init => _usage = value ?? throw new ArgumentNullException(nameof(value));
     }
+
+    /// <summary>Structured provider failure facts, when the protocol reports them.</summary>
+    public CompletionFailureInfo? Failure { get; init; }
 
     private static IReadOnlyList<T> FreezeList<T>(IReadOnlyList<T> items)
         => items.Count == 0 ? Array.AsReadOnly(Array.Empty<T>()) : Array.AsReadOnly(items.ToArray());

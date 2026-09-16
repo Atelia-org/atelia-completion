@@ -102,7 +102,7 @@ internal sealed class OpenAIChatStreamParser {
             DiscardIncompleteStreamingState();
             aggregator.AbortIncompleteStreamingState();
             aggregator.AppendError(errorMessage);
-            aggregator.MarkFailed("error", errorMessage);
+            aggregator.MarkFailed("error", errorMessage, CompletionHttpRequestUtility.ReadProviderCode(error));
             _terminalEventObserved = true;
             return;
         }

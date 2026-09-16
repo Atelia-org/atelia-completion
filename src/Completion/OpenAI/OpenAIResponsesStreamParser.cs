@@ -162,7 +162,7 @@ internal sealed class OpenAIResponsesStreamParser {
                 var failedMessage = BuildErrorMessage(obj);
                 FinalizeTerminalStreamingState(aggregator);
                 aggregator.AppendError(failedMessage);
-                aggregator.MarkFailed(eventType, failedMessage);
+                aggregator.MarkFailed(eventType, failedMessage, CompletionHttpRequestUtility.ReadProviderCode(obj["response"]));
                 _terminalEventObserved = true;
                 break;
 
@@ -170,7 +170,7 @@ internal sealed class OpenAIResponsesStreamParser {
                 var errorMessage = BuildErrorMessage(obj);
                 FinalizeTerminalStreamingState(aggregator);
                 aggregator.AppendError(errorMessage);
-                aggregator.MarkFailed(eventType, errorMessage);
+                aggregator.MarkFailed(eventType, errorMessage, CompletionHttpRequestUtility.ReadProviderCode(obj));
                 _terminalEventObserved = true;
                 break;
         }

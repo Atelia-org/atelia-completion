@@ -10,13 +10,11 @@ namespace Atelia.Completion.Gemini.Tests;
 
 public sealed class GeminiClientTests {
     [Fact]
-    public async Task StreamCompletionAsync_CapturesUsageChunkAfterFinishReason() {
+    public async Task StreamCompletionAsync_CapturesUsageInTerminalFrame() {
         var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(
                 """
-                data: {"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}
-
-                data: {"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":70,"candidatesTokenCount":5},"candidates":[]}
+                data: {"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":70,"candidatesTokenCount":5},"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}]}
 
                 """
                 + "\n"
@@ -115,11 +113,11 @@ public sealed class GeminiClientTests {
         };
 
         var client = CreateGeminiClient(httpClient);
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<CompletionFailureException>(
             () => InvokeStreamCompletionAsync(client, CreateRequest())
         );
 
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal((int)HttpStatusCode.BadRequest, exception.Failure.HttpStatusCode);
         Assert.Contains("bad input", exception.Message, StringComparison.Ordinal);
     }
 
@@ -299,11 +297,11 @@ public sealed class GeminiClientTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new GeminiClient(null, httpClient);
 
-        var actual = await Assert.ThrowsAsync<IOException>(
+        var actual = await Assert.ThrowsAsync<CompletionFailureException>(
             () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
         );
 
-        Assert.Same(expected, actual);
+        Assert.Same(expected, actual.InnerException);
     }
 
     [Fact]

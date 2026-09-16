@@ -20,12 +20,6 @@ namespace Atelia.Completion.OpenAI;
 public sealed class OpenAICodexResponsesClient : ICompletionClient,
     IDisposable {
     private const string DebugCategory = "Provider";
-    private const string AuthenticationRejectedReason =
-        "openai.codex.authentication-rejected";
-    private const string AccessDeniedReason =
-        "openai.codex.access-denied";
-    private const string RateLimitedReason =
-        "openai.codex.rate-limited";
 
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -235,59 +229,26 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         CodexSubscriptionCredential credential,
         CancellationToken cancellationToken
     ) {
-        try {
-            using var request = new HttpRequestMessage(
-                HttpMethod.Post,
-                ChatGptCodexResponsesProfile.RelativeRequestUri
-            ) {
-                Content = new ByteArrayContent(body)
-            };
-            request.Content.Headers.ContentType =
-                new MediaTypeHeaderValue("application/json") {
-                    CharSet = "utf-8"
-                };
-            request.Headers.Accept.Add(
-                new MediaTypeWithQualityHeaderValue("text/event-stream")
-            );
-            request.Headers.Authorization = new AuthenticationHeaderValue(
-                "Bearer",
-                credential.AccessToken
-            );
-            AddValidatedHeader(
-                request.Headers,
-                "ChatGPT-Account-ID",
-                credential.AccountId
-            );
-            AddValidatedHeader(request.Headers, "originator", _originator);
-            AddValidatedHeader(request.Headers, "User-Agent", _userAgent);
-            if (!string.IsNullOrWhiteSpace(credential.Residency)) {
-                AddValidatedHeader(
-                    request.Headers,
-                    "x-openai-internal-codex-residency",
-                    credential.Residency
-                );
-            }
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            ChatGptCodexResponsesProfile.RelativeRequestUri
+        ) {
+            Content = new ByteArrayContent(body)
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") {
+            CharSet = "utf-8"
+        };
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.AccessToken);
+        AddValidatedHeader(request.Headers, "ChatGPT-Account-ID", credential.AccountId);
+        AddValidatedHeader(request.Headers, "originator", _originator);
+        AddValidatedHeader(request.Headers, "User-Agent", _userAgent);
+        if (!string.IsNullOrWhiteSpace(credential.Residency)) {
+            AddValidatedHeader(request.Headers, "x-openai-internal-codex-residency", credential.Residency);
+        }
 
-            return await _httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken
-            ).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) {
-            throw;
-        }
-        catch (OpenAICodexResponsesException) {
-            throw;
-        }
-        catch (Exception exception) when (!IsFatal(exception)) {
-            throw Failure(
-                OpenAICodexResponsesFailureReason.TransportOutcomeUnknown,
-                "ChatGPT Codex transport failed before a usable streaming response was obtained. "
-                    + exception.Message,
-                innerException: exception
-            );
-        }
+        return await CompletionHttpRequestUtility.SendAsync(
+            _httpClient, request, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<CodexSubscriptionCredential?>
@@ -356,90 +317,14 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
         HttpResponseMessage response,
         CancellationToken cancellationToken
     ) {
-        HttpStatusCode status = response.StatusCode;
-        string body = await response.Content.ReadAsStringAsync(cancellationToken)
-            .ConfigureAwait(false);
-        string? requestId = ReadRequestId(response);
-        string detail = $"ChatGPT Codex request failed with HTTP {(int)status} ({response.ReasonPhrase})."
-            + (requestId is null ? "" : $" Request ID: {requestId}.")
-            + $" Response body: {body}";
-        string? rejectionReason = status switch {
-            HttpStatusCode.Unauthorized => AuthenticationRejectedReason,
-            HttpStatusCode.Forbidden => AccessDeniedReason,
-            HttpStatusCode.TooManyRequests => RateLimitedReason,
-            _ => null
-        };
-        if (rejectionReason is not null) {
-            return new CompletionRequestRejectedException(
-                CompletionTermination.Failed(rejectionReason,
-                    $"ChatGPT Codex rejected the request before streaming with HTTP status {(int)status}."),
-                [$"http-status={(int)status}"],
-                Failure(OpenAICodexResponsesFailureReason.BackendFailure, detail, status)
-            );
-        }
-
-        BackendFailureDiagnostics diagnostics = ParseBackendFailureDiagnostics(body, requestId);
-        return Failure(
-            (int)status is >= 300 and < 400
-                ? OpenAICodexResponsesFailureReason.UnexpectedBackendRedirect
-                : OpenAICodexResponsesFailureReason.BackendFailure,
-            detail,
-            status,
-            diagnostics: diagnostics
-        );
-    }
-
-    private static BackendFailureDiagnostics ParseBackendFailureDiagnostics(
-        string body, string? requestId
-    ) {
-        try {
-            using JsonDocument document = JsonDocument.Parse(body);
-            if (document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.TryGetProperty("error", out JsonElement error)
-                && error.ValueKind == JsonValueKind.Object) {
-                return new(
-                    ReadJsonString(error, "code"),
-                    ReadJsonString(error, "type"),
-                    ReadJsonString(error, "param"),
-                    requestId
-                );
-            }
-        }
-        catch (JsonException) { /* The complete non-JSON body is already in the exception message. */ }
-        return new(null, null, null, requestId);
-    }
-
-    private static string? ReadJsonString(JsonElement owner, string propertyName) =>
-        owner.TryGetProperty(propertyName, out JsonElement value)
-            && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-
-    private static string? ReadRequestId(HttpResponseMessage response) {
-        foreach (string name in new[] { "x-request-id", "request-id", "openai-request-id" }) {
-            if (response.Headers.TryGetValues(name, out IEnumerable<string>? values)) {
-                return string.Join(", ", values);
-            }
-        }
-        return null;
+        return await CompletionHttpRequestUtility.CreateHttpFailureAsync(
+            response, "ChatGPT Codex request", cancellationToken).ConfigureAwait(false);
     }
 
     private static OpenAICodexResponsesException Failure(
         OpenAICodexResponsesFailureReason reason,
-        string message,
-        HttpStatusCode? statusCode = null,
-        TimeSpan? retryAfter = null,
-        BackendFailureDiagnostics? diagnostics = null,
-        Exception? innerException = null
-    ) => new(
-        reason,
-        message,
-        statusCode,
-        retryAfter,
-        diagnostics?.Code,
-        diagnostics?.Type,
-        diagnostics?.Parameter,
-        diagnostics?.RequestId,
-        innerException
-    );
+        string message
+    ) => new(reason, message);
 
     internal static HttpMessageHandler CreateProductionHandler() =>
         new HttpClientHandler {
@@ -578,21 +463,9 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
             && c is not '\r' and not '\n');
     }
 
-    private static bool IsFatal(Exception exception)
-        => exception is OutOfMemoryException
-            or StackOverflowException
-            or AccessViolationException;
-
     private sealed record UnauthorizedReloadResolution(
         long RejectedGeneration,
         CodexSubscriptionCredential? Replacement
-    );
-
-    private sealed record BackendFailureDiagnostics(
-        string? Code,
-        string? Type,
-        string? Parameter,
-        string? RequestId
     );
 
     public void Dispose() {

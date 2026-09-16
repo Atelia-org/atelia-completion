@@ -1,3 +1,5 @@
+using Atelia.Completion.Abstractions;
+
 namespace Atelia.Completion.Transport;
 
 /// <summary>
@@ -5,12 +7,12 @@ namespace Atelia.Completion.Transport;
 /// terminal event. This describes an incomplete observation of the remote
 /// operation; it does not assert that the LLM operation failed.
 /// </summary>
-public sealed class CompletionStreamInterruptedException : IOException {
+public sealed class CompletionStreamInterruptedException : CompletionFailureException {
     public CompletionStreamInterruptedException(
         string streamDisplayName,
         string? diagnosticContext = null
     )
-        : base(CreateMessage(streamDisplayName, diagnosticContext)) {
+        : base(new(CompletionFailureKind.Transport), CreateMessage(streamDisplayName, diagnosticContext)) {
         StreamDisplayName = streamDisplayName;
         DiagnosticContext = string.IsNullOrWhiteSpace(diagnosticContext)
             ? null

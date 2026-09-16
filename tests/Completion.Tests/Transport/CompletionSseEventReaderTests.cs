@@ -1,4 +1,5 @@
 using System.Text;
+using Atelia.Completion.Abstractions;
 using Atelia.Completion.Transport;
 using Xunit;
 
@@ -187,7 +188,7 @@ public sealed class CompletionSseEventReaderTests {
         );
         var frames = new List<CompletionSseFrame>();
 
-        IOException actual = await Assert.ThrowsAsync<IOException>(
+        CompletionFailureException actual = await Assert.ThrowsAsync<CompletionFailureException>(
             async () => {
                 await foreach (CompletionSseFrame frame in
                     CompletionSseEventReader.ReadFramesAsync(
@@ -199,7 +200,7 @@ public sealed class CompletionSseEventReaderTests {
             }
         );
 
-        Assert.Same(expected, actual);
+        Assert.Same(expected, actual.InnerException);
         Assert.Empty(frames);
         Assert.False(eofDiagnostics.CleanEofObserved);
         Assert.False(eofDiagnostics.HasPendingFrame);

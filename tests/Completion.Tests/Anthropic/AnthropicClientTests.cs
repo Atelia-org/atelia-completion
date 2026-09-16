@@ -145,7 +145,7 @@ public sealed class AnthropicClientTests {
         };
 
         var client = new AnthropicClient(apiKey: null, httpClient: httpClient);
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<CompletionFailureException>(
             () => client.StreamCompletionAsync(
                 new CompletionRequest(
                     "claude-3-5-sonnet-20241022",
@@ -161,7 +161,7 @@ public sealed class AnthropicClientTests {
             )
         );
 
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal((int)HttpStatusCode.BadRequest, exception.Failure.HttpStatusCode);
         Assert.Contains("bad input", exception.Message, StringComparison.Ordinal);
     }
 
@@ -621,11 +621,11 @@ public sealed class AnthropicClientTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new AnthropicClient(null, httpClient);
 
-        var actual = await Assert.ThrowsAsync<IOException>(
+        var actual = await Assert.ThrowsAsync<CompletionFailureException>(
             () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
         );
 
-        Assert.Same(expected, actual);
+        Assert.Same(expected, actual.InnerException);
     }
 
     [Fact]
@@ -751,11 +751,11 @@ public sealed class AnthropicClientTests {
         using var httpClient = CreateHttpClient(handler);
         var client = new AnthropicClient(null, httpClient);
 
-        var actual = await Assert.ThrowsAsync<IOException>(
+        var actual = await Assert.ThrowsAsync<CompletionFailureException>(
             () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
         );
 
-        Assert.Same(expected, actual);
+        Assert.Same(expected, actual.InnerException);
     }
 
     [Fact]

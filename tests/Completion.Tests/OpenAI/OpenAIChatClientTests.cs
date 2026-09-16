@@ -70,9 +70,7 @@ public sealed class OpenAIChatClientTests {
         var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(
                 """
-                data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":null}
-
-                data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":12}}}
+                data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":12}}}
 
                 data: [DONE]
 
@@ -126,9 +124,7 @@ public sealed class OpenAIChatClientTests {
         var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(
                 """
-                data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":null}
-
-                data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}
+                data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}
 
                 data: [DONE]
 
@@ -464,11 +460,11 @@ public sealed class OpenAIChatClientTests {
             dialect: OpenAIChatDialects.SgLangCompatible
         );
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<CompletionFailureException>(
             () => client.StreamCompletionAsync(CreateRequest(), null, CancellationToken.None)
         );
 
-        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal((int)HttpStatusCode.BadRequest, exception.Failure.HttpStatusCode);
         Assert.Contains("bad input", exception.Message, StringComparison.Ordinal);
     }
 

@@ -34,6 +34,21 @@ using (var http = CreateHttp(handler)) {
     var result = await new OpenAIChatClient(null, http, OpenAIChatDialects.SgLangCompatible)
         .StreamCompletionAsync(request, null);
     Require(result.Termination.Kind == CompletionTerminationKind.Failed, "Provider failure became success.");
+    Require(result.Failure is { Kind: CompletionFailureKind.Provider, ProviderCode: "server_error" },
+        "Provider failure facts were lost.");
+}
+
+using (var handler = new ControlledHandler("{\"error\":{\"code\":\"rate_limit_exceeded\"}}", HttpStatusCode.TooManyRequests))
+using (var http = CreateHttp(handler)) {
+    try {
+        await new OpenAIChatClient(null, http).StreamCompletionAsync(request, null);
+        throw new InvalidOperationException("HTTP failure was accepted.");
+    }
+    catch (CompletionFailureException error) {
+        Require(error.Failure == new CompletionFailureInfo(CompletionFailureKind.Http, 429,
+            "rate_limit_exceeded", TimeSpan.FromSeconds(7)), "HTTP failure facts were lost.");
+    }
+    Require(handler.Calls == 1, "Library retried an HTTP failure.");
 }
 
 using (var handler = new ControlledHandler(Frame("partial", null)))
@@ -43,7 +58,9 @@ using (var http = CreateHttp(handler)) {
             .StreamCompletionAsync(request, null);
         throw new InvalidOperationException("EOF before terminal was accepted.");
     }
-    catch (CompletionStreamInterruptedException) { }
+    catch (CompletionStreamInterruptedException error) {
+        Require(error.Failure.Kind == CompletionFailureKind.Transport, "EOF transport fact was lost.");
+    }
     Require(handler.Calls == 1, "Uncertain outcome was retried.");
 }
 
@@ -78,7 +95,7 @@ var execution = await session.ExecuteAsync(new RawToolCall("smoke.echo", "call-1
 Require(execution.ExecuteResult.GetFlattenedText() == "bound", "Tool input binding/execution failed.");
 var invalid = await session.ExecuteAsync(new RawToolCall("smoke.echo", "call-2", "{\"text\":17}"), default);
 Require(invalid.ExecuteResult.Status != ToolExecutionStatus.Success, "Invalid tool argument accepted.");
-Console.WriteLine("Package smoke passed: Chat wire/status/unknown usage/EOF/cancellation and tool declaration/binding/execution.");
+Console.WriteLine("Package smoke passed: Chat wire/status/failure facts/Retry-After/unknown usage/EOF/cancellation and tool declaration/binding/execution.");
 
 static HttpClient CreateHttp(HttpMessageHandler handler) => new(handler) {
     BaseAddress = new Uri("https://package-smoke.invalid/"), Timeout = Timeout.InfiniteTimeSpan
@@ -99,7 +116,7 @@ static void CheckWire(ControlledHandler handler) {
         "User message projection missing.");
 }
 
-sealed class ControlledHandler(string? response) : HttpMessageHandler {
+sealed class ControlledHandler(string? response, HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler {
     public int Calls { get; private set; }
     public string? Body { get; private set; }
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -108,9 +125,11 @@ sealed class ControlledHandler(string? response) : HttpMessageHandler {
         Body = await request.Content!.ReadAsStringAsync(cancellationToken);
         Entered.TrySetResult();
         if (response is null) { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken); }
-        return new HttpResponseMessage(HttpStatusCode.OK) {
+        var result = new HttpResponseMessage(status) {
             Content = new StringContent(response!, Encoding.UTF8, "text/event-stream")
         };
+        if (status == HttpStatusCode.TooManyRequests) { result.Headers.RetryAfter = new(TimeSpan.FromSeconds(7)); }
+        return result;
     }
 }
 

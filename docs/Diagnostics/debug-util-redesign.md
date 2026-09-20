@@ -157,4 +157,4 @@ console: level >= _consoleLevel
 
 验证命令：`dotnet build`（Debug 与 Release）、离线 `dotnet test`（清空 `OPENROUTER_API_KEY` 并关闭 CI 的五个 opt-in 开关）、调用点普查 `rg -n "DebugUtil\." src --glob '*.cs'`。
 
-第 7 节第 5 条要求的 `eng/Test-Package.ps1` 独立消费者验证在本次记录中未见执行结果，状态待确认。延后项（六处 provider fail-closed、clean-EOF Detail 等）不在本次实施范围，仍见 [pending-issues.md](pending-issues.md)。
+第 7 节第 5 条要求的 `eng/Test-Package.ps1` 独立消费者验证已通过：候选版本 `0.1.0-debugutil.371ac66`，sourceRevision `371ac66b5d89c4213195b3a9998618d57e492138`；Pack 与 Test-Package 均成功，且构建输出为 0 warning / 0 error。因原仓 origin 为 `http://github.com/...`，包验证使用同一提交的临时 clone 并将 origin 设为脚本要求的 `https://github.com/Atelia-org/atelia-completion`。证据目录为 `/tmp/atelia-completion-debugutil-371ac66-feed` 与 `/tmp/atelia-completion-debugutil-371ac66-smoke`；四个 nupkg SHA256 已记录于前者 `manifest.0.1.0-debugutil.371ac66.json`。延后项（六处 provider fail-closed、clean-EOF Detail 等）不在本次实施范围，仍见 [pending-issues.md](pending-issues.md)。

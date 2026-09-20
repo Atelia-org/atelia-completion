@@ -33,6 +33,24 @@ public sealed record CompletionConnectionCatalogConfig(
 /// numeric field is required to realize those semantics, the adapter may use
 /// only the selected model's provider-reported maximum.
 /// </remarks>
+/// <param name="Id">Stable connection identifier used for catalog selection and binding.</param>
+/// <param name="Kind">Provider protocol kind, such as <c>openai-chat</c>,
+/// <c>openai-responses</c>, or <c>anthropic</c>.</param>
+/// <param name="ModelId">Provider model identifier passed to the completion client.</param>
+/// <param name="CompletionSurfaceId">Surface selector that disambiguates multi-surface
+/// kinds (for example <c>openai-chat/strict</c>); single-surface kinds use the kind itself.</param>
+/// <param name="BaseAddress">Resolved absolute service base address; exactly one of
+/// <paramref name="BaseAddress"/> or <paramref name="BaseAddressEnv"/> is used.</param>
+/// <param name="ApiKey">Explicit API key for the connection; at most one of
+/// <paramref name="ApiKey"/> or <paramref name="ApiKeyEnv"/> is used.</param>
+/// <param name="BaseAddressEnv">Environment variable name that resolves the service base address.</param>
+/// <param name="ApiKeyEnv">Environment variable name that resolves the connection API key.</param>
+/// <param name="ReasoningEffort">Provider-neutral reasoning preset.
+/// <see cref="CompletionReasoningEffort.ProviderDefault"/> preserves the
+/// selected provider/model default.</param>
+/// <param name="AnthropicPromptCacheTtl">Anthropic-specific prompt-cache TTL.
+/// The provider default preserves the existing wire shape by omitting
+/// <c>cache_control.ttl</c>.</param>
 public sealed record CompletionConnectionConfig(
     string Id,
     string Kind,
@@ -42,15 +60,7 @@ public sealed record CompletionConnectionConfig(
     string? ApiKey = null,
     string? BaseAddressEnv = null,
     string? ApiKeyEnv = null,
-    /// <summary>
-    /// Provider-neutral reasoning preset. <see cref="CompletionReasoningEffort.ProviderDefault"/>
-    /// preserves the selected provider/model default.
-    /// </summary>
     CompletionReasoningEffort ReasoningEffort = CompletionReasoningEffort.ProviderDefault,
-    /// <summary>
-    /// Anthropic-specific prompt-cache TTL. The provider default preserves the
-    /// existing wire shape by omitting <c>cache_control.ttl</c>.
-    /// </summary>
     AnthropicPromptCacheTtl AnthropicPromptCacheTtl =
         AnthropicPromptCacheTtl.ProviderDefault
 );

@@ -12,8 +12,8 @@ namespace Atelia.Completion.Abstractions;
 /// cancellation, redirects, server failures, malformed protocol data, or
 /// interrupted streams do not satisfy that proof.
 /// <para>
-/// The caller owns content safety: <paramref name="termination"/> detail and
-/// <paramref name="errors"/> must be bounded, content-free diagnostics, never
+/// The caller owns content safety: the <see cref="Termination"/> detail and
+/// <see cref="Errors"/> entries must be bounded, content-free diagnostics, never
 /// raw provider messages, response bodies, credentials, account identifiers,
 /// prompts, or generated content. Printable-ASCII validation only constrains
 /// shape; it is not a taint sanitizer, so adapters must use code-owned values

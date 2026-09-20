@@ -5,7 +5,7 @@ namespace Atelia.Completion.Abstractions;
 
 /// <summary>
 /// 一次 LLM 调用的完整结果快照。承载消息体与调用元信息，是
-/// <see cref="ICompletionClient.StreamCompletionAsync"/> 的标准产出。
+/// <see cref="ICompletionClient.StreamCompletionAsync(CompletionRequest, CompletionStreamObserver?, CancellationToken)"/> 的标准产出。
 /// <para>
 /// <b>分层边界</b>：本类型是 Completion 调用的 envelope，<b>不</b>实现 <see cref="IHistoryMessage"/>。
 /// 历史回灌请使用 <see cref="Message"/>（纯 <see cref="ActionMessage"/>），
@@ -15,9 +15,6 @@ namespace Atelia.Completion.Abstractions;
 /// 未来若确有需要，可继续扩展 Completion 级元信息；这些元信息仍不进入 <see cref="ActionMessage"/>。
 /// </para>
 /// </summary>
-/// <param name="Message">Canonical action 消息体；<see cref="ActionMessage.Blocks"/> 已在构造时冻结。</param>
-/// <param name="Invocation">本次调用的来源描述符；<see cref="ActionBlock.ReasoningBlock.Origin"/> 与之对齐。</param>
-/// <param name="Errors">流中通过错误事件报告的错误文本；无错误时为 <see langword="null"/>。</param>
 public sealed record CompletionResult {
     private ActionMessage _message = null!;
     private CompletionDescriptor _invocation = null!;

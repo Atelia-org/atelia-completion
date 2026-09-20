@@ -12,8 +12,6 @@ namespace Atelia.Completion.Tools;
 /// 保留为 internal 静态形态，是为「无状态 dispatcher + 纯数据 session」这条未来路线预留的逃生口。
 /// </remarks>
 internal static class ToolDispatch {
-    private const string DebugCategory = "Tools";
-
     public static async ValueTask<ToolCallExecutionResult> ExecuteAsync(
         ToolSession session,
         RawToolCall request,
@@ -30,10 +28,16 @@ internal static class ToolDispatch {
             operationId
         );
 
-        DebugUtil.Info(DebugCategory, $"[Dispatch] toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
+        DebugUtil.Debug(
+            CompletionToolsDebugCategories.Tools,
+            $"[Dispatch] toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}"
+        );
 
         if (!session.Access.IsExecutable(request.ToolName)) {
-            DebugUtil.Warning(DebugCategory, $"[Dispatch] Forbidden toolName={request.ToolName} executionSequence={executionSequence}");
+            DebugUtil.Debug(
+                CompletionToolsDebugCategories.Tools,
+                $"[Dispatch] Forbidden toolName={request.ToolName} executionSequence={executionSequence}"
+            );
 
             var message = $"当前 session 不允许执行工具: {request.ToolName}";
             return new ToolCallExecutionResult(
@@ -43,7 +47,10 @@ internal static class ToolDispatch {
         }
 
         if (!session.Registry.TryGet(request.ToolName, out var registeredTool)) {
-            DebugUtil.Warning(DebugCategory, $"[Dispatch] Missing tool toolName={request.ToolName} executionSequence={executionSequence}");
+            DebugUtil.Debug(
+                CompletionToolsDebugCategories.Tools,
+                $"[Dispatch] Missing tool toolName={request.ToolName} executionSequence={executionSequence}"
+            );
 
             var message = $"未找到工具: {request.ToolName}";
             return new ToolCallExecutionResult(
@@ -59,8 +66,8 @@ internal static class ToolDispatch {
                 ?? throw new InvalidOperationException($"Tool '{registeredTool.Name}' returned null result.");
             stopwatch.Stop();
 
-            DebugUtil.Info(
-                DebugCategory,
+            DebugUtil.Debug(
+                CompletionToolsDebugCategories.Tools,
                 $"[Dispatch] Completed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} status={executeResult.Status} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F2}"
             );
 
@@ -69,7 +76,10 @@ internal static class ToolDispatch {
         catch (ToolExecutionCancelledBeforeMutationException)
             when (cancellationToken.IsCancellationRequested) {
             stopwatch.Stop();
-            DebugUtil.Warning(DebugCategory, $"[Dispatch] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}");
+            DebugUtil.Debug(
+                CompletionToolsDebugCategories.Tools,
+                $"[Dispatch] Cancelled toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence}"
+            );
 
             return new ToolCallExecutionResult(
                 request,
@@ -91,7 +101,10 @@ internal static class ToolDispatch {
         }
         catch (Exception ex) {
             stopwatch.Stop();
-            DebugUtil.Error(DebugCategory, $"[Dispatch] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} error={BoundDetail(ex.Message)}", ex);
+            DebugUtil.Debug(
+                CompletionToolsDebugCategories.Tools,
+                $"[Dispatch] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} exceptionType={ex.GetType().FullName}"
+            );
 
             var message = $"工具执行异常: {BoundDetail(ex.Message)}";
             return new ToolCallExecutionResult(

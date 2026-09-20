@@ -11,7 +11,6 @@ namespace Atelia.Completion.OpenAI;
 /// 解析 OpenAI Responses SSE 事件流，直接向 <see cref="CompletionAggregator"/> 喂入增量数据。
 /// </summary>
 internal sealed class OpenAIResponsesStreamParser {
-    private const string DebugCategory = "Provider";
     private const string FunctionCallItemType = "function_call";
 
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
@@ -256,8 +255,8 @@ internal sealed class OpenAIResponsesStreamParser {
 
     private void FinalizeTerminalStreamingState(CompletionAggregator aggregator) {
         if (_activeReasoningItemId is not null) {
-            DebugUtil.Warning(
-                DebugCategory,
+            DebugUtil.Debug(
+                CompletionDebugCategories.Provider,
                 $"[OpenAI/Responses] Terminal event arrived with unfinished reasoning item_id={_activeReasoningItemId}."
             );
             aggregator.MarkIncomplete(detail: "OpenAI Responses terminal event arrived with unfinished reasoning.");
@@ -265,8 +264,8 @@ internal sealed class OpenAIResponsesStreamParser {
 
         if (_functionCalls.Count > 0) {
             var pendingIds = string.Join(", ", _functionCalls.Keys.OrderBy(static id => id));
-            DebugUtil.Warning(
-                DebugCategory,
+            DebugUtil.Debug(
+                CompletionDebugCategories.Provider,
                 $"[OpenAI/Responses] Terminal event arrived with unfinished function calls item_ids=[{pendingIds}]."
             );
             aggregator.MarkIncomplete(
@@ -588,7 +587,7 @@ internal sealed class OpenAIResponsesStreamParser {
 
         if (_activeReasoningItemId is not null) {
             DebugUtil.Warning(
-                DebugCategory,
+                CompletionDebugCategories.Provider,
                 $"[OpenAI/Responses] Reasoning item switched from {_activeReasoningItemId} to {itemId} before completion."
             );
         }
@@ -630,7 +629,7 @@ internal sealed class OpenAIResponsesStreamParser {
         }
 
         DebugUtil.Warning(
-            DebugCategory,
+            CompletionDebugCategories.Provider,
             $"[OpenAI/Responses] Reasoning item done mismatch active={_activeReasoningItemId}, item={itemId ?? "<null>"}."
         );
         aggregator.EndThinking(block);

@@ -8,8 +8,6 @@ using Atelia.Diagnostics;
 namespace Atelia.Completion.OpenAI;
 
 internal static class OpenAIChatMessageConverter {
-    private const string DebugCategory = "Provider";
-
     public static OpenAIChatApiRequest ConvertToApiRequest(
         CompletionRequest request,
         OpenAIChatDialect dialect,
@@ -62,8 +60,8 @@ internal static class OpenAIChatMessageConverter {
             request.PromptPrefix.SharedContextMessages.Length
                 + request.TailMessages.Length
         );
-        DebugUtil.Info(
-            DebugCategory,
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
             $"[OpenAI] Converted {contextMessageCount} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, dialect={dialect.Name}"
         );
 

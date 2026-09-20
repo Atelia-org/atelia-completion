@@ -152,9 +152,8 @@ public sealed class CompletionHttpClientBuilder {
                 // Deliberately omit the exception, sink type, path, request,
                 // and response. Raw-capture failures may contain secrets.
                 DebugUtil.Warning(
-                    "Completion.HttpCapture",
-                    "Completion HTTP exchange sink failed; provider outcome is preserved.",
-                    eventKind: DebugEventKind.Failure
+                    CompletionDebugCategories.HttpCapture,
+                    "Completion HTTP exchange sink failed; provider outcome is preserved."
                 );
             }
             catch {

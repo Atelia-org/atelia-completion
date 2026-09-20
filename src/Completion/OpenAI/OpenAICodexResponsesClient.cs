@@ -19,8 +19,6 @@ namespace Atelia.Completion.OpenAI;
 /// </summary>
 public sealed class OpenAICodexResponsesClient : ICompletionClient,
     IDisposable {
-    private const string DebugCategory = "Provider";
-
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
@@ -89,8 +87,8 @@ public sealed class OpenAICodexResponsesClient : ICompletionClient,
             supportsNativeRequiredNamedToolChoice: false
         );
 
-        DebugUtil.Info(
-            DebugCategory,
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
             $"[ChatGPT/Codex Responses] Client initialized originator={_originator}, maxConcurrency={options.MaxConcurrentRequests}, reasoningEffort={options.ReasoningEffort}"
         );
     }

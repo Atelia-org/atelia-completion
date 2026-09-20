@@ -274,10 +274,9 @@ public sealed class LoggingCompletionClient : ICompletionClient {
         string stage,
         Exception exception
     ) => DebugUtil.Warning(
-        "Completion.CallLog",
-        $"Completion call-log {stage} failed; provider outcome is preserved.",
-        exception,
-        DebugEventKind.Failure
+        CompletionDebugCategories.CallLog,
+        $"Completion call-log {stage} failed; provider outcome is preserved; "
+            + $"exceptionType={exception.GetType().FullName}."
     );
 }
 

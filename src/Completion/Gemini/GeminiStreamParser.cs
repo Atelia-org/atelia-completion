@@ -8,8 +8,6 @@ using Atelia.Diagnostics;
 namespace Atelia.Completion.Gemini;
 
 internal sealed class GeminiStreamParser {
-    private const string DebugCategory = "Provider";
-
     private readonly List<GeminiReplayPayloadCodec.GeminiReplayPayloadPart> _replayParts = new();
     private bool _terminalEventObserved;
     private bool _postTerminalUsageAllowed;
@@ -356,7 +354,10 @@ internal sealed class GeminiStreamParser {
         }
 
         EmitReplayBlockIfNeeded(aggregator);
-        DebugUtil.Warning(DebugCategory, $"[Gemini] API error: {errorMessage}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            "[Gemini] API error received."
+        );
         aggregator.AppendError(errorMessage);
         aggregator.MarkFailed(errorStatus ?? "error", errorMessage, errorStatus);
         _terminalEventObserved = true;

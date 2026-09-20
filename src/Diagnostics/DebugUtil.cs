@@ -1,140 +1,67 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
-using System.Linq;
+using System.Text;
 
 namespace Atelia.Diagnostics {
-    public enum DebugLevel {
-        Trace = 0,
-        Info = 1,
-        Warning = 2,
-        Error = 3,
-    }
-
-    public enum DebugEventKind {
-        Message = 0,
-        Start = 1,
-        Success = 2,
-        Skip = 3,
-        Failure = 4,
-        Exception = 5,
-    }
-
     /// <summary>
-    /// 轻量级调试日志工具。
-    /// - 推荐优先使用 <see cref="Trace"/>, <see cref="Info"/>, <see cref="Warning"/>, <see cref="Error"/>.
-    /// - <see cref="Trace"/> / <see cref="Info"/> 在 Release 调用点默认被裁掉（<c>[Conditional("DEBUG")]</c>）。
-    /// - 文件/控制台 sink 默认按 Build 配置分层：
-    ///   DEBUG 默认记录 Trace+；RELEASE 默认记录 Warning+。
-    /// - 可通过环境变量覆盖：
-    ///   <c>ATELIA_DEBUG_CATEGORIES</c>,
-    ///   <c>ATELIA_DEBUG_FILE_LEVEL</c>,
-    ///   <c>ATELIA_DEBUG_CONSOLE_LEVEL</c>.
+    /// 轻量级诊断输出工具。控制台与文件均为 best-effort，不得作为审计回执。
     /// </summary>
     public static class DebugUtil {
-        private static readonly HashSet<string> _enabledCategories;
-        private static readonly bool _allEnabled;
-        private static readonly string _logDir;
-        private static readonly DebugLevel _fileMinLevel;
-        private static readonly DebugLevel _consoleMinLevel;
+        private const int MaximumTextLength = 2048;
+        private const int MaximumCategoryLength = 64;
 
-        static DebugUtil() {
-            string folderName = "debug-logs";
-            string categoriesRaw = Environment.GetEnvironmentVariable("ATELIA_DEBUG_CATEGORIES") ?? string.Empty;
-            _enabledCategories = new HashSet<string>(
-                categoriesRaw.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(s => s.Trim().ToUpperInvariant())
-            );
-            _allEnabled = _enabledCategories.Contains("ALL");
-
-            _fileMinLevel = ParseLevelOrDefault(
-                Environment.GetEnvironmentVariable("ATELIA_DEBUG_FILE_LEVEL"),
-                GetDefaultFileMinLevel()
-            );
-            _consoleMinLevel = ParseLevelOrDefault(
-                Environment.GetEnvironmentVariable("ATELIA_DEBUG_CONSOLE_LEVEL"),
-                GetDefaultConsoleMinLevel()
-            );
-
-            var cwd = Directory.GetCurrentDirectory();
-            string selected = null;
-            var candidates = new[] {
-                Path.Combine(cwd, ".atelia", folderName),
-                Path.Combine(cwd, "gitignore", folderName)
-            };
-            foreach (var candidate in candidates) {
-                try {
-                    Directory.CreateDirectory(candidate);
-                    selected = candidate;
-                    break;
-                }
-                catch {
-                }
-            }
-            _logDir = selected ?? cwd;
-        }
+        private static readonly DebugLevel _fileLevel = ParseLevelOrDefault(
+            Environment.GetEnvironmentVariable("ATELIA_DEBUG_FILE_LEVEL"),
+            DebugLevel.Warning
+        );
+        private static readonly DebugLevel _consoleLevel = ParseLevelOrDefault(
+            Environment.GetEnvironmentVariable("ATELIA_DEBUG_CONSOLE_LEVEL"),
+            DebugLevel.Warning
+        );
 
         [Conditional("DEBUG")]
-        public static void Trace(string category, string text, DebugEventKind eventKind = DebugEventKind.Message) {
-            Log(DebugLevel.Trace, category, text, null, eventKind);
+        public static void Debug(string category, string text) {
+            Write(DebugLevel.Debug, category, text);
         }
 
-        [Conditional("DEBUG")]
-        public static void Info(string category, string text, DebugEventKind eventKind = DebugEventKind.Message) {
-            Log(DebugLevel.Info, category, text, null, eventKind);
+        public static void Warning(string category, string text) {
+            Write(DebugLevel.Warning, category, text);
         }
 
-        public static void Warning(
-            string category,
-            string text,
-            Exception exception = null,
-            DebugEventKind eventKind = DebugEventKind.Message
-        ) {
-            Log(DebugLevel.Warning, category, text, exception, eventKind);
+        public static void Error(string category, string text) {
+            Write(DebugLevel.Error, category, text);
         }
 
-        public static void Error(
-            string category,
-            string text,
-            Exception exception = null,
-            DebugEventKind eventKind = DebugEventKind.Exception
-        ) {
-            Log(DebugLevel.Error, category, text, exception, eventKind);
-        }
-
-        public static void Log(
-            DebugLevel level,
-            string category,
-            string text,
-            Exception exception = null,
-            DebugEventKind eventKind = DebugEventKind.Message
-        ) {
-            string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
-            string formatted = FormatMessage(timestamp, level, category, text, exception, eventKind);
-
-            if (ShouldWriteToLogFile(level)) {
-                WriteToLogFile(category, formatted);
-            }
-
-            if (ShouldWriteToConsole(level, category)) {
-                Console.WriteLine(formatted);
-            }
-        }
-
-        [Obsolete("Use DebugUtil.Trace/Info/Warning/Error instead.")]
-        public static void Print(string category, string text) {
-            Log(DebugLevel.Trace, category, text);
-        }
-
-        public static void ClearLog(string category) {
+        private static void Write(DebugLevel level, string category, string text) {
             try {
-                string logFile = Path.Combine(_logDir, $"{category.ToLowerInvariant()}.log");
-                if (File.Exists(logFile)) {
-                    File.WriteAllText(logFile, string.Empty);
+                bool writeFile = level >= _fileLevel;
+                bool writeConsole = level >= _consoleLevel;
+                if (!writeFile && !writeConsole) {
+                    return;
+                }
+
+                string message = FormatMessage(
+                    DateTime.UtcNow.ToString(
+                        "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                        CultureInfo.InvariantCulture
+                    ),
+                    level,
+                    category,
+                    text
+                );
+
+                if (writeFile) {
+                    WriteToLogFile(category, message);
+                }
+
+                if (writeConsole) {
+                    Console.Error.WriteLine(message);
                 }
             }
             catch {
+                // Diagnostics must never rewrite a provider or tool outcome.
             }
         }
 
@@ -142,61 +69,113 @@ namespace Atelia.Diagnostics {
             string timestamp,
             DebugLevel level,
             string category,
-            string text,
-            Exception exception,
-            DebugEventKind eventKind
+            string text
         ) {
-            string message = $"{timestamp} [{GetLevelCode(level)} {category}]";
-            if (eventKind != DebugEventKind.Message) {
-                message += $" [{eventKind}]";
-            }
-            message += $" {text}";
-
-            if (exception != null) {
-                message += Environment.NewLine + exception;
-            }
-
-            return message;
-        }
-
-        private static bool ShouldWriteToLogFile(DebugLevel level) {
-            return level >= _fileMinLevel;
-        }
-
-        private static bool ShouldWriteToConsole(DebugLevel level, string category) {
-            if (level < _consoleMinLevel) { return false; }
-
-            if (level >= DebugLevel.Warning) { return true; }
-
-            return _allEnabled || _enabledCategories.Contains(category.ToUpperInvariant());
+            return $"{timestamp} [{GetLevelCode(level)} {SanitizeSingleLine(category, MaximumCategoryLength)}] "
+                + SanitizeSingleLine(text, MaximumTextLength);
         }
 
         private static void WriteToLogFile(string category, string message) {
-            try {
-                string logFile = Path.Combine(_logDir, $"{category.ToLowerInvariant()}.log");
-                File.AppendAllText(logFile, message + Environment.NewLine);
+            string logDirectory = Path.Combine(".atelia", "debug-logs");
+            Directory.CreateDirectory(logDirectory);
+            string logFile = Path.Combine(
+                logDirectory,
+                GetSafeCategoryFileName(category) + ".log"
+            );
+            File.AppendAllText(logFile, message + Environment.NewLine, new UTF8Encoding(false));
+        }
+
+        private static string GetSafeCategoryFileName(string category) {
+            string safeCategory = SanitizeSingleLine(category, MaximumCategoryLength)
+                .ToLowerInvariant();
+            var builder = new StringBuilder(safeCategory.Length);
+            foreach (char character in safeCategory) {
+                if (char.IsLetterOrDigit(character)
+                    || character == '-'
+                    || character == '_') {
+                    _ = builder.Append(character);
+                }
+                else {
+                    _ = builder.Append('_');
+                }
             }
-            catch {
+
+            if (builder.Length == 0) { return "unknown"; }
+
+            string fileName = builder.ToString();
+            return IsReservedWindowsDeviceName(category)
+                ? "_" + fileName
+                : fileName;
+        }
+
+        private static bool IsReservedWindowsDeviceName(string category) {
+            string baseName = category.Split('.')[0];
+            switch (baseName.ToUpperInvariant()) {
+                case "CON":
+                case "PRN":
+                case "AUX":
+                case "NUL":
+                case "COM1":
+                case "COM2":
+                case "COM3":
+                case "COM4":
+                case "COM5":
+                case "COM6":
+                case "COM7":
+                case "COM8":
+                case "COM9":
+                case "LPT1":
+                case "LPT2":
+                case "LPT3":
+                case "LPT4":
+                case "LPT5":
+                case "LPT6":
+                case "LPT7":
+                case "LPT8":
+                case "LPT9":
+                    return true;
+                default:
+                    return false;
             }
         }
 
+        private static string SanitizeSingleLine(string value, int maximumLength) {
+            if (string.IsNullOrEmpty(value)) {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(value.Length);
+            foreach (char character in value) {
+                _ = builder.Append(char.IsControl(character) ? ' ' : character);
+            }
+
+            string result = builder.ToString();
+            if (result.Length <= maximumLength) {
+                return result;
+            }
+
+            const string truncationSuffix = "...<truncated>";
+            return result.Substring(
+                    0,
+                    maximumLength - truncationSuffix.Length
+                )
+                + truncationSuffix;
+        }
+
         private static DebugLevel ParseLevelOrDefault(string raw, DebugLevel fallback) {
-            if (string.IsNullOrWhiteSpace(raw)) { return fallback; }
+            if (string.IsNullOrWhiteSpace(raw)) {
+                return fallback;
+            }
 
             switch (raw.Trim().ToUpperInvariant()) {
-                case "TRACE":
-                case "TRC":
-                    return DebugLevel.Trace;
-                case "INFO":
-                case "INF":
-                    return DebugLevel.Info;
-                case "WARN":
+                case "DEBUG":
+                    return DebugLevel.Debug;
                 case "WARNING":
-                case "WRN":
                     return DebugLevel.Warning;
                 case "ERROR":
-                case "ERR":
                     return DebugLevel.Error;
+                case "OFF":
+                    return DebugLevel.Off;
                 default:
                     return fallback;
             }
@@ -204,10 +183,8 @@ namespace Atelia.Diagnostics {
 
         private static string GetLevelCode(DebugLevel level) {
             switch (level) {
-                case DebugLevel.Trace:
-                    return "TRC";
-                case DebugLevel.Info:
-                    return "INF";
+                case DebugLevel.Debug:
+                    return "DBG";
                 case DebugLevel.Warning:
                     return "WRN";
                 case DebugLevel.Error:
@@ -217,20 +194,11 @@ namespace Atelia.Diagnostics {
             }
         }
 
-        private static DebugLevel GetDefaultFileMinLevel() {
-#if DEBUG
-            return DebugLevel.Trace;
-#else
-            return DebugLevel.Warning;
-#endif
-        }
-
-        private static DebugLevel GetDefaultConsoleMinLevel() {
-#if DEBUG
-            return DebugLevel.Trace;
-#else
-            return DebugLevel.Warning;
-#endif
+        private enum DebugLevel {
+            Debug = 0,
+            Warning = 1,
+            Error = 2,
+            Off = 3,
         }
     }
 }

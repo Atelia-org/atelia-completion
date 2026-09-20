@@ -13,7 +13,6 @@ namespace Atelia.Completion.Anthropic;
 /// 规范：https://docs.anthropic.com/claude/reference/messages_post
 /// </summary>
 public sealed class AnthropicClient : ICompletionClient {
-    private const string DebugCategory = "Provider";
     private const string DefaultApiVersion = "2023-06-01";
 
     private static readonly JsonSerializerOptions SerializerOptions = new() {
@@ -62,7 +61,10 @@ public sealed class AnthropicClient : ICompletionClient {
                 "Unknown Anthropic prompt cache TTL."
             );
 
-        DebugUtil.Info(DebugCategory, $"[Anthropic] Client initialized base={_httpClient.BaseAddress}, version={_apiVersion}, promptCaching={_enablePromptCaching}, promptCacheTtl={_promptCacheTtl}, reasoningEffort={_reasoningEffort}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[Anthropic] Client initialized provider=Anthropic Messages, version={_apiVersion}, promptCaching={_enablePromptCaching}, promptCacheTtl={_promptCacheTtl}, reasoningEffort={_reasoningEffort}"
+        );
     }
 
     public Task<CompletionResult> StreamCompletionAsync(
@@ -129,7 +131,10 @@ public sealed class AnthropicClient : ICompletionClient {
         CompletionInvocationOptions invocationOptions,
         CancellationToken cancellationToken
     ) {
-        DebugUtil.Info(DebugCategory, $"[Anthropic] Starting call model={request.ModelId}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[Anthropic] Starting call model={request.ModelId}"
+        );
 
         var invocation = CompletionDescriptor.From(this, request);
         int modelMaximumTokens = await _modelMaximums.GetAsync(
@@ -213,7 +218,7 @@ public sealed class AnthropicClient : ICompletionClient {
                 && !eofDiagnostics.HasPendingFrame
                 && parser.TryFinalizeAtCleanEndOfStream(aggregator)) {
                 DebugUtil.Warning(
-                    DebugCategory,
+                    CompletionDebugCategories.Provider,
                     "[Anthropic] Clean EOF omitted message_stop after an authoritative "
                         + "message_delta stop_reason; accepting the completed lifecycle. "
                         + BuildStreamDiagnosticContext(
@@ -258,7 +263,10 @@ public sealed class AnthropicClient : ICompletionClient {
             throw;
         }
 
-        DebugUtil.Trace(DebugCategory, "[Anthropic] Stream completed");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            "[Anthropic] Stream completed"
+        );
         return aggregator.Build();
     }
 
@@ -271,10 +279,10 @@ public sealed class AnthropicClient : ICompletionClient {
         Exception exception
     ) {
         try {
-            DebugUtil.Warning(
-                DebugCategory,
+            DebugUtil.Debug(
+                CompletionDebugCategories.Provider,
                 "[Anthropic] Transport read failed before clean EOF. "
-                    + $"exceptionType={exception.GetType().Name}, "
+                    + $"exceptionType={exception.GetType().FullName}, "
                     + BuildStreamDiagnosticContext(
                         response,
                         committedFrameCount,
@@ -367,7 +375,7 @@ public sealed class AnthropicClient : ICompletionClient {
             cancellationToken.ThrowIfCancellationRequested();
             int fallback = GetFallbackMaximumTokens(modelId);
             DebugUtil.Warning(
-                DebugCategory,
+                CompletionDebugCategories.Provider,
                 $"[Anthropic] Model capability endpoint unavailable (HTTP {(int)response.StatusCode}); using fallback max_tokens={fallback}."
             );
             return fallback;
@@ -409,7 +417,10 @@ public sealed class AnthropicClient : ICompletionClient {
 
     private HttpRequestMessage CreateHttpRequest(AnthropicApiRequest apiRequest) {
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
-        DebugUtil.Trace(DebugCategory, $"[Anthropic] Request payload length={json.Length}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[Anthropic] Request payload length={json.Length}"
+        );
 
         var request = new HttpRequestMessage(HttpMethod.Post, "v1/messages") {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
@@ -441,9 +452,9 @@ public sealed class AnthropicClient : ICompletionClient {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[Anthropic] Parser cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[Anthropic] Parser cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
 
@@ -452,9 +463,9 @@ public sealed class AnthropicClient : ICompletionClient {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[Anthropic] Observer cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[Anthropic] Observer cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
     }

@@ -9,8 +9,6 @@ using Atelia.Diagnostics;
 namespace Atelia.Completion.Gemini;
 
 public sealed class GeminiClient : ICompletionClient {
-    private const string DebugCategory = "Provider";
-
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
@@ -32,7 +30,10 @@ public sealed class GeminiClient : ICompletionClient {
             FetchModelMaximumAsync
         );
 
-        DebugUtil.Info(DebugCategory, $"[Gemini] Client initialized base={_httpClient.BaseAddress}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            "[Gemini] Client initialized provider=Google Gemini"
+        );
     }
 
     public Task<CompletionResult> StreamCompletionAsync(
@@ -52,7 +53,10 @@ public sealed class GeminiClient : ICompletionClient {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        DebugUtil.Info(DebugCategory, $"[Gemini] Starting call model={request.ModelId}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[Gemini] Starting call model={request.ModelId}"
+        );
 
         int modelMaximumTokens = await _modelMaximums.GetAsync(
             request.ModelId,
@@ -114,7 +118,10 @@ public sealed class GeminiClient : ICompletionClient {
             throw;
         }
 
-        DebugUtil.Trace(DebugCategory, "[Gemini] Stream completed");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            "[Gemini] Stream completed"
+        );
         return aggregator.Build();
     }
 
@@ -186,7 +193,10 @@ public sealed class GeminiClient : ICompletionClient {
 
     private HttpRequestMessage CreateHttpRequest(string modelId, GeminiGenerateContentRequest apiRequest) {
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
-        DebugUtil.Trace(DebugCategory, $"[Gemini] Request payload length={json.Length}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[Gemini] Request payload length={json.Length}"
+        );
 
         var modelPath = NormalizeModelPath(modelId);
         var relativeUri = $"v1beta/{modelPath}:streamGenerateContent?alt=sse";
@@ -230,9 +240,9 @@ public sealed class GeminiClient : ICompletionClient {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[Gemini] Parser cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[Gemini] Parser cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
 
@@ -241,9 +251,9 @@ public sealed class GeminiClient : ICompletionClient {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[Gemini] Observer cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[Gemini] Observer cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
     }

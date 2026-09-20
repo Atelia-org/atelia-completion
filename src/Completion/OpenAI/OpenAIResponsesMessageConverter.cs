@@ -8,7 +8,6 @@ using Atelia.Diagnostics;
 namespace Atelia.Completion.OpenAI;
 
 internal static class OpenAIResponsesMessageConverter {
-    private const string DebugCategory = "Provider";
     private const string EncryptedReasoningInclude = "reasoning.encrypted_content";
     public static OpenAIResponsesApiRequest ConvertToApiRequest(
         CompletionRequest request,
@@ -76,8 +75,8 @@ internal static class OpenAIResponsesMessageConverter {
             request.PromptPrefix.SharedContextMessages.Length
                 + request.TailMessages.Length
         );
-        DebugUtil.Info(
-            DebugCategory,
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
             $"[OpenAIResponses] Converted {contextMessageCount} context messages to {inputItems.Count} input items, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={options.ReasoningEffort}"
         );
 
@@ -314,8 +313,8 @@ internal static class OpenAIResponsesMessageConverter {
         }
 
         if (omittedReasoningCount > 0) {
-            DebugUtil.Info(
-                DebugCategory,
+            DebugUtil.Debug(
+                CompletionDebugCategories.Provider,
                 $"[OpenAIResponses] Omitted foreign reasoning blocks={omittedReasoningCount}; visible action items={emittedItemCount}"
             );
         }

@@ -1,6 +1,6 @@
 # Atelia.Diagnostics
 
-`netstandard2.0` 通用调试库，可单独引用；不依赖 Completion 或 Tools。
+`netstandard2.0` 轻量诊断输出库，不依赖 Completion 或 Tools，也不引入日志框架。
 
 ```powershell
 dotnet add package Atelia.Diagnostics --version 0.1.0-preview.1
@@ -9,24 +9,53 @@ dotnet add package Atelia.Diagnostics --version 0.1.0-preview.1
 ```csharp
 using Atelia.Diagnostics;
 
-DebugUtil.Warning("Example", "Example warning");
+DebugUtil.Debug("Example", "Source-level diagnostic detail.");
+DebugUtil.Warning("Example", "A semantic fallback was used.");
+DebugUtil.Error("Example", "The library itself failed.");
 ```
 
-## DebugUtil 配置
-- 推荐优先使用 `DebugUtil.Trace/Info/Warning/Error` 输出调试信息；其中 `Trace/Info` 带 `[Conditional("DEBUG")]`，Release 默认零调用开销。
-- `DebugUtil.Print("类别", "内容")` 仅保留为旧调用兼容入口，后续建议迁移。
-- 通过设置环境变量 `ATELIA_DEBUG_CATEGORIES` 控制哪些类别的调试信息输出，多个类别用逗号或分号分隔，如：`TypeHash,Test,Outline`。
-- 设置 `ATELIA_DEBUG_CATEGORIES=ALL` 可输出所有类别到控制台。
-- `ATELIA_DEBUG_FILE_LEVEL` / `ATELIA_DEBUG_CONSOLE_LEVEL` 可分别覆盖文件与控制台最小级别；默认 `DEBUG` 为 `Trace+`，`RELEASE` 为 `Warning+`。
-- 推荐在调试代码、测试代码中统一使用本工具，便于全局开关和后续维护。
-- 文件默认目录为当前工作目录下 `.atelia/debug-logs/{category}.log`，不可用则回退 `gitignore/debug-logs/`，两者均不可用时使用当前目录；文件写入失败被吞掉，不能视为可靠审计回执。
-- 类别开关只控制控制台输出；文件输出由文件最小级别决定。环境配置在 DebugUtil 静态初始化时读取，应在首次调用前设置。
-- `DebugUtil.ClearLog("类别")` 可清空该类别日志。
+## Public API
 
-## Release 包与源码 Debug
+| 方法 | 编译行为 | 用途 |
+|---|---|---|
+| `Debug(string category, string text)` | `[Conditional("DEBUG")]`，Release 调用点零开销 | 开发期 tracing，以及已由结果/异常/工具执行结果携带的重复事实 |
+| `Warning(string category, string text)` | 始终保留 | public 结果未携带、但可能影响运行语义或诊断能力的事实 |
+| `Error(string category, string text)` | 始终保留 | 库自身真实错误，不用于重复业务失败 |
 
-`Trace/Info` 的 Conditional 决定调用点是否生成。Completion/Tools 按 Release 编译时，其内部这些调用已经被裁掉；下游 Debug 编译或设置环境变量都不能恢复，需使用库源码 Debug 联调。
+没有 Exception 参数、类别配置面、`Log`/`Print`/`ClearLog` 或事件种类 API。需要异常信息时，调用方只写 `exceptionType={exception.GetType().FullName}`，不得写入异常消息或堆栈。
 
-下游自己的 Debug 调用点可以保留 Trace/Info，但已发布 Diagnostics 的默认 sink 级别仍由 Diagnostics 自身构建配置决定。要显示这些调用，首次使用前同时设置类别与 `ATELIA_DEBUG_FILE_LEVEL=Trace` / `ATELIA_DEBUG_CONSOLE_LEVEL=Trace`。Warning/Error 与显式 `Log` 没有 Conditional 裁剪，仍受 sink 级别和控制台类别控制。
+## 级别语义
 
-实现见 [对应版本源码](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/src/Diagnostics/DebugUtil.cs)。本包使用 MIT 许可证。
+- **Debug**：事实已经由非成功 `CompletionResult`、抛出的异常或工具执行结果完整携带；或是协议明确允许的 forward-compatible / 预期路径。
+- **Warning**：成功路径上的降级、回退、容错，或 best-effort 诊断旁路自身失败而主结果被保留。这类事实默认应该可见。
+- **Error**：库自身真实错误。业务失败已由结果或异常报告时，不再重复打印 Error。
+
+调用文本必须 content-free：不得包含凭据、provider 原文、正文、文件路径或堆栈。`DebugUtil` 只做控制字符单行化和固定长度截断，不能替调用方消除已写出的敏感内容。
+
+## 配置
+
+环境变量在首次使用 `DebugUtil` 前读取一次，值大小写不敏感、无别名：
+
+| 变量 | 接受值 | 默认 |
+|---|---|---|
+| `ATELIA_DEBUG_FILE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `WARNING` |
+| `ATELIA_DEBUG_CONSOLE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `WARNING` |
+
+非法值回退默认值。`ATELIA_DEBUG_CATEGORIES` 与 `ALL` 已删除；category 只是日志行内标签和文件分区名，不再构成配置面或控制台筛选器。
+
+默认值固定，不依赖 Diagnostics 包自身的 `#if DEBUG`。下游使用 Debug 编译不会改变已发布包的 sink 默认级别。
+
+## 输出合同
+
+- 控制台输出一律写 **stderr**，正常路径保持 stdout 干净。
+- 文件路径为当前工作目录下 `.atelia/debug-logs/{safe-category}.log`；目录在首次有满足阈值的写入时创建。
+- 文件 sink 是 best-effort：无锁、无 rotation、无跨进程一致性，写入失败丢弃该条；不能作为审计回执，多进程可能交错。
+- 每条日志一行，UTC ISO-8601 时间戳（如 `2026-09-21T08:15:32.123Z`），文本最长 2048 字符，超长截断。
+- category 会单行化、截断并安全化为文件名，避免 public 字符串成为路径注入面。
+- 格式化和写入整体 best-effort；诊断失败不得影响 provider、transport 或工具结果。
+
+## Release 与 Debug 调用点
+
+`Debug` 的 `[Conditional("DEBUG")]` 决定调用点是否生成。Completion / Tools 以 Release 打包后，其内部 Debug 调用已被裁掉，环境变量不能恢复；需要源码 Debug 联调时请使用 Debug 构建的库源码。下游自己的 Debug 调用点遵循同一规则。
+
+实现见 [DebugUtil.cs](DebugUtil.cs)。本包使用 MIT 许可证。

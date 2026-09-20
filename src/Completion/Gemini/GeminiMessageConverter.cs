@@ -8,8 +8,6 @@ using Atelia.Diagnostics;
 namespace Atelia.Completion.Gemini;
 
 internal static class GeminiMessageConverter {
-    private const string DebugCategory = "Provider";
-
     public static GeminiGenerateContentRequest ConvertToApiRequest(
         CompletionRequest request,
         int modelMaximumTokens
@@ -61,8 +59,8 @@ internal static class GeminiMessageConverter {
             request.PromptPrefix.SharedContextMessages.Length
                 + request.TailMessages.Length
         );
-        DebugUtil.Info(
-            DebugCategory,
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
             $"[Gemini] Converted {contextMessageCount} context messages to {contents.Count} contents, tools={apiRequest.Tools?.Count ?? 0}"
         );
 
@@ -343,14 +341,14 @@ internal static class GeminiMessageConverter {
             if (document.RootElement.ValueKind == JsonValueKind.Object) { return document.RootElement.Clone(); }
 
             DebugUtil.Warning(
-                DebugCategory,
+                CompletionDebugCategories.Provider,
                 $"[Gemini] Function replay requires object args; fallback to empty object toolName={functionCall.Name} toolCallId={functionCall.ToolCallId} rootKind={document.RootElement.ValueKind}"
             );
         }
         catch (JsonException ex) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[Gemini] Function replay received invalid raw args JSON; fallback to empty object toolName={functionCall.Name} toolCallId={functionCall.ToolCallId} error={ex.Message}"
+                CompletionDebugCategories.Provider,
+                $"[Gemini] Function replay received invalid raw args JSON; fallback to empty object toolName={functionCall.Name} toolCallId={functionCall.ToolCallId} exceptionType={ex.GetType().FullName}"
             );
         }
 

@@ -11,7 +11,7 @@
 - transport 不设置 operation/idle timeout；期限归宿主 CancellationToken，取消保留 caller token。已有宿主 RequestTimeout 应在宿主边界转成 token，不能在适配时丢失。
 - usage 的 null 表示未知，零需要实际依据；reasoning 原生 payload 的 Origin 与协议身份必须保持，不能当正文或跨协议任意回放。
 - `ToolSession` 顺序使用，非线程安全。参数绑定和权限失败不执行业务方法；执行序号不构成持久化、事务或 exactly-once 保证。副作用提交归宿主。
-- Release 库内 Trace/Info 调用可能已被编译裁掉；环境变量不能恢复调用。调试详见 Diagnostics README，不因迁移引入日志框架。
+- Release 库内部 Debug 级别调用已被 `[Conditional("DEBUG")]` 编译裁掉；环境变量不能恢复调用。调试详见 Diagnostics README，不因迁移引入日志框架。
 
 ## 验证与交付
 

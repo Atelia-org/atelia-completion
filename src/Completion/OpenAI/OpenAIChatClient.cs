@@ -9,8 +9,6 @@ using Atelia.Diagnostics;
 namespace Atelia.Completion.OpenAI;
 
 public sealed class OpenAIChatClient : ICompletionClient {
-    private const string DebugCategory = "Provider";
-
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
@@ -47,9 +45,9 @@ public sealed class OpenAIChatClient : ICompletionClient {
             ReasoningEffort = options.ReasoningEffort
         };
 
-        DebugUtil.Info(
-            DebugCategory,
-            $"[OpenAI] Client initialized base={_httpClient.BaseAddress}, dialect={_dialect.Name}, reasoningEffort={_options.ReasoningEffort}"
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[OpenAI] Client initialized provider=OpenAI Chat, dialect={_dialect.Name}, reasoningEffort={_options.ReasoningEffort}"
         );
     }
 
@@ -70,7 +68,10 @@ public sealed class OpenAIChatClient : ICompletionClient {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        DebugUtil.Info(DebugCategory, $"[OpenAI] Starting call model={request.ModelId}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[OpenAI] Starting call model={request.ModelId}"
+        );
 
         var invocation = CompletionDescriptor.From(this, request);
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(
@@ -143,7 +144,10 @@ public sealed class OpenAIChatClient : ICompletionClient {
             throw;
         }
 
-        DebugUtil.Trace(DebugCategory, "[OpenAI] Stream completed");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            "[OpenAI] Stream completed"
+        );
         return aggregator.Build();
     }
 
@@ -180,7 +184,10 @@ public sealed class OpenAIChatClient : ICompletionClient {
     private HttpRequestMessage CreateHttpRequest(OpenAIChatApiRequest apiRequest) {
         ApplyReasoningControl(apiRequest);
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
-        DebugUtil.Trace(DebugCategory, $"[OpenAI] Request payload length={json.Length}, dialect={_dialect.Name}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[OpenAI] Request payload length={json.Length}, dialect={_dialect.Name}"
+        );
 
         var request = new HttpRequestMessage(HttpMethod.Post, "v1/chat/completions") {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))
@@ -260,9 +267,9 @@ public sealed class OpenAIChatClient : ICompletionClient {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[OpenAI] Parser cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[OpenAI] Parser cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
 
@@ -271,9 +278,9 @@ public sealed class OpenAIChatClient : ICompletionClient {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[OpenAI] Observer cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[OpenAI] Observer cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
     }

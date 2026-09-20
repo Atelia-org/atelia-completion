@@ -363,7 +363,6 @@ public sealed class OpenAIChatStreamParserTests {
 
         Assert.Equal("Provider", diagnostic.Category);
         Assert.Equal("[OpenAI] Provider error received.", diagnostic.Text);
-        Assert.Equal(Atelia.Diagnostics.DebugEventKind.Failure, diagnostic.EventKind);
         Assert.DoesNotContain("provider.invalid", diagnostic.Text, StringComparison.Ordinal);
         Assert.DoesNotContain("raw-detail", diagnostic.Text, StringComparison.Ordinal);
     }

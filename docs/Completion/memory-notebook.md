@@ -225,7 +225,7 @@ src/Completion/
 ├─ Transport/
 │  ├─ CompletionHttpClientBuilder.cs   组装 capture / replay handler 链
 │  ├─ CompletionHttpExchange.cs        HTTP 文本交换快照
-│  ├─ ICompletionHttpExchangeSink.cs   capture sink 抽象 + 内存/调试实现
+│  ├─ ICompletionHttpExchangeSink.cs   capture sink 抽象 + InMemory/JsonLines 文件实现
 │  └─ ICompletionHttpReplayResponder.cs replay 抽象
 ├─ Anthropic/
 │  ├─ AnthropicClient.cs            ICompletionClient 实现

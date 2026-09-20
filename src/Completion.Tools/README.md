@@ -6,7 +6,7 @@
 dotnet add package Atelia.Completion.Tools --version 0.1.0-preview.1
 ```
 
-`ToolSession` 面向顺序使用、非线程安全。执行序号不会自动提供持久化、事务或 exactly-once；副作用提交、恢复与世界仲裁仍归宿主。Release 库内部的 Trace/Info 调用可能已被编译裁掉，需要源码 Debug 联调才能恢复。
+`ToolSession` 面向顺序使用、非线程安全。执行序号不会自动提供持久化、事务或 exactly-once；副作用提交、恢复与世界仲裁仍归宿主。Release 库内部 Debug 级别调用已被 `[Conditional("DEBUG")]` 编译裁掉，无法由环境变量恢复，需要源码 Debug 联调。
 
 > **读者**：要把宿主能力或结构化产物暴露给 LLM tool calling 的上层应用作者。
 > **不读这份**：要修改 schema 反射、raw JSON 绑定或执行器内部实现的人。那类工作请直接看 `Declaration/ReflectedToolDefinitionBuilder.cs`、`ObjectInputToolRuntime.cs` 和对应测试。

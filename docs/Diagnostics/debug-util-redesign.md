@@ -1,8 +1,8 @@
-# Atelia.Diagnostics DebugUtil 重设计（已确认，未实施）
+# Atelia.Diagnostics DebugUtil 重设计（已确认，已实施）
 
-状态：设计已确认；**尚未实施，未修改任何库代码**。决策人：仓库所有者（2026-09-21）。
+状态：设计已确认并**已实施**（库代码已修改，实施结果与验证证据见第 8 节）。决策人：仓库所有者（2026-09-21）。
 评审方式：三角色辩证评审（需求怀疑者 / 最小架构师 / 语义守护者，两轮独立论点与交叉质询，全部主张经主线程源码证据核实）。
-待处理项见 [pending-issues.md](pending-issues.md)。实施时同步重写 [src/Diagnostics/README.md](../../src/Diagnostics/README.md)，使其与代码一致。
+待处理项见 [pending-issues.md](pending-issues.md)。实施时已同步重写 [src/Diagnostics/README.md](../../src/Diagnostics/README.md)，使其与代码一致。
 
 ## 1. 背景与证据
 
@@ -13,7 +13,7 @@
 - git 历史：当前形状来自 `c60d7ab`（"保留旧接口兼容性"接口重写）。重写前的实现是"始终写文件 + 仅类别启用时写控制台"，注释原文为"仅在类别启用时输出到控制台，避免干扰单元测试视线"。即：旁路是重写引入的意图回退，不是长期产品法则。
 - 文档与代码矛盾：README 称 Warning/Error"仍受 sink 级别和控制台类别控制"，代码实际绕过类别；README 类别示例 `TypeHash,Test,Outline` 已不存在。
 - 默认值依赖 Diagnostics 包自身 `#if DEBUG` 对消费者无效：包以 Release 构建，下游 Debug 编译不会改变 sink 默认行为。新设计必须使用固定默认值。
-- 调用点普查（`rg "DebugUtil\." src`）：共 58 处 = Trace 11 / Info 17 / Warning 29 / Error 1。`DebugCategory="Provider"` 以私有 const 散落在 14 个文件。
+- 调用点普查（设计时口径，`rg "DebugUtil\." src`）：共 58 处 = Trace 11 / Info 17 / Warning 29 / Error 1；该统计含非源码调用点或口径误差。**实施后实测**（`rg -n "DebugUtil\." src --glob '*.cs'`）：源码共 56 个库内调用点 = 38 Debug + 18 Warning，以此为准。设计时 `DebugCategory="Provider"` 以私有 const 散落在 14 个文件，实施后已集中为程序集内部类别常量（`CompletionDebugCategories` / `CompletionToolsDebugCategories`）。
 - `DebugUtil` 混用三种角色：开发期 tracing、运行期故障告警、best-effort 文件留痕；且正滑向小型日志框架（EventKind、raw HTTP sink、异常序列化），与"不引入日志框架"的仓库边界冲突。
 - content-free 违规：Anthropic/Gemini provider error 直接写入 provider 原文；`FormatMessage` 附加完整 `exception.ToString()`；公开的 `DebugCompletionHttpExchangeSink` 输出 raw request/response/error。
 
@@ -112,7 +112,7 @@ console: level >= _consoleLevel
 | cleanup 失败 ×8 | [AnthropicClient.cs:443](../../src/Completion/Anthropic/AnthropicClient.cs)、[:454](../../src/Completion/Anthropic/AnthropicClient.cs)、[GeminiClient.cs:232](../../src/Completion/Gemini/GeminiClient.cs)、[:243](../../src/Completion/Gemini/GeminiClient.cs)、[OpenAIChatClient.cs:262](../../src/Completion/OpenAI/OpenAIChatClient.cs)、[:273](../../src/Completion/OpenAI/OpenAIChatClient.cs)、[OpenAIResponsesProtocolClientCore.cs:180](../../src/Completion/OpenAI/OpenAIResponsesProtocolClientCore.cs)、[:191](../../src/Completion/OpenAI/OpenAIResponsesProtocolClientCore.cs) | 次级诊断失败本身不可见；文本改 exception-type-only |
 | 诊断 sink 失败 ×2 | [LoggingCompletionClient.cs:276](../../src/Completion/LoggingCompletionClient.cs)、[CompletionHttpClientBuilder.cs:154](../../src/Completion/Transport/CompletionHttpClientBuilder.cs) | 保持 content-free |
 
-另有 28 处 Trace/Info 机械迁移为 `Debug`（11 + 17）。
+另有 28 处 Trace/Info 机械迁移为 `Debug`（11 + 17；设计时口径，最终源码计数以第 1 节实施后实测 56 处 = 38 Debug + 18 Warning 为准）。
 
 ## 6. 明确不做 / 推迟（含触发条件）
 
@@ -139,3 +139,22 @@ console: level >= _consoleLevel
 - 模拟 console writer 抛异常、文件目录不可写时，provider outcome 不变。
 - 日志文本检索不到凭据、provider 原文、正文、路径、stack。
 - `dotnet test` 无需逐宿主降级仍保持低噪声（`TestHostDiagnostics` 作为测试宿主政策保留）。
+
+## 8. 实施结果与验证（2026-09-21）
+
+实施完成范围：
+
+- `DebugUtil` public API 收缩为 `Debug` / `Warning` / `Error(category, text)`；删除 `Log` / `Print` / `ClearLog` / `DebugEventKind` / public `DebugLevel` / Exception 参数与 `DebugCompletionHttpExchangeSink`。
+- 删除 `ATELIA_DEBUG_CATEGORIES` / `ALL`；类别常量集中为程序集内部 `CompletionDebugCategories`（Completion）与 `CompletionToolsDebugCategories`（Tools）。
+- 控制台默认 `Warning+` 输出 `stderr`；文件懒创建、UTC ISO-8601 时间戳、单行有界 content-free、先判定后格式化、全路径 best-effort。
+- [src/Diagnostics/README.md](../../src/Diagnostics/README.md) 已重写为真实合同。
+
+验证证据：
+
+- Debug 与 Release 构建均 0 warning。
+- Release 离线测试：845 passed / 1 skipped（共 846；skip 为 Windows 限定用例）。
+- 测试宿主默认 `ATELIA_DEBUG_CONSOLE_LEVEL=Error`（[TestHostDiagnostics.cs](../../tests/Completion.Tests/TestHostDiagnostics.cs)，ModuleInitializer，外部显式设置优先）。
+
+验证命令：`dotnet build`（Debug 与 Release）、离线 `dotnet test`（清空 `OPENROUTER_API_KEY` 并关闭 CI 的五个 opt-in 开关）、调用点普查 `rg -n "DebugUtil\." src --glob '*.cs'`。
+
+第 7 节第 5 条要求的 `eng/Test-Package.ps1` 独立消费者验证在本次记录中未见执行结果，状态待确认。延后项（六处 provider fail-closed、clean-EOF Detail 等）不在本次实施范围，仍见 [pending-issues.md](pending-issues.md)。

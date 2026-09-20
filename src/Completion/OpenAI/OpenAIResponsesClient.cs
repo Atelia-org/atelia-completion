@@ -9,8 +9,6 @@ using Atelia.Diagnostics;
 namespace Atelia.Completion.OpenAI;
 
 public sealed class OpenAIResponsesClient : ICompletionClient {
-    private const string DebugCategory = "Provider";
-
     private static readonly JsonSerializerOptions SerializerOptions = new() {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
@@ -55,9 +53,9 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
             supportsNativeRequiredNamedToolChoice: true
         );
 
-        DebugUtil.Info(
-            DebugCategory,
-            $"[OpenAI/Responses] Client initialized base={_httpClient.BaseAddress}, reasoningEffort={_options.ReasoningEffort}"
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[OpenAI/Responses] Client initialized provider=OpenAI Responses, reasoningEffort={_options.ReasoningEffort}"
         );
     }
 
@@ -122,7 +120,10 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
 
     private HttpRequestMessage CreateHttpRequest(OpenAIResponsesApiRequest apiRequest) {
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
-        DebugUtil.Trace(DebugCategory, $"[OpenAI/Responses] Request payload length={json.Length}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[OpenAI/Responses] Request payload length={json.Length}"
+        );
 
         var request = new HttpRequestMessage(HttpMethod.Post, "v1/responses") {
             Content = new StringContent(json, Encoding.UTF8, new MediaTypeHeaderValue("application/json"))

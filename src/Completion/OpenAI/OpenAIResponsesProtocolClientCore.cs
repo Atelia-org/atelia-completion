@@ -10,8 +10,6 @@ namespace Atelia.Completion.OpenAI;
 /// public or ChatGPT Codex client.
 /// </summary>
 internal sealed class OpenAIResponsesProtocolClientCore {
-    private const string DebugCategory = "Provider";
-
     private readonly OpenAIResponsesClientOptions _requestOptions;
     private readonly string _apiSpecId;
     private readonly string _providerLabel;
@@ -73,8 +71,8 @@ internal sealed class OpenAIResponsesProtocolClientCore {
             );
         }
 
-        DebugUtil.Info(
-            DebugCategory,
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
             $"[{_providerLabel}] Starting call model={request.ModelId}"
         );
 
@@ -161,8 +159,8 @@ internal sealed class OpenAIResponsesProtocolClientCore {
             throw;
         }
 
-        DebugUtil.Trace(
-            DebugCategory,
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
             $"[{_providerLabel}] Stream completed"
         );
         return aggregator.Build();
@@ -178,9 +176,9 @@ internal sealed class OpenAIResponsesProtocolClientCore {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[{_providerLabel}] Parser cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[{_providerLabel}] Parser cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
 
@@ -189,9 +187,9 @@ internal sealed class OpenAIResponsesProtocolClientCore {
         }
         catch (Exception cleanupException) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[{_providerLabel}] Observer cleanup failed while preserving {originalException.GetType().Name}.",
-                cleanupException
+                CompletionDebugCategories.Provider,
+                $"[{_providerLabel}] Observer cleanup failed while preserving {originalException.GetType().FullName}; "
+                    + $"cleanupExceptionType={cleanupException.GetType().FullName}."
             );
         }
     }

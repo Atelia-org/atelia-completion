@@ -12,7 +12,6 @@ namespace Atelia.Completion.Anthropic;
 /// 将通用的 IContextMessage 上下文转换为 Anthropic Messages API 所需的格式。
 /// </summary>
 internal static class AnthropicMessageConverter {
-    private const string DebugCategory = "Provider";
     private const string EmptyLeadingUserPlaceholder = "<empty>";
 
     public static AnthropicApiRequest ConvertToApiRequest(
@@ -99,8 +98,8 @@ internal static class AnthropicMessageConverter {
             request.PromptPrefix.SharedContextMessages.Length
                 + request.TailMessages.Length
         );
-        DebugUtil.Info(
-            DebugCategory,
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
             $"[Anthropic] Converted {contextMessageCount} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={reasoningEffort}"
         );
         return apiRequest;
@@ -429,14 +428,14 @@ internal static class AnthropicMessageConverter {
             if (document.RootElement.ValueKind == JsonValueKind.Object) { return JsonSerializer.SerializeToElement(document.RootElement); }
 
             DebugUtil.Warning(
-                DebugCategory,
+                CompletionDebugCategories.Provider,
                 $"[Anthropic] Tool call replay requires object input; fallback to empty object toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} rootKind={document.RootElement.ValueKind}"
             );
         }
         catch (JsonException ex) {
             DebugUtil.Warning(
-                DebugCategory,
-                $"[Anthropic] Tool call replay received invalid raw arguments JSON; fallback to empty object toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} error={ex.Message}"
+                CompletionDebugCategories.Provider,
+                $"[Anthropic] Tool call replay received invalid raw arguments JSON; fallback to empty object toolName={toolCall.ToolName} toolCallId={toolCall.ToolCallId} exceptionType={ex.GetType().FullName}"
             );
         }
 
@@ -499,7 +498,10 @@ internal static class AnthropicMessageConverter {
         messages.Clear();
         messages.AddRange(normalized);
 
-        DebugUtil.Info(DebugCategory, $"[Anthropic] Normalized to {messages.Count} messages");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[Anthropic] Normalized to {messages.Count} messages"
+        );
     }
 
     private static List<AnthropicTool>? BuildToolDefinitions(ImmutableArray<ToolDefinition> tools) {

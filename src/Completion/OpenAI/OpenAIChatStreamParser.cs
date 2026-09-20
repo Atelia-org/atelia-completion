@@ -11,8 +11,6 @@ namespace Atelia.Completion.OpenAI;
 /// 解析 OpenAI Chat SSE 流式响应事件，直接向 <see cref="CompletionAggregator"/> 喂入增量数据。
 /// </summary>
 internal sealed class OpenAIChatStreamParser {
-    private const string DebugCategory = "Provider";
-
     private readonly OpenAIChatWhitespaceContentMode _whitespaceContentMode;
     private readonly OpenAIChatReasoningMode _reasoningMode;
     private readonly OpenAIChatUsageShape _usageShape;
@@ -94,11 +92,7 @@ internal sealed class OpenAIChatStreamParser {
 
             var errorMessage = error["message"]?.GetValue<string>() ?? "Unknown error";
             var diagnostic = CreateProviderErrorDiagnostic();
-            DebugUtil.Warning(
-                diagnostic.Category,
-                diagnostic.Text,
-                eventKind: diagnostic.EventKind
-            );
+            DebugUtil.Debug(diagnostic.Category, diagnostic.Text);
             DiscardIncompleteStreamingState();
             aggregator.AbortIncompleteStreamingState();
             aggregator.AppendError(errorMessage);
@@ -132,12 +126,11 @@ internal sealed class OpenAIChatStreamParser {
         }
     }
 
-    internal static (string Category, string Text, DebugEventKind EventKind)
+    internal static (string Category, string Text)
         CreateProviderErrorDiagnostic()
         => (
-            DebugCategory,
-            "[OpenAI] Provider error received.",
-            DebugEventKind.Failure
+            CompletionDebugCategories.Provider,
+            "[OpenAI] Provider error received."
         );
 
     private void MergeUsageIfPresent(

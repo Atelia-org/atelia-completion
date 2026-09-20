@@ -119,6 +119,6 @@ Tools 独立引用 `Atelia.Completion.Tools`。从 `MethodToolWrapper` 或 `Arti
 
 `ToolSession` 面向顺序调用，非线程安全；可见性与执行权限使用同一 Access 快照。校验失败不调用业务方法；执行序号不会自动实现持久化或副作用事务。游戏工具的行动仍应走宿主 Intent 仲裁与世界提交。
 
-Diagnostics 可单独引用，详见 [日志配置](../../src/Diagnostics/README.md)。Release 包中已被裁掉的 Trace/Info 调用不能通过环境变量恢复；需要库内部 Debug 诊断时使用源码 Debug 联调。
+Diagnostics 可单独引用，详见 [日志配置](../../src/Diagnostics/README.md)。Release 包中 Debug 级别调用已被 `[Conditional("DEBUG")]` 编译裁掉，不能通过环境变量恢复；需要库内部 Debug 诊断时使用源码 Debug 联调。
 
 源码离线测试入口是 `tests/Completion.Tests/Completion.Tests.csproj`。真实 provider 探针有显式 live 开关，须记录实际 provider/model/platform 和结果；默认未启用的测试与历史 `experiments/` 文件不代表本轮已经执行在线调用。HTTP 录制回放的边界见 [管线文档](http-transport-pipeline.md)，golden log 不是权威持久回执。

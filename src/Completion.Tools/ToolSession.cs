@@ -18,8 +18,6 @@ namespace Atelia.Completion.Tools;
 /// </para>
 /// </remarks>
 public sealed class ToolSession {
-    private const string DebugCategory = "Tools";
-
     private ToolRegistry _registry;
     private ToolAccessSnapshot _access;
     private long _nextExecutionSequence;
@@ -34,7 +32,10 @@ public sealed class ToolSession {
         _access = access ?? throw new ArgumentNullException(nameof(access));
         Services = services;
         Items = items;
-        DebugUtil.Trace(DebugCategory, $"ToolSession created toolCount={registry.AllDefinitions.Length}");
+        DebugUtil.Debug(
+            CompletionToolsDebugCategories.Tools,
+            $"ToolSession created toolCount={registry.AllDefinitions.Length}"
+        );
     }
 
     /// <summary>

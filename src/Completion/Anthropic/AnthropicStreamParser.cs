@@ -12,8 +12,6 @@ namespace Atelia.Completion.Anthropic;
 /// 事件类型：message_start, content_block_start, content_block_delta, content_block_stop, message_delta, message_stop
 /// </summary>
 internal sealed class AnthropicStreamParser {
-    private const string DebugCategory = "Provider";
-
     private readonly Dictionary<int, ContentBlockState> _contentBlocks = new();
     private string? _stopReason;
     private bool _messageStarted;
@@ -436,14 +434,20 @@ internal sealed class AnthropicStreamParser {
         var errorMessage = GetRequiredString(errorObject, "message", "error event error");
 
         FinalizeTerminalStreamingState(aggregator);
-        DebugUtil.Warning(DebugCategory, $"[Anthropic] API error type={errorType}: {errorMessage}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            "[Anthropic] API error received."
+        );
         aggregator.AppendError(errorMessage);
         aggregator.MarkFailed(errorType, errorMessage, errorType);
         _terminalEventObserved = true;
     }
 
     private void HandleUnknownEvent(string eventType) {
-        DebugUtil.Warning(DebugCategory, $"[Anthropic] Unknown event type: {eventType}");
+        DebugUtil.Debug(
+            CompletionDebugCategories.Provider,
+            $"[Anthropic] Unknown event type: {SanitizeDiagnosticToken(eventType)}"
+        );
     }
 
     private void RequireMessageStarted(string eventType) {
@@ -457,8 +461,8 @@ internal sealed class AnthropicStreamParser {
     private void FinalizeTerminalStreamingState(CompletionAggregator aggregator) {
         if (_contentBlocks.Count > 0) {
             var pendingIndexes = string.Join(", ", _contentBlocks.Keys.OrderBy(static index => index));
-            DebugUtil.Warning(
-                DebugCategory,
+            DebugUtil.Debug(
+                CompletionDebugCategories.Provider,
                 $"[Anthropic] Terminal event arrived with unfinished content blocks indexes=[{pendingIndexes}]."
             );
             aggregator.MarkIncomplete(

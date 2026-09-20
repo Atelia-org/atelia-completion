@@ -3,7 +3,7 @@
 `net10.0` 的模型调用合同：请求与共享前缀、历史消息、工具声明、完成状态、usage 和 provider 来源描述。它不依赖 Diagnostics、Tools 或 provider 实现。
 
 ```powershell
-dotnet add package Atelia.Completion.Abstractions --version 0.1.0-preview.1
+dotnet add package Atelia.Completion.Abstractions --version 0.1.0-preview.2
 ```
 
 本包使用 MIT 许可证。
@@ -14,4 +14,4 @@ dotnet add package Atelia.Completion.Abstractions --version 0.1.0-preview.1
 - `CompletionUsage` 的 null 表示未知，不能为了统计填零。usage 不进入持久请求身份。
 - 工具仅由 `PromptPrefix.OutputContract` 声明；工具结果须按调用 ID 和工具名一一对齐。执行与副作用责任归实现和宿主。
 
-[对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.1/docs/Completion/quick-start.md)包含完整 public client 示例；具体客户端来自另一个 `Atelia.Completion` 包。
+[对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.2/docs/Completion/quick-start.md)包含完整 public client 示例；具体客户端来自另一个 `Atelia.Completion` 包。

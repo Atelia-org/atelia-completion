@@ -3,7 +3,7 @@
 `netstandard2.0` 轻量诊断输出库，不依赖 Completion 或 Tools，也不引入日志框架。
 
 ```powershell
-dotnet add package Atelia.Diagnostics --version 0.1.0-preview.1
+dotnet add package Atelia.Diagnostics --version 0.1.0-preview.2
 ```
 
 ```csharp

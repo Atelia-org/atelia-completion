@@ -41,4 +41,50 @@ public sealed class DebugUtilPublicSurfaceTests {
             StringComparer.Ordinal
         );
     }
+
+    [Fact]
+    public void DefaultFileLevelIsDebugAndConsoleLevelIsWarning() {
+        Type levelType = Assert.Single(
+            typeof(DebugUtil).GetNestedTypes(BindingFlags.NonPublic),
+            static type => type.IsEnum
+        );
+        // GetRawConstantValue() returns the underlying integral value for enum consts,
+        // so compare via the numeric contract Debug=0 / Warning=1.
+        object? fileLevel = typeof(DebugUtil)
+            .GetField("DefaultFileLevel", BindingFlags.NonPublic | BindingFlags.Static)
+            ?.GetRawConstantValue();
+        object? consoleLevel = typeof(DebugUtil)
+            .GetField("DefaultConsoleLevel", BindingFlags.NonPublic | BindingFlags.Static)
+            ?.GetRawConstantValue();
+
+        Assert.Equal(0, fileLevel);
+        Assert.Equal(1, consoleLevel);
+    }
+
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData("", 0)]
+    [InlineData("   ", 0)]
+    [InlineData("debug", 0)]
+    [InlineData("DEBUG", 0)]
+    [InlineData("warning", 1)]
+    [InlineData("error", 2)]
+    [InlineData("off", 3)]
+    [InlineData("nonsense", 0)]
+    public void ParseLevelOrDefaultAppliesFallbackSemantics(string? raw, int expectedLevelValue) {
+        MethodInfo? method = typeof(DebugUtil).GetMethod(
+            "ParseLevelOrDefault",
+            BindingFlags.NonPublic | BindingFlags.Static
+        );
+        Assert.NotNull(method);
+
+        Type levelType = Assert.Single(
+            typeof(DebugUtil).GetNestedTypes(BindingFlags.NonPublic),
+            static type => type.IsEnum
+        );
+        object fallback = Enum.ToObject(levelType, 0);
+        object result = method!.Invoke(null, new object?[] { raw, fallback })!;
+
+        Assert.Equal(expectedLevelValue, Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture));
+    }
 }

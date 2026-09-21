@@ -48,10 +48,10 @@ internal enum DebugLevel { Debug = 0, Warning = 1, Error = 2, Off = 3 }
 
 | 配置 | 接受值（大小写不敏感，无别名） | 默认 |
 |---|---|---|
-| `ATELIA_DEBUG_FILE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `WARNING` |
+| `ATELIA_DEBUG_FILE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `DEBUG`（见文末附录） |
 | `ATELIA_DEBUG_CONSOLE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `WARNING` |
 
-- 默认值固定，不依赖 `#if DEBUG`。
+- 默认值固定，不依赖包自身 `#if DEBUG`（文件 sink 默认 `DEBUG` 的决策见文末附录）。
 - 删除 `ATELIA_DEBUG_CATEGORIES`、`ALL`、`TRACE`、`INFO` 及 `TRC/WRN/ERR` 等别名。
 
 ### 3.3 输出规则
@@ -158,3 +158,17 @@ console: level >= _consoleLevel
 验证命令：`dotnet build`（Debug 与 Release）、离线 `dotnet test`（清空 `OPENROUTER_API_KEY` 并关闭 CI 的五个 opt-in 开关）、调用点普查 `rg -n "DebugUtil\." src --glob '*.cs'`。
 
 第 7 节第 5 条要求的 `eng/Test-Package.ps1` 独立消费者验证已通过：候选版本 `0.1.0-debugutil.371ac66`，sourceRevision `371ac66b5d89c4213195b3a9998618d57e492138`；Pack 与 Test-Package 均成功，且构建输出为 0 warning / 0 error。因原仓 origin 为 `http://github.com/...`，包验证使用同一提交的临时 clone 并将 origin 设为脚本要求的 `https://github.com/Atelia-org/atelia-completion`。证据目录为 `/tmp/atelia-completion-debugutil-371ac66-feed` 与 `/tmp/atelia-completion-debugutil-371ac66-smoke`；四个 nupkg SHA256 已记录于前者 `manifest.0.1.0-debugutil.371ac66.json`。延后项（六处 provider fail-closed、clean-EOF Detail 等）不在本次实施范围，仍见 [pending-issues.md](pending-issues.md)。
+
+## 9. 决策附录：单门控与文件默认 DEBUG（2026-09-21）
+
+本节是决策记录，防止未来被当作漂移改回。
+
+**决策**：文件 sink 默认级别从 `WARNING` 改为 `DEBUG`；控制台默认保持 `WARNING`。两个默认值均为包级固定常量（`DefaultFileLevel` / `DefaultConsoleLevel`）。
+
+**论证**：`DebugUtil.Debug` 的 `[Conditional("DEBUG")]` 是消费方编译期门控——Release 消费者的调用点在编译时被裁掉，根本不会执行。因此文件默认 `DEBUG` 对 Release 消费者是严格 no-op，对 Debug 消费者则让开发期诊断自动留档。这不违反"默认值固定"原则：该原则否决的是包自身用 `#if DEBUG` 决定运行时默认值（那会让已发布包行为随构建形态漂移），而 `[Conditional]` 门控位于消费方调用点，包的默认常量在两种场景下都成立。
+
+**内容规则放宽（Debug 级）**：Debug 级调用文本不再要求 content-free，可记录宿主自己的数据（预览文本、内部状态、路径等）。理由：本项目是单用户实验项目，记录的是自己的数据；日志贴给 AI 排障视为特性。输出卫生仍由 `DebugUtil` 的 2048 截断与单行化保证。未来若出现非开发部署形态，再重新评估该放宽。
+
+**Warning / Error 维持 content-free**：这两级始终编译存在、可能出现在任何部署形态，继续保持"不得包含凭据、provider 原文、正文、文件路径或堆栈"。
+
+**测试宿主政策**：`tests/Completion.Tests/TestHostDiagnostics.cs` 在外部未显式设置时将 `ATELIA_DEBUG_FILE_LEVEL` 固定为 `Warning`——保证 Warning 事实仍落盘，同时测试 cwd 不产生 Debug 日志噪声；`ATELIA_DEBUG_CONSOLE_LEVEL=Error` 政策不变。外部显式设置优先。

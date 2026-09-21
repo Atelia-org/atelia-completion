@@ -11,14 +11,16 @@ namespace Atelia.Diagnostics {
     public static class DebugUtil {
         private const int MaximumTextLength = 2048;
         private const int MaximumCategoryLength = 64;
+        private const DebugLevel DefaultFileLevel = DebugLevel.Debug;
+        private const DebugLevel DefaultConsoleLevel = DebugLevel.Warning;
 
         private static readonly DebugLevel _fileLevel = ParseLevelOrDefault(
             Environment.GetEnvironmentVariable("ATELIA_DEBUG_FILE_LEVEL"),
-            DebugLevel.Warning
+            DefaultFileLevel
         );
         private static readonly DebugLevel _consoleLevel = ParseLevelOrDefault(
             Environment.GetEnvironmentVariable("ATELIA_DEBUG_CONSOLE_LEVEL"),
-            DebugLevel.Warning
+            DefaultConsoleLevel
         );
 
         [Conditional("DEBUG")]

@@ -30,7 +30,10 @@ DebugUtil.Error("Example", "The library itself failed.");
 - **Warning**：成功路径上的降级、回退、容错，或 best-effort 诊断旁路自身失败而主结果被保留。这类事实默认应该可见。
 - **Error**：库自身真实错误。业务失败已由结果或异常报告时，不再重复打印 Error。
 
-调用文本必须 content-free：不得包含凭据、provider 原文、正文、文件路径或堆栈。`DebugUtil` 只做控制字符单行化和固定长度截断，不能替调用方消除已写出的敏感内容。
+内容规则按级别分层：
+
+- **Warning / Error**：调用文本必须 content-free——不得包含凭据、provider 原文、正文、文件路径或堆栈。这两类日志可能出现在任何部署形态的控制台上，只承载事实摘要（如 `exceptionType={type.FullName}`）。
+- **Debug**：开发期临时诊断，可以记录宿主自己的数据（预览文本、内部状态、路径等）。`[Conditional("DEBUG")]` 保证 Release 消费者不会执行这些调用；输出卫生由 `DebugUtil` 的控制字符单行化和固定长度截断保证。
 
 ## 配置
 
@@ -38,12 +41,12 @@ DebugUtil.Error("Example", "The library itself failed.");
 
 | 变量 | 接受值 | 默认 |
 |---|---|---|
-| `ATELIA_DEBUG_FILE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `WARNING` |
+| `ATELIA_DEBUG_FILE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `DEBUG` |
 | `ATELIA_DEBUG_CONSOLE_LEVEL` | `DEBUG` / `WARNING` / `ERROR` / `OFF` | `WARNING` |
 
 非法值回退默认值。`ATELIA_DEBUG_CATEGORIES` 与 `ALL` 已删除；category 只是日志行内标签和文件分区名，不再构成配置面或控制台筛选器。
 
-默认值固定，不依赖 Diagnostics 包自身的 `#if DEBUG`。下游使用 Debug 编译不会改变已发布包的 sink 默认级别。
+两个 sink 角色不同，默认值分开：文件 sink 是留档记录，默认 `DEBUG`——Debug 调用点一旦编译存在即落盘；控制台是实时视图，默认 `WARNING` 以保持安静。默认值固定，不依赖 Diagnostics 包自身的 `#if DEBUG`：门控来自消费方调用点的 `[Conditional("DEBUG")]`，Release 消费者调用点被编译期裁掉，文件默认 `DEBUG` 对其严格 no-op。下游使用 Debug 编译不会改变已发布包的 sink 默认级别。
 
 ## 输出合同
 

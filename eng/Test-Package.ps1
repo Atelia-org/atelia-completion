@@ -105,7 +105,36 @@ try {
                 $id = if ($probe -eq 'DiagnosticsOnly') { 'Atelia.Diagnostics' } else { 'Atelia.Completion.Abstractions' }
                 $type = if ($probe -eq 'DiagnosticsOnly') { 'Atelia.Diagnostics.DebugUtil' } else { 'Atelia.Completion.Abstractions.CompletionRequest' }
                 $project = "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><IsPackable>false</IsPackable></PropertyGroup><ItemGroup><PackageReference Include=`"$id`" Version=`"$Version`" /></ItemGroup></Project>"
-                Write-Utf8 "$directory/Program.cs" "System.Console.WriteLine(typeof($type).Assembly.GetName().Name);"
+                if ($probe -eq 'DiagnosticsOnly') {
+                    Write-Utf8 "$directory/Program.cs" @'
+using System;
+using System.Reflection;
+using System.Collections.Generic;
+
+// Clean-process default-level probe: verify DebugUtil's private static fields
+// resolve to File=Debug / Console=Warning when no environment variables are set.
+Environment.SetEnvironmentVariable("ATELIA_DEBUG_FILE_LEVEL", null);
+Environment.SetEnvironmentVariable("ATELIA_DEBUG_CONSOLE_LEVEL", null);
+Type utilType = typeof(Atelia.Diagnostics.DebugUtil);
+Type levelType = Assert.Single(utilType.GetNestedTypes(BindingFlags.NonPublic), static t => t.IsEnum);
+object fileLevel = utilType.GetField("_fileLevel", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+object consoleLevel = utilType.GetField("_consoleLevel", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+if (!Equals(fileLevel, Enum.ToObject(levelType, 0))) { throw new InvalidOperationException($"Default file level is not Debug: {fileLevel}"); }
+if (!Equals(consoleLevel, Enum.ToObject(levelType, 1))) { throw new InvalidOperationException($"Default console level is not Warning: {consoleLevel}"); }
+Console.WriteLine(utilType.Assembly.GetName().Name);
+
+static class Assert {
+    public static T Single<T>(IEnumerable<T> source, Func<T, bool> predicate) {
+        T? found = default; bool has = false;
+        foreach (T item in source) { if (predicate(item)) { if (has) { throw new InvalidOperationException("More than one match."); } found = item; has = true; } }
+        if (!has) { throw new InvalidOperationException("No match."); }
+        return found!;
+    }
+}
+'@
+                } else {
+                    Write-Utf8 "$directory/Program.cs" "System.Console.WriteLine(typeof($type).Assembly.GetName().Name);"
+                }
                 $expected = @($id)
             }
             $projectPath = Join-Path $directory "$probe.csproj"

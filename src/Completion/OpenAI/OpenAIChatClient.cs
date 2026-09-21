@@ -117,7 +117,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
                 }
 
                 parser.ParseEvent(frame.Data, aggregator);
-                if (parser.TerminalEventObserved) {
+                if (parser.TerminalEventObserved
+                    && !_dialect.RequestStreamUsage) {
                     break;
                 }
 

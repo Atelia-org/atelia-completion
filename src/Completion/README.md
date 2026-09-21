@@ -21,8 +21,10 @@ Codex 的 HTTP/transport 失败也使用共享异常，旧 Codex-specific 异常
 HTTP 异常诊断正文限制为归一化单行的前 512 字符；结构化 code 从完整错误响应解析，不因诊断截断丢失。
 该摘录仍可能包含 provider 数据，不应用作 UI 安全文本或持久业务原因；宿主应只发布归一化错误码。
 
-Chat/Gemini 在 finish terminal 后不再等待 trailing usage。若终止 frame 未带 usage，
-相应计量字段就是 unknown；完整业务结果不能因可选计量迟到而丢失。
+未请求 stream usage 的 Chat 方言与 Gemini 在 finish terminal 后不等待 trailing usage；
+若终止 frame 未带 usage，相应计量字段就是 unknown，完整业务结果不能因可选计量迟到而丢失。
+显式请求 `stream_options.include_usage` 的 Chat 方言会继续读取 terminal 后的
+empty-choices usage snapshot 与 `[DONE]`；该快照是已请求的协议尾部事实，而不是可选等待。
 Anthropic/Gemini 的共享 capability preflight 在最后 waiter 取消时会取消并等待 fetch 清理；
 清理未完成前不启动替代 fetch。其他仍在等待同一 fetch 的调用不受单个 waiter 取消影响。
 

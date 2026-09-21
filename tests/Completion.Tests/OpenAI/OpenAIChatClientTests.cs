@@ -178,6 +178,48 @@ public sealed class OpenAIChatClientTests {
     }
 
     [Fact]
+    public async Task DeepSeekV4Surface_CapturesTrailingUsageSnapshotAfterFinishReason() {
+        var handler = new SequenceHttpMessageHandler(
+            EventStreamResponse(
+                """
+                data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"recall_memos","arguments":"{\"memoIds\":[\"m1:00000001\"]}"}}]},"finish_reason":"tool_calls"}],"usage":null}
+
+                data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":7,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20}}
+
+                data: [DONE]
+
+                """
+            )
+        );
+        using var httpClient = CreateHttpClient(handler);
+        var client = new DeepSeekV4ChatClient(null, httpClient);
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            CreateRequest(),
+            observer: null,
+            CancellationToken.None
+        );
+
+        using JsonDocument request = JsonDocument.Parse(
+            Assert.Single(handler.RequestBodies)
+        );
+        Assert.True(
+            request.RootElement.GetProperty("stream_options")
+                .GetProperty("include_usage")
+                .GetBoolean()
+        );
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        Assert.Equal(20, result.Usage.UncachedInputTokens);
+        Assert.Null(result.Usage.CacheCreationInputTokens);
+        Assert.Equal(80, result.Usage.CacheReadInputTokens);
+        Assert.Equal(7, result.Usage.OutputTokens);
+        Assert.Equal(
+            PromptCacheObservationStatus.Partial,
+            result.Usage.PromptCache.ObservationStatus
+        );
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_QwenThinkingControlIsAtRequestRoot() {
         var handler = new SequenceHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) {

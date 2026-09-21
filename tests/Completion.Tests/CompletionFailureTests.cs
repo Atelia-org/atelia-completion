@@ -131,7 +131,13 @@ public sealed class CompletionFailureTests {
         using var http = new HttpClient(new Handler(request => request.Method == HttpMethod.Get
             ? new(HttpStatusCode.OK) { Content = new StringContent("{\"outputTokenLimit\":8192}") }
             : Sse(stream))) { BaseAddress = new Uri("https://example.invalid/") };
-        ICompletionClient client = gemini ? new GeminiClient(null, http) : new OpenAIChatClient(null, http);
+        ICompletionClient client = gemini
+            ? new GeminiClient(null, http)
+            : new OpenAIChatClient(
+                null,
+                http,
+                OpenAIChatDialects.SgLangCompatible
+            );
         CompletionResult result = await client.StreamCompletionAsync(Request(), null);
         Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
         Assert.Equal("ok", result.Message.GetFlattenedText());

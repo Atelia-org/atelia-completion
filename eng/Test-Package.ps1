@@ -107,6 +107,7 @@ try {
                 $project = "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><IsPackable>false</IsPackable></PropertyGroup><ItemGroup><PackageReference Include=`"$id`" Version=`"$Version`" /></ItemGroup></Project>"
                 if ($probe -eq 'DiagnosticsOnly') {
                     Write-Utf8 "$directory/Program.cs" @'
+#nullable enable
 using System;
 using System.Reflection;
 using System.Collections.Generic;

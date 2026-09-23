@@ -3,14 +3,14 @@
 `net10.0`；依赖 Abstractions 与 Diagnostics，不依赖 Completion 的 provider 实现。本包使用 MIT 许可证。
 
 ```powershell
-dotnet add package Atelia.Completion.Tools --version 0.1.0-preview.2
+dotnet add package Atelia.Completion.Tools --version 0.1.0-preview.3
 ```
 
 `ToolSession` 面向顺序使用、非线程安全。执行序号不会自动提供持久化、事务或 exactly-once；副作用提交、恢复与世界仲裁仍归宿主。Release 库内部 Debug 级别调用已被 `[Conditional("DEBUG")]` 编译裁掉，无法由环境变量恢复，需要源码 Debug 联调。
 
 > **读者**：要把宿主能力或结构化产物暴露给 LLM tool calling 的上层应用作者。
 > **不读这份**：要修改 schema 反射、raw JSON 绑定或执行器内部实现的人。那类工作请直接看 `Declaration/ReflectedToolDefinitionBuilder.cs`、`ObjectInputToolRuntime.cs` 和对应测试。
-> **配套阅读**：`Atelia.Completion` 的 client / `CompletionRequest` 用法见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.2/docs/Completion/quick-start.md)。本 README 只覆盖 tool 的定义、注册、执行和回灌。
+> **配套阅读**：`Atelia.Completion` 的 client / `CompletionRequest` 用法见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.3/docs/Completion/quick-start.md)。本 README 只覆盖 tool 的定义、注册、执行和回灌。
 
 ---
 
@@ -387,10 +387,10 @@ var definition = ReflectedToolDefinitionBuilder.BuildDefinitionUsingTypeDescript
 
 本 README 中的主路径样例已经落实成可执行测试，方便以后改 API 时及时发现文档漂移：
 
-- [tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.2/tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs)
-- [tests/Completion.Tests/Tools/MethodToolWrapperTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.2/tests/Completion.Tests/Tools/MethodToolWrapperTests.cs)
-- [tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.2/tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs)
-- [tests/Completion.Tests/Tools/ToolSessionTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.2/tests/Completion.Tests/Tools/ToolSessionTests.cs)
+- [tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.3/tests/Completion.Tests/Tools/CompletionToolsQuickStartSamplesTests.cs)
+- [tests/Completion.Tests/Tools/MethodToolWrapperTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.3/tests/Completion.Tests/Tools/MethodToolWrapperTests.cs)
+- [tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.3/tests/Completion.Tests/Tools/ArtifactToolWrapperTests.cs)
+- [tests/Completion.Tests/Tools/ToolSessionTests.cs](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.3/tests/Completion.Tests/Tools/ToolSessionTests.cs)
 
 只跑这批样例可用：
 

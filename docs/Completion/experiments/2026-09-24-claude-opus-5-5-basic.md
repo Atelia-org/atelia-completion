@@ -71,3 +71,5 @@ Models 404 及两次 Messages 200 exchange。两次 POST 的请求模型均为
 
 后续将已知模型的输出上限改为直取，见
 [已知模型输出上限直取实测](2026-09-24-anthropic-known-model-maximum.md)。
+4.6 → 5.5 的跨模型 thinking 专项结果见
+[保留 thinking 中转站实验](2026-09-24-anthropic-opus46-to-opus55-thinking.md)。

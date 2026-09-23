@@ -66,3 +66,6 @@ dotnet test tests/Completion.Tests/Completion.Tests.csproj --no-restore -m:1 -nr
 离线回归：Debug/Release 各通过 Completion 795 项、Galatea 827 项（排除 LiveTests，另显式包含 Probe_ 的 3 项
 无凭据检查）；Node 13 项通过；Galatea Release build 零警告零错误。scoped docs checker 26 文件零诊断，
 新增 Completion 文档本地链接另行检查，`git diff --check` 通过。两个实现子任务由独立 reviewer 复核，文档 findings 已收尾。
+
+2026-09-24 又对 `gpt-6-astra → gpt-6-sol` 做了独立定向实测，见
+[GPT-6 Astra → Sol 旧会话续轮验证](2026-09-24-gpt6-astra-to-sol-codex.md)。

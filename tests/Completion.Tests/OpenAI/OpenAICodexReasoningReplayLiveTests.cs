@@ -16,6 +16,7 @@ namespace Atelia.Completion.OpenAI.Tests;
 /// </summary>
 public sealed class OpenAICodexReasoningReplayLiveTests {
     private static readonly string[] Models = ["gpt-5.6-sol", "gpt-6-astra", "gpt-5.6-luna"];
+    private const string CrossModelReceipt = "ATELIA6ASOL";
     private static readonly ToolDefinition Checkpoint = new(
         "checkpoint", "Record the computed result; no external side effects.",
         new ToolSchema.Object([
@@ -29,10 +30,11 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
             return;
         }
         string scope = Environment.GetEnvironmentVariable("ATELIA_CODEX_REASONING_REPLAY_SCOPE") ?? "matrix";
-        Assert.True(scope is "matrix" or "astra-control", "Unknown replay probe scope.");
+        Assert.True(scope is "matrix" or "astra-control" or "astra-to-gpt6-sol", "Unknown replay probe scope.");
         bool controlOnly = scope == "astra-control";
-        int expectedCalls = controlOnly ? 3 : 17;
-        string[] seedModels = controlOnly ? [Models[1]] : Models;
+        bool astraToGpt6Sol = scope == "astra-to-gpt6-sol";
+        int expectedCalls = controlOnly || astraToGpt6Sol ? 3 : 17;
+        string[] seedModels = controlOnly || astraToGpt6Sol ? [Models[1]] : Models;
         string authPath = RequiredAbsolutePath("ATELIA_CODEX_SUBSCRIPTION_LIVE_AUTH_FILE");
         string reportPath = RequiredAbsolutePath("ATELIA_CODEX_REASONING_REPLAY_REPORT");
         var fileOptions = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
@@ -60,24 +62,32 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
             if (hasEncrypted && hasTool) { seeds.Add(model, result); }
         }
 
-        // Three diagonal controls plus the four requested directed edges.
-        (string Source, string Target)[] pairs = [
-            (Models[0], Models[0]), (Models[1], Models[1]), (Models[2], Models[2]),
-            (Models[0], Models[1]), (Models[1], Models[0]),
-            (Models[0], Models[2]), (Models[2], Models[0])
-        ];
+        // The default matrix retains its three controls and four directed edges.
+        (string Source, string Target)[] pairs = astraToGpt6Sol
+            ? [(Models[1], "gpt-6-sol")]
+            : [
+                (Models[0], Models[0]), (Models[1], Models[1]), (Models[2], Models[2]),
+                (Models[0], Models[1]), (Models[1], Models[0]),
+                (Models[0], Models[2]), (Models[2], Models[0])
+            ];
         foreach (var (source, target) in pairs) {
             if (controlOnly && (source != Models[1] || target != Models[1])) { continue; }
             if (!seeds.TryGetValue(source, out var seed)) { continue; }
             var call = seed.Blocks.OfType<ActionBlock.ToolCall>().Single().Call;
             var toolResult = new ToolResultsMessage(null, [
-                ToolResult.FromText(call.ToolName, call.ToolCallId, ToolExecutionStatus.Success, "Recorded. Reply with exactly OK.")
+                ToolResult.FromText(call.ToolName, call.ToolCallId, ToolExecutionStatus.Success,
+                    astraToGpt6Sol
+                        ? $"Recorded receipt {CrossModelReceipt}. Reply with exactly {CrossModelReceipt}."
+                        : "Recorded. Reply with exactly OK.")
             ]);
             IHistoryMessage[] currentTurn = [initial, seed, toolResult];
             var continued = await CallAsync("tool-continuation", source, target, currentTurn, requireTool: false);
             if (continued is null || continued.Blocks.OfType<ActionBlock.ToolCall>().Any()) { continue; }
             await CallAsync("next-user-turn", source, target,
-                [.. currentTurn, continued, new ObservationMessage("Reply with exactly OK.")], requireTool: false);
+                [.. currentTurn, continued, new ObservationMessage(
+                    astraToGpt6Sol
+                        ? "Which receipt marker did checkpoint return? Reply with only the marker."
+                        : "Reply with exactly OK.")], requireTool: false);
         }
         await WriteAsync(new { kind = "summary", scope, successfulCalls, expectedCalls, eligibleSeeds = seeds.Count });
         Assert.True(successfulCalls == expectedCalls && seeds.Count == seedModels.Length,
@@ -86,7 +96,9 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
         async Task<ActionMessage?> CallAsync(string stage, string source, string target,
             IHistoryMessage[] history, bool requireTool) {
             var request = new CompletionRequest(target, new CompletionPromptPrefix(
-                "Follow the user's instruction. After checkpoint returns, do not call tools again; reply with exactly OK.",
+                astraToGpt6Sol
+                    ? "Follow the user's instruction. After checkpoint returns, do not call tools again; reply with exactly the receipt marker from its result."
+                    : "Follow the user's instruction. After checkpoint returns, do not call tools again; reply with exactly OK.",
                 requireTool
                     ? new CompletionOutputContract([Checkpoint], CompletionToolChoice.RequiredNamed("checkpoint"), allowParallelToolCalls: false)
                     : new CompletionOutputContract([Checkpoint], CompletionToolChoice.None, allowParallelToolCalls: false),
@@ -114,15 +126,19 @@ public sealed class OpenAICodexReasoningReplayLiveTests {
                 errorType = error.GetType().Name;
                 adapterFailureReason = (error as OpenAICodexResponsesException)?.Reason.ToString();
             }
+            bool answerMatched = !astraToGpt6Sol || requireTool
+                || string.Equals(result?.Message.GetFlattenedText().Trim(), CrossModelReceipt,
+                    StringComparison.Ordinal);
             bool completed = result?.Termination.Kind == CompletionTerminationKind.Completed
                 && handler.CompletedEvent && handler.HttpStatus == 200
-                && handler.ReportedModel == target && handler.NativeItemsUnchanged;
+                && handler.ReportedModel == target && handler.NativeItemsUnchanged
+                && answerMatched;
             await WriteAsync(new {
                 kind = "call", stage, source, target, utc = DateTimeOffset.UtcNow,
                 elapsedMs = timer.ElapsedMilliseconds, handler.SentCalls, handler.HttpStatus,
                 handler.CompletedEvent, handler.ReportedModel, handler.EffectiveContext,
                 nativeReasoningItems = native.Length, handler.NativeItemsUnchanged,
-                completed, parserTermination = result?.Termination.Kind.ToString(), errorType, adapterFailureReason,
+                completed, answerMatched, parserTermination = result?.Termination.Kind.ToString(), errorType, adapterFailureReason,
                 projection = "production-client-native-input", reasoningContext = "omitted"
             });
             if (completed) { successfulCalls++; }

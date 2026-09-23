@@ -60,11 +60,13 @@ public sealed class OpenAIResponsesReasoningProjectionTests {
 
     [Theory]
     [InlineData("openai-codex-responses-v2", "gpt-5.6-sol", "gpt-6-astra", false)]
+    [InlineData("openai-codex-responses-v2", "gpt-6-astra", "gpt-6-sol", true)]
     [InlineData("openai-codex-responses-v2", "gpt-6-astra", "gpt-5.6-sol", true)]
     [InlineData("openai-codex-responses-v2", "gpt-5.6-sol", "gpt-5.6-luna", true)]
     [InlineData("openai-codex-responses-v2", "gpt-5.6-luna", "gpt-5.6-sol", false)]
     [InlineData("openai-codex-responses-v2", "gpt-5.6-sol", "gpt-5.6-sol", false)]
     [InlineData("openai-responses-v2", "gpt-5.6-sol", "gpt-6-astra", false)]
+    [InlineData("openai-responses-v2", "gpt-6-astra", "gpt-6-sol", true)]
     [InlineData("openai-responses-v2", "gpt-6-astra", "gpt-5.6-sol", true)]
     [InlineData("openai-responses-v2", "gpt-5.6-sol", "gpt-5.6-luna", true)]
     [InlineData("openai-responses-v2", "gpt-5.6-luna", "gpt-5.6-sol", false)]

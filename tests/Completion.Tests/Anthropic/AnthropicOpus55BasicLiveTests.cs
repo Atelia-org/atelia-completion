@@ -111,10 +111,10 @@ public sealed class AnthropicOpus55BasicLiveTests(ITestOutputHelper output) {
                 ? $" kind={classified.Failure.Kind} http={classified.Failure.HttpStatusCode} code={classified.Failure.ProviderCode}"
                 : string.Empty;
             output.WriteLine($"model={request.ModelId} stage={stage} elapsedMs={timer.ElapsedMilliseconds} "
-                + $"modelsHttp={statusProbe.ModelsStatusCode} messagesHttp={statusProbe.MessagesStatusCode} "
+                + $"modelsHttp={statusProbe.ModelsStatusCode?.ToString() ?? "none"} messagesHttp={statusProbe.MessagesStatusCode} "
                 + $"exception={exception.GetType().Name}{failure}");
             Assert.Fail($"Live Anthropic invocation failed: model={request.ModelId} stage={stage} "
-                + $"modelsHttp={statusProbe.ModelsStatusCode} messagesHttp={statusProbe.MessagesStatusCode} "
+                + $"modelsHttp={statusProbe.ModelsStatusCode?.ToString() ?? "none"} messagesHttp={statusProbe.MessagesStatusCode} "
                 + $"exception={exception.GetType().Name}{failure}");
             throw;
         }
@@ -122,12 +122,13 @@ public sealed class AnthropicOpus55BasicLiveTests(ITestOutputHelper output) {
         string text = result.Message.GetFlattenedText().Trim();
         bool markerPresent = text.Contains(Marker, StringComparison.OrdinalIgnoreCase);
         output.WriteLine($"model={request.ModelId} stage={stage} elapsedMs={timer.ElapsedMilliseconds} "
-            + $"modelsHttp={statusProbe.ModelsStatusCode} messagesHttp={statusProbe.MessagesStatusCode} "
+            + $"modelsHttp={statusProbe.ModelsStatusCode?.ToString() ?? "none"} messagesHttp={statusProbe.MessagesStatusCode} "
             + $"termination={result.Termination.Kind} textLength={text.Length} "
             + $"textDeltas={textDeltaCount} markerPresent={markerPresent} "
             + $"failureKind={result.Failure?.Kind} providerCode={result.Failure?.ProviderCode}");
 
         Assert.Equal(200, statusProbe.MessagesStatusCode);
+        Assert.Null(statusProbe.ModelsStatusCode);
         Assert.Equal(request.ModelId, result.Invocation.Model);
         Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
         Assert.False(string.IsNullOrWhiteSpace(text));

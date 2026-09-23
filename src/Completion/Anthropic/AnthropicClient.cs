@@ -361,6 +361,10 @@ public sealed class AnthropicClient : ICompletionClient {
         string modelId,
         CancellationToken cancellationToken
     ) {
+        if (GetKnownMaximumTokens(modelId) is int knownMaximum) {
+            return knownMaximum;
+        }
+
         using HttpRequestMessage request = CreateModelInfoRequest(modelId);
         using HttpResponseMessage response = await CompletionHttpRequestUtility.SendAsync(
             _httpClient, request,
@@ -373,7 +377,7 @@ public sealed class AnthropicClient : ICompletionClient {
             or HttpStatusCode.MethodNotAllowed
             or HttpStatusCode.NotImplemented) {
             cancellationToken.ThrowIfCancellationRequested();
-            int fallback = GetFallbackMaximumTokens(modelId);
+            const int fallback = 32_768;
             DebugUtil.Warning(
                 CompletionDebugCategories.Provider,
                 $"[Anthropic] Model capability endpoint unavailable (HTTP {(int)response.StatusCode}); using fallback max_tokens={fallback}."
@@ -397,11 +401,11 @@ public sealed class AnthropicClient : ICompletionClient {
     // https://platform.claude.com/docs/en/models/overview
     // https://platform.claude.com/docs/en/models/opus-5-5/overview
     // https://platform.claude.com/docs/en/build-with-claude/streaming (max_tokens=128000)
-    // Exact IDs only: aliases and future models keep the conservative fallback.
-    private static int GetFallbackMaximumTokens(string modelId) => modelId switch {
+    // Exact IDs only: aliases and future models still query the configured endpoint.
+    private static int? GetKnownMaximumTokens(string modelId) => modelId switch {
         "claude-opus-4-6" or "claude-opus-4-7" or "claude-opus-4-8"
             or "claude-opus-5" or "claude-opus-5-5" => 128_000,
-        _ => 32_768
+        _ => null
     };
 
     private HttpRequestMessage CreateModelInfoRequest(string modelId) {

@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Atelia.Completion;
 
 /// <summary>
-/// Caches a provider-reported maximum per exact model id. Failed and canceled
+/// Caches a resolved maximum per exact model id. Failed and canceled
 /// fetches are evicted, while concurrent callers share one caller-independent
 /// in-flight fetch.
 /// </summary>

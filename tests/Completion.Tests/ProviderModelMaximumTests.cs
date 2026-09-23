@@ -203,7 +203,7 @@ public sealed class ProviderModelMaximumTests {
             CancellationToken.None
         );
         _ = await client.StreamCompletionAsync(
-            Request("claude-opus-5"),
+            Request("other-model"),
             null,
             CancellationToken.None
         );
@@ -240,7 +240,7 @@ public sealed class ProviderModelMaximumTests {
     }
 
     [Fact]
-    public async Task Anthropic_ExactRouteBindsAndExecutesAfterCapability404() {
+    public async Task Anthropic_ExactRouteBindsKnownModelWithoutCapabilityLookup() {
         var handler = new RecordingHandler((request, _) => Task.FromResult(
             request.Method == HttpMethod.Get
                 ? new HttpResponseMessage(HttpStatusCode.NotFound) {
@@ -272,7 +272,7 @@ public sealed class ProviderModelMaximumTests {
 
         Assert.True(result.Termination.IsSuccess);
         Assert.Equal(
-            [HttpMethod.Get, HttpMethod.Post],
+            [HttpMethod.Post],
             handler.Requests.Select(static request => request.Method)
         );
         using var body = JsonDocument.Parse(handler.Requests.Last().Body!);
@@ -280,18 +280,47 @@ public sealed class ProviderModelMaximumTests {
     }
 
     [Theory]
-    [InlineData(404, "claude-opus-4-6", 128_000)]
-    [InlineData(404, "claude-opus-4-7", 128_000)]
-    [InlineData(404, "claude-opus-4-8", 128_000)]
-    [InlineData(404, "claude-opus-5", 128_000)]
-    [InlineData(404, "claude-opus-5-5", 128_000)]
-    [InlineData(404, "unknown-model", 32_768)]
-    [InlineData(405, "claude-opus-5", 128_000)]
-    [InlineData(405, "claude-opus-5-5", 128_000)]
-    [InlineData(501, "unknown-model", 32_768)]
-    [InlineData(404, "claude-opus-5-custom", 32_768)]
+    [InlineData("claude-opus-4-6")]
+    [InlineData("claude-opus-4-7")]
+    [InlineData("claude-opus-4-8")]
+    [InlineData("claude-opus-5")]
+    [InlineData("claude-opus-5-5")]
+    public async Task Anthropic_KnownModelUsesPublishedMaximumWithoutCapabilityLookup(
+        string modelId
+    ) {
+        var handler = new RecordingHandler((request, _) => Task.FromResult(
+            request.Method == HttpMethod.Get
+                ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                : AnthropicCompletionResponse()
+        ));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient);
+
+        for (int i = 0; i < 2; i++) {
+            _ = await client.StreamCompletionAsync(
+                Request(modelId), null, CancellationToken.None
+            );
+        }
+
+        Assert.Equal(
+            [HttpMethod.Post, HttpMethod.Post],
+            handler.Requests.Select(static request => request.Method)
+        );
+        foreach (var post in handler.Requests) {
+            using var body = JsonDocument.Parse(post.Body!);
+            Assert.Equal(128_000, body.RootElement.GetProperty("max_tokens").GetInt32());
+            Assert.Equal(modelId, body.RootElement.GetProperty("model").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData(404, "unknown-model")]
+    [InlineData(405, "unknown-model")]
+    [InlineData(501, "unknown-model")]
+    [InlineData(404, "claude-opus-5-custom")]
+    [InlineData(404, "claude-opus-5-5-custom")]
     public async Task Anthropic_MissingModelsEndpointUsesCachedFallback(
-        int status, string modelId, int expectedMaximum
+        int status, string modelId
     ) {
         var handler = new RecordingHandler((request, _) => Task.FromResult(
             request.Method == HttpMethod.Get
@@ -317,7 +346,7 @@ public sealed class ProviderModelMaximumTests {
             static request => request.Method == HttpMethod.Post
         )) {
             using var body = JsonDocument.Parse(post.Body!);
-            Assert.Equal(expectedMaximum, body.RootElement.GetProperty("max_tokens").GetInt32());
+            Assert.Equal(32_768, body.RootElement.GetProperty("max_tokens").GetInt32());
             Assert.Equal(modelId, body.RootElement.GetProperty("model").GetString());
         }
     }
@@ -336,7 +365,7 @@ public sealed class ProviderModelMaximumTests {
         var client = new AnthropicClient(null, httpClient);
 
         var exception = await Assert.ThrowsAsync<CompletionFailureException>(() =>
-            client.StreamCompletionAsync(Request("claude-opus-5"), null, CancellationToken.None)
+            client.StreamCompletionAsync(Request("unknown-model"), null, CancellationToken.None)
         );
 
         Assert.Equal(status, exception.Failure.HttpStatusCode);

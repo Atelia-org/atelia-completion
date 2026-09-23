@@ -1,5 +1,10 @@
 # Opus 4.6 thinking → Opus 5.5 续轮中转站专项实验（2026-09-24）
 
+> 历史记录：本页保留 `df5c313` 时的强证据实验与结论。随后用户决定将
+> 模型签名兼容性留给服务器，当前生产策略与新实测见
+> [Anthropic 跨模型 Origin 策略](2026-09-24-anthropic-cross-model-origin-policy.md)。
+> 下面的手工绕过方法只对应旧版测试；当前同名 live test 已改为生产客户端验收。
+
 ## 问题与验收标准
 
 [Anthropic preserved thinking 文档](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)
@@ -8,7 +13,7 @@
 thinking 块可能被静默丢弃。启用 `thinking-binding-controls-2026-08-01` beta
 header 后，`input_transformations` 可显示丢弃或前缀不匹配的原因。
 
-当前 `AnthropicMessageConverter` 对 provider-native reasoning 的生产回灌要求
+当时的 `AnthropicMessageConverter` 对 provider-native reasoning 的生产回灌要求
 完整 `Origin == targetInvocation`，因此会在 HTTP 前拒绝跨模型续轮。这项实验
 要先证明实际配置的 Messages 中转站能保留并供 5.5 读取 4.6 的块，再决定
 是否只放宽这个精确方向。HTTP 200、正文正确或请求携带签名，都不足以单独
@@ -16,7 +21,7 @@ header 后，`input_transformations` 可显示丢弃或前缀不匹配的原因�
 
 ## 隔离实验
 
-`AnthropicCrossModelThinkingLiveTests` 是显式 opt-in 测试。它从运行时环境读取
+当时的 `AnthropicCrossModelThinkingLiveTests` 是显式 opt-in 测试。它从运行时环境读取
 `CLAUDE_BASE_URL` 与 `CLAUDE_API_KEY`，不打印其值。第一次调用使用
 `AnthropicClient` 让 `claude-opus-4-6` 产生 `Completed` 的正文和带签名的
 `AnthropicReasoningBlock`。之后三次用相同转换器投影请求，但**只在实验中**
@@ -31,7 +36,8 @@ header 后，`input_transformations` 可显示丢弃或前缀不匹配的原因�
 
 测试以哈希比较前缀，只输出 HTTP 状态、块数、长度、token 数及布尔诊断；
 不保存完整请求、响应、签名或凭据，也不访问真实 Galatea/cyber 会话。
-`LiveE2E` 与 opt-in 同时保护默认离线运行。复现命令：
+`LiveE2E` 与 opt-in 同时保护默认离线运行。以下命令须在旧版
+`df5c313` 工作树执行，才复现当时的强证据断言：
 
 ```bash
 ATELIA_RUN_ANTHROPIC_46_TO_55_THINKING_LIVE=1 \
@@ -41,10 +47,10 @@ dotnet test tests/Completion.Tests/Completion.Tests.csproj \
   --logger 'console;verbosity=detailed'
 ```
 
-此测试要求强证据，故当前中转站的运行结果是预期的**失败**，不能当作
+该旧版测试要求强证据，故当时中转站的运行结果是预期的**失败**，不能当作
 在线通过。未设置 opt-in 时测试体提前返回，也不能当作在线通过。
 
-## 当前结果
+## 历史结果
 
 环境：Linux、.NET SDK `10.0.201`，实际配置的 HTTPS Messages 中转站，
 来源基线 `cc9d4ce`。最终复跑的四次 generation 摘要：
@@ -65,9 +71,8 @@ beta header 已由测试客户端发送；`input_transformations` 缺失可能�
 
 ## 决策与后续条件
 
-生产 `Origin == targetInvocation` 校验保持原样，未将 4.6 → 5.5 加入白名单；
-之前打出的 dev feed 包也不包含此实验代码。若以后中转站支持该 beta 元数据，
-或可用受控的官方 API 凭据重跑，应要求原样续轮 `input_transformations` 明确为空，
-并要求故意修改旧前缀报告绑定不匹配，再加精确方向的离线测试并修改生产校验。
-完成这一层之后，再在隔离的 Galatea 合成会话中验证其实际上下文重建和恢复
-路径；真实 cyber 会话不参与实验。
+当时生产 `Origin == targetInvocation` 校验保持原样，未将 4.6 → 5.5 加入白名单；
+之前打出的 dev feed 包也不包含此实验代码。当时计划等待中转站提供
+`input_transformations` 与前缀绑定诊断后，再增加精确方向白名单。
+该计划已被后续用户决策取代；当前客户端不维护模型白名单。
+真实 cyber 会话未参与实验。

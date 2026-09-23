@@ -599,11 +599,16 @@ public sealed class AnthropicMessageConverterTests {
         Assert.Contains("Failed to deserialize Anthropic thinking block payload", exception.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void ConvertToApiRequest_ThinkingOriginMustMatchTargetInvocation() {
+    [Theory]
+    [InlineData("other-host", "messages-v1")]
+    [InlineData("same-host", "other-profile")]
+    public void ConvertToApiRequest_ThinkingOriginMustMatchProviderAndApiProfile(
+        string sourceProvider,
+        string sourceApiSpec
+    ) {
         var payload = AnthropicThinkingPayloadCodec.Encode("reason", "sig");
-        var source = new CompletionDescriptor("old-host", "anthropic-messages-v1", "claude-old");
-        var target = new CompletionDescriptor("new-host", "anthropic-messages-v1", "claude-new");
+        var source = new CompletionDescriptor(sourceProvider, sourceApiSpec, "claude-opus-4-6");
+        var target = new CompletionDescriptor("same-host", "messages-v1", "claude-opus-5-5");
         var request = new CompletionRequest(
             target.Model,
             new CompletionPromptPrefix(
@@ -627,8 +632,93 @@ public sealed class AnthropicMessageConverterTests {
             )
         );
 
-        Assert.Contains("requires Origin", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("old-host", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("exact provider and API profile", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("claude-opus-4-6", "claude-opus-5-5", false)]
+    [InlineData("claude-opus-5-5", "claude-opus-4-6", true)]
+    [InlineData("claude-unknown-source", "claude-unknown-target", false)]
+    public void ConvertToApiRequest_ModelsDoNotFilterNativeThinkingFromSameProfile(
+        string sourceModel,
+        string targetModel,
+        bool redacted
+    ) {
+        ReasoningBlockCodecs.EnsureRegistered();
+        var source = new CompletionDescriptor("same-host", "messages-v1", sourceModel);
+        var target = new CompletionDescriptor("same-host", "messages-v1", targetModel);
+        ReadOnlyMemory<byte> payload = redacted
+            ? AnthropicThinkingPayloadCodec.EncodeRedacted("encrypted-data")
+            : AnthropicThinkingPayloadCodec.Encode("reason", "signed-payload");
+        var original = new ActionMessage([
+            new AnthropicReasoningBlock(payload, source, redacted ? null : "reason"),
+            new ActionBlock.Text("visible answer")
+        ]);
+        string serialized = ActionMessageSerialization.Serialize(original);
+        ActionMessage restored = ActionMessageSerialization.Deserialize(serialized);
+        var request = new CompletionRequest(
+            targetModel,
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("first"), restored]
+            ),
+            [new ObservationMessage("continue")]
+        );
+
+        AnthropicApiRequest projected = AnthropicMessageConverter.ConvertToApiRequest(
+            request,
+            modelMaximumTokens: 128_000,
+            targetInvocation: target
+        );
+
+        AnthropicReasoningBlock preserved = Assert.IsType<AnthropicReasoningBlock>(
+            restored.Blocks[0]);
+        Assert.Equal(source, preserved.Origin);
+        Assert.Equal(payload.ToArray(), preserved.OpaquePayload.ToArray());
+        Assert.Equal(serialized, ActionMessageSerialization.Serialize(restored));
+        if (redacted) {
+            Assert.Equal("encrypted-data", Assert.IsType<AnthropicRedactedThinkingBlock>(
+                projected.Messages[1].Content[0]).Data);
+        }
+        else {
+            var thinking = Assert.IsType<AnthropicThinkingBlock>(
+                projected.Messages[1].Content[0]);
+            Assert.Equal("reason", thinking.Thinking);
+            Assert.Equal("signed-payload", thinking.Signature);
+        }
+    }
+
+    [Fact]
+    public void ConvertToApiRequest_CrossModelThinkingStillValidatesNativePayload() {
+        var source = new CompletionDescriptor("same-host", "messages-v1", "claude-opus-4-6");
+        var target = new CompletionDescriptor("same-host", "messages-v1", "claude-opus-5-5");
+        var request = new CompletionRequest(
+            target.Model,
+            new CompletionPromptPrefix(
+                "system",
+                CompletionOutputContract.ProviderDefault([]),
+                [
+                    new ObservationMessage("first"),
+                    new ActionMessage([
+                        new AnthropicReasoningBlock(
+                            AnthropicThinkingPayloadCodec.Encode("actual", "signature"),
+                            source,
+                            "forged display text"
+                        )
+                    ])
+                ]
+            ),
+            []
+        );
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            AnthropicMessageConverter.ConvertToApiRequest(
+                request,
+                modelMaximumTokens: 128_000,
+                targetInvocation: target
+            ));
+        Assert.Contains("PlainText does not match", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -453,9 +453,10 @@ internal static class AnthropicMessageConverter {
             );
         }
 
-        if (targetInvocation is not null && !Equals(anthropicBlock.Origin, targetInvocation)) {
+        if (targetInvocation is not null
+            && !HasReplayCompatibleOrigin(anthropicBlock.Origin, targetInvocation)) {
             throw new InvalidOperationException(
-                $"Anthropic reasoning replay requires Origin '{targetInvocation}', got '{anthropicBlock.Origin}'."
+                "Anthropic reasoning replay requires the exact provider and API profile."
             );
         }
 
@@ -464,6 +465,12 @@ internal static class AnthropicMessageConverter {
             anthropicBlock.PlainText
         );
     }
+
+    private static bool HasReplayCompatibleOrigin(
+        CompletionDescriptor origin,
+        CompletionDescriptor target
+    ) => string.Equals(origin.ProviderId, target.ProviderId, StringComparison.Ordinal)
+        && string.Equals(origin.ApiSpecId, target.ApiSpecId, StringComparison.Ordinal);
 
     /// <summary>
     /// 确保消息序列符合 Anthropic 的交错约定：user ↔ assistant。

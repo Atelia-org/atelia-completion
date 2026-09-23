@@ -284,8 +284,10 @@ public sealed class ProviderModelMaximumTests {
     [InlineData(404, "claude-opus-4-7", 128_000)]
     [InlineData(404, "claude-opus-4-8", 128_000)]
     [InlineData(404, "claude-opus-5", 128_000)]
+    [InlineData(404, "claude-opus-5-5", 128_000)]
     [InlineData(404, "unknown-model", 32_768)]
     [InlineData(405, "claude-opus-5", 128_000)]
+    [InlineData(405, "claude-opus-5-5", 128_000)]
     [InlineData(501, "unknown-model", 32_768)]
     [InlineData(404, "claude-opus-5-custom", 32_768)]
     public async Task Anthropic_MissingModelsEndpointUsesCachedFallback(

@@ -393,13 +393,14 @@ public sealed class AnthropicClient : ICompletionClient {
         );
     }
 
-    // Standard Messages output limits (no Batch/beta extension), checked 2026-09-14:
+    // Standard Messages output limits (no Batch/beta extension), checked 2026-09-24:
     // https://platform.claude.com/docs/en/models/overview
+    // https://platform.claude.com/docs/en/models/opus-5-5/overview
     // https://platform.claude.com/docs/en/build-with-claude/streaming (max_tokens=128000)
     // Exact IDs only: aliases and future models keep the conservative fallback.
     private static int GetFallbackMaximumTokens(string modelId) => modelId switch {
         "claude-opus-4-6" or "claude-opus-4-7" or "claude-opus-4-8"
-            or "claude-opus-5" => 128_000,
+            or "claude-opus-5" or "claude-opus-5-5" => 128_000,
         _ => 32_768
     };
 

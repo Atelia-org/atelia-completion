@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
 using Xunit;
@@ -70,6 +71,64 @@ public sealed class GeminiProjectionRoundTripTests {
         Assert.Equal("\n3\n4\n5", parts[1].GetProperty("text").GetString());
         Assert.Equal(string.Empty, parts[2].GetProperty("text").GetString());
         Assert.Equal("sig-text-123", parts[2].GetProperty("thoughtSignature").GetString());
+    }
+
+    [Fact]
+    public void CrossModelTextTurn_PreservesThoughtSignatureAndOriginalOrigin() {
+        var parsed = ParseGeminiActionMessage(
+            new CompletionDescriptor(
+                GeminiInvocation.ProviderId,
+                GeminiInvocation.ApiSpecId,
+                "gemini-3.1-flash-lite"),
+            """
+            {"candidates":[{"content":{"role":"model","parts":[{"text":"323","thoughtSignature":"sig-from-flash-lite"}]},"finishReason":"STOP"}]}
+            """
+        );
+        var original = Assert.Single(parsed.Blocks.OfType<GeminiReplayBlock>());
+
+        using var apiRequest = ConvertToGeminiApiRequest(new CompletionRequest(
+            "gemini-3.8-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [parsed, new ObservationMessage("Continue.")]),
+            tailMessages: []));
+
+        Assert.Equal("gemini-3.1-flash-lite", original.Origin.Model);
+        var contents = apiRequest.RootElement.GetProperty("contents");
+        var part = contents[0].GetProperty("parts")[0];
+        Assert.Equal("model", contents[0].GetProperty("role").GetString());
+        Assert.Equal("323", part.GetProperty("text").GetString());
+        Assert.Equal("sig-from-flash-lite", part.GetProperty("thoughtSignature").GetString());
+    }
+
+    [Theory]
+    [InlineData("other.example", "google-gemini-generate-content-v1beta")]
+    [InlineData("generativelanguage.googleapis.com", "google-gemini-interactions-v1beta")]
+    public void ReplayBlockFromDifferentProviderOrProtocol_IsRejected(
+        string providerId,
+        string apiSpecId
+    ) {
+        var parsed = ParseGeminiActionMessage(
+            """
+            {"candidates":[{"content":{"role":"model","parts":[{"text":"323","thoughtSignature":"sig"}]},"finishReason":"STOP"}]}
+            """
+        );
+        var original = Assert.Single(parsed.Blocks.OfType<GeminiReplayBlock>());
+        var mismatched = new GeminiReplayBlock(
+            original.OpaquePayload,
+            new CompletionDescriptor(providerId, apiSpecId, original.Origin.Model));
+        var request = new CompletionRequest(
+            "gemini-3.8-flash",
+            new CompletionPromptPrefix(
+                string.Empty,
+                CompletionOutputContract.ProviderDefault([]),
+                [new ActionMessage([mismatched])]),
+            tailMessages: []);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => ConvertToGeminiApiRequest(request));
+        Assert.Contains("Origin", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -146,9 +205,15 @@ public sealed class GeminiProjectionRoundTripTests {
         );
     }
 
-    private static ActionMessage ParseGeminiActionMessage(params string[] events) {
+    private static ActionMessage ParseGeminiActionMessage(params string[] events)
+        => ParseGeminiActionMessage(GeminiInvocation, events);
+
+    private static ActionMessage ParseGeminiActionMessage(
+        CompletionDescriptor invocation,
+        params string[] events
+    ) {
         var parser = CreateGeminiStreamParser();
-        var aggregator = new CompletionAggregator(GeminiInvocation);
+        var aggregator = new CompletionAggregator(invocation);
         var parserType = parser.GetType();
 
         var parseEvent = RequireMethod(
@@ -181,10 +246,25 @@ public sealed class GeminiProjectionRoundTripTests {
             "ConvertToApiRequest",
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
             typeof(CompletionRequest),
-            typeof(int)
+            typeof(int),
+            typeof(CompletionDescriptor)
         );
 
-        var apiRequest = convertMethod.Invoke(null, [request, 65_536]);
+        object? apiRequest;
+        try {
+            apiRequest = convertMethod.Invoke(null, [
+                request,
+                65_536,
+                new CompletionDescriptor(
+                    GeminiInvocation.ProviderId,
+                    GeminiInvocation.ApiSpecId,
+                    request.ModelId)
+            ]);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null) {
+            ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            throw;
+        }
         Assert.True(
             apiRequest is not null,
             $"Blocked: '{converterType.FullName}.ConvertToApiRequest' returned null."

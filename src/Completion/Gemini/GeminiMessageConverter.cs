@@ -10,8 +10,10 @@ namespace Atelia.Completion.Gemini;
 internal static class GeminiMessageConverter {
     public static GeminiGenerateContentRequest ConvertToApiRequest(
         CompletionRequest request,
-        int modelMaximumTokens
+        int modelMaximumTokens,
+        CompletionDescriptor targetInvocation
     ) {
+        ArgumentNullException.ThrowIfNull(targetInvocation);
         if (modelMaximumTokens <= 0) {
             throw new ArgumentOutOfRangeException(
                 nameof(modelMaximumTokens),
@@ -25,12 +27,14 @@ internal static class GeminiMessageConverter {
         ProjectMessages(
             request.PromptPrefix.SharedContextMessages,
             contents,
-            pendingToolCalls
+            pendingToolCalls,
+            targetInvocation
         );
         ProjectMessages(
             request.TailMessages,
             contents,
-            pendingToolCalls
+            pendingToolCalls,
+            targetInvocation
         );
 
         EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
@@ -70,7 +74,8 @@ internal static class GeminiMessageConverter {
     private static void ProjectMessages(
         IReadOnlyList<IHistoryMessage> contextMessages,
         List<GeminiContent> contents,
-        List<PendingToolCall> pendingToolCalls
+        List<PendingToolCall> pendingToolCalls,
+        CompletionDescriptor targetInvocation
     ) {
         foreach (IHistoryMessage contextMessage in contextMessages) {
             switch (contextMessage) {
@@ -83,7 +88,7 @@ internal static class GeminiMessageConverter {
                     break;
 
                 case ActionMessage action:
-                    BuildActionContent(action, contents, pendingToolCalls);
+                    BuildActionContent(action, contents, pendingToolCalls, targetInvocation);
                     break;
 
                 default:
@@ -199,12 +204,19 @@ internal static class GeminiMessageConverter {
     private static void BuildActionContent(
         ActionMessage action,
         List<GeminiContent> contents,
-        List<PendingToolCall> pendingToolCalls
+        List<PendingToolCall> pendingToolCalls,
+        CompletionDescriptor targetInvocation
     ) {
         EnsureNoPendingToolCalls(pendingToolCalls, $"model action before tool results blockCount={action.Blocks.Count}");
 
         var replayBlock = action.Blocks.OfType<GeminiReplayBlock>().SingleOrDefault();
         if (replayBlock is not null) {
+            if (!string.Equals(replayBlock.Origin.ProviderId, targetInvocation.ProviderId, StringComparison.Ordinal)
+                || !string.Equals(replayBlock.Origin.ApiSpecId, targetInvocation.ApiSpecId, StringComparison.Ordinal)) {
+                throw new InvalidOperationException(
+                    "Gemini replay block Origin must match the target provider and API spec."
+                );
+            }
             ValidateReplayBlockConsistency(action, replayBlock);
             var replayContent = BuildContentFromReplayBlock(replayBlock, pendingToolCalls);
             contents.Add(replayContent);

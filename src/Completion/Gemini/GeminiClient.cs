@@ -62,15 +62,16 @@ public sealed class GeminiClient : ICompletionClient {
             request.ModelId,
             cancellationToken
         ).ConfigureAwait(false);
+        var invocation = CompletionDescriptor.From(this, request);
         var apiRequest = GeminiMessageConverter.ConvertToApiRequest(
             request,
-            modelMaximumTokens
+            modelMaximumTokens,
+            invocation
         );
         using var response = await SendStreamingRequestAsync(request.ModelId, apiRequest, cancellationToken);
 
         await using var stream = await CompletionHttpRequestUtility.OpenStreamAsync(response.Content, cancellationToken);
 
-        var invocation = CompletionDescriptor.From(this, request);
         var aggregator = new CompletionAggregator(invocation, observer);
         aggregator.MergeUsage(
             PromptCacheTelemetryContext.Create(

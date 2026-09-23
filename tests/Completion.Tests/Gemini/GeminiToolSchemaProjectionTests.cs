@@ -190,14 +190,21 @@ public sealed class GeminiToolSchemaProjectionTests {
             "ConvertToApiRequest",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
             binder: null,
-            types: [typeof(CompletionRequest), typeof(int)],
+            types: [typeof(CompletionRequest), typeof(int), typeof(CompletionDescriptor)],
             modifiers: null
         );
 
         Assert.NotNull(method);
 
         try {
-            return method!.Invoke(null, [request, 65_536])!;
+            return method!.Invoke(null, [
+                request,
+                65_536,
+                new CompletionDescriptor(
+                    "generativelanguage.googleapis.com",
+                    "google-gemini-generate-content-v1beta",
+                    request.ModelId)
+            ])!;
         }
         catch (TargetInvocationException ex) when (ex.InnerException is not null) {
             ExceptionDispatchInfo.Capture(ex.InnerException).Throw();

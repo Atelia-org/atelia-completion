@@ -7,8 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Diagnostics\Diagnostics.csproj" />
-    <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" />
+    <ProjectReference Include="..\Diagnostics\Diagnostics.csproj" Condition="'$(CompletionPackageMode)' != 'true'" />
+    <ProjectReference Include="..\Completion.Abstractions\Completion.Abstractions.csproj" Condition="'$(CompletionPackageMode)' != 'true'" />
+    <PackageReference Include="Atelia.Diagnostics" Version="$(CompletionDependencyVersionDiagnostics)" Condition="'$(CompletionPackageMode)' == 'true'" />
+    <PackageReference Include="Atelia.Completion.Abstractions" Version="$(CompletionDependencyVersionAbstractions)" Condition="'$(CompletionPackageMode)' == 'true'" />
   </ItemGroup>
 
 </Project>

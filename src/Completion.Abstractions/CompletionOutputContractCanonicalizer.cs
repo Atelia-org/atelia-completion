@@ -22,14 +22,15 @@ internal static class CompletionOutputContractCanonicalizer {
         CompletionOutputContract contract
     ) {
         ArgumentNullException.ThrowIfNull(contract);
+        bool usesText = contract.Tools.Any(static definition => definition.InputKind == ToolInputKind.Text);
         bool usesNullableObject = contract.Tools.Any(static definition =>
-            ContainsNullableObject(definition.InputSchema));
+            definition.InputKind == ToolInputKind.JsonObject && ContainsNullableObject(definition.InputSchema));
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             writer.WriteStartObject();
             writer.WriteString(
                 "schema",
-                usesNullableObject ? SchemaV2 : SchemaV1
+                usesText ? "atelia.completion.output-contract.v3" : usesNullableObject ? SchemaV2 : SchemaV1
             );
             writer.WriteStartArray("tools");
             foreach (ToolDefinition definition in contract.Tools) {
@@ -73,6 +74,13 @@ internal static class CompletionOutputContractCanonicalizer {
         writer.WriteStartObject();
         writer.WriteString("name", definition.Name);
         writer.WriteString("description", definition.Description);
+        if (definition.InputKind == ToolInputKind.Text) {
+            writer.WriteString("inputKind", "text");
+            WriteNullableString(writer, "syntax", definition.TextFormat!.Syntax);
+            WriteNullableString(writer, "definition", definition.TextFormat.Definition);
+            writer.WriteEndObject();
+            return;
+        }
         writer.WritePropertyName("inputSchema");
         WriteToolSchema(
             writer,

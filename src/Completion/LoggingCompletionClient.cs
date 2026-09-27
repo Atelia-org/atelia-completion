@@ -231,7 +231,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v10",
+                Schema: "atelia.completion.call-log.v11",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -557,15 +557,21 @@ public sealed record CompletionCallLogToolResult(
 public sealed record CompletionCallLogToolDefinition(
     string Name,
     string Description,
-    CompletionCallLogToolSchema InputSchema
+    CompletionCallLogToolSchema? InputSchema
 ) {
+    public ToolInputKind InputKind { get; init; }
+    public ToolTextFormat? TextFormat { get; init; }
+
     public static CompletionCallLogToolDefinition From(ToolDefinition tool) {
         ArgumentNullException.ThrowIfNull(tool);
         return new CompletionCallLogToolDefinition(
             tool.Name,
             tool.Description,
-            CompletionCallLogToolSchema.From(tool.InputSchema)
-        );
+            tool.InputKind == ToolInputKind.JsonObject ? CompletionCallLogToolSchema.From(tool.InputSchema) : null
+        ) {
+            InputKind = tool.InputKind,
+            TextFormat = tool.TextFormat
+        };
     }
 }
 

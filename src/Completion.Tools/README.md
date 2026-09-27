@@ -397,3 +397,44 @@ var definition = ReflectedToolDefinitionBuilder.BuildDefinitionUsingTypeDescript
 ```bash
 dotnet test tests/Completion.Tests/Completion.Tests.csproj --filter "FullyQualifiedName~Completion.Tools"
 ```
+
+## 11. 原生文本工具（尚未发布）
+
+`TextToolWrapper` 接受一个原始字符串，适合补丁或代码片段。它与 `MethodToolWrapper`
+共享注册、访问控制、执行结果和 `ToolSession`，但不进行 JSON 解析、trim 或空白归一化：
+
+```csharp
+var tool = TextToolWrapper.FromDelegate(new TextTools().ApplyPatchAsync);
+// 需要 provider 约束生成语法时，传入第二个参数：
+// ToolTextFormat.Grammar("lark", grammar) 或 ToolTextFormat.Grammar("regex", pattern)。
+var session = new ToolRegistry([tool]).CreateSession();
+var result = await session.ExecuteAsync(
+    RawToolCall.FromText("apply_patch", "call-1", "*** Begin Patch\n*** End Patch\n"),
+    CancellationToken.None);
+
+public sealed class TextTools {
+    [Tool("apply_patch", "Apply a patch to workspace files.")]
+    public ValueTask<ToolExecuteResult> ApplyPatchAsync(
+        string input, ToolExecutionContext context, CancellationToken cancellationToken) {
+        cancellationToken.ThrowIfCancellationRequested();
+        // 宿主在这里解析补丁并应用文件变更；此样例只回显原文。
+        return ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, input));
+    }
+}
+```
+
+方法仍需 `[Tool]`，签名必须是 `(string, ToolExecutionContext, CancellationToken)` 返回
+`ValueTask<ToolExecuteResult>`。也可使用 `TextToolWrapper.FromMethod(target, method, format)`。
+缺省格式是 `ToolTextFormat.Unconstrained`；grammar 是 provider 的生成约束，wrapper 不解释或
+验证 Lark/regex，业务方法仍须验证输入。输入协议不匹配时不会执行业务方法。
+
+手写工具定义使用 `ToolDefinition.FromText(name, description, format)`。声明和调用都通过
+`InputKind` 区分 `JsonObject` / `Text`；共同调用载荷是 `RawInput`。文本工具没有 JSON schema，
+读取 `InputSchema` 或文本调用的 `RawArgumentsJson` 会抛错。`ActionMessageSerialization`
+保存文本调用种类和完整原文，包括空字符串、换行和前后空格；旧 JSON 历史仍可读取。
+文本调用使用新的 `text-tool-call` block kind，旧版本读取器会拒绝它，不会误当作空 JSON 参数。
+
+Responses 与 Codex Responses 将它投影为 `custom` 工具和 `custom_tool_call`，回灌为
+`custom_tool_call_output`。OpenAI Chat、DeepSeek、Anthropic、Gemini 当前在发送 HTTP 前明确
+拒绝文本定义及文本历史调用；不会静默改写成 JSON 对象。这里的支持是协议实现与离线 fixture
+验证，具体模型是否接受 custom/grammar 仍需另行在线验收。

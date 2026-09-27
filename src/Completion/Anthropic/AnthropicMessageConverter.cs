@@ -39,6 +39,7 @@ internal static class AnthropicMessageConverter {
         bool hasReasoningMapper,
         bool? forcedToolChoiceSupported
     ) {
+        CompletionToolInputValidation.RequireJsonTools(request);
         if (modelMaximumTokens <= 0) {
             throw new ArgumentOutOfRangeException(
                 nameof(modelMaximumTokens),

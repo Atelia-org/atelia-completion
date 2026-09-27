@@ -59,6 +59,11 @@ internal static class ToolDispatch {
             );
         }
 
+        if (request.InputKind != registeredTool.Definition.InputKind) {
+            return new ToolCallExecutionResult(request,
+                ToolExecuteResult.FromText(ToolExecutionStatus.Failed, "Tool input kind does not match its definition."));
+        }
+
         var stopwatch = Stopwatch.StartNew();
 
         try {

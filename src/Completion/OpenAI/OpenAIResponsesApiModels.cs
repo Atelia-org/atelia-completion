@@ -56,6 +56,8 @@ internal sealed class OpenAIResponsesReasoningConfig {
 [JsonDerivedType(typeof(OpenAIResponsesMessageItem), "message")]
 [JsonDerivedType(typeof(OpenAIResponsesFunctionCallItem), "function_call")]
 [JsonDerivedType(typeof(OpenAIResponsesFunctionCallOutputItem), "function_call_output")]
+[JsonDerivedType(typeof(OpenAIResponsesCustomCallItem), "custom_tool_call")]
+[JsonDerivedType(typeof(OpenAIResponsesCustomCallOutputItem), "custom_tool_call_output")]
 [JsonDerivedType(typeof(OpenAIResponsesReasoningItem), "reasoning")]
 internal abstract class OpenAIResponsesInputItem {
 }
@@ -80,6 +82,25 @@ internal sealed class OpenAIResponsesFunctionCallItem : OpenAIResponsesInputItem
 }
 
 internal sealed class OpenAIResponsesFunctionCallOutputItem : OpenAIResponsesInputItem {
+    [JsonPropertyName("call_id")]
+    public required string CallId { get; set; }
+
+    [JsonPropertyName("output")]
+    public required string Output { get; set; }
+}
+
+internal sealed class OpenAIResponsesCustomCallItem : OpenAIResponsesInputItem {
+    [JsonPropertyName("call_id")]
+    public required string CallId { get; set; }
+
+    [JsonPropertyName("name")]
+    public required string Name { get; set; }
+
+    [JsonPropertyName("input")]
+    public required string Input { get; set; }
+}
+
+internal sealed class OpenAIResponsesCustomCallOutputItem : OpenAIResponsesInputItem {
     [JsonPropertyName("call_id")]
     public required string CallId { get; set; }
 
@@ -119,8 +140,27 @@ internal sealed class OpenAIResponsesTool {
     public string? Description { get; set; }
 
     [JsonPropertyName("parameters")]
-    public required JsonElement Parameters { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public JsonElement Parameters { get; set; }
 
     [JsonPropertyName("strict")]
-    public bool Strict { get; set; } = true;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Strict { get; set; }
+
+    [JsonPropertyName("format")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OpenAIResponsesTextFormat? Format { get; set; }
+}
+
+internal sealed class OpenAIResponsesTextFormat {
+    [JsonPropertyName("type")]
+    public required string Type { get; set; }
+
+    [JsonPropertyName("syntax")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Syntax { get; set; }
+
+    [JsonPropertyName("definition")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Definition { get; set; }
 }

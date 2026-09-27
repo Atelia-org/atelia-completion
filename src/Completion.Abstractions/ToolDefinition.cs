@@ -296,7 +296,7 @@ public sealed record class ToolDefinition {
         Description = string.IsNullOrWhiteSpace(description)
             ? throw new ArgumentException("Tool description cannot be empty.", nameof(description))
             : description;
-        InputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
+        _inputSchema = inputSchema ?? throw new ArgumentNullException(nameof(inputSchema));
 
         if (InputSchema is not ToolSchema.Object root) { throw new ArgumentException("Tool input schema root must be an object.", nameof(inputSchema)); }
         if (root.IsNullable) { throw new ArgumentException("Tool input schema root must not be nullable.", nameof(inputSchema)); }
@@ -304,5 +304,31 @@ public sealed record class ToolDefinition {
 
     public string Name { get; }
     public string Description { get; }
-    public ToolSchema InputSchema { get; }
+    private readonly ToolSchema? _inputSchema;
+
+    private ToolDefinition(string name, string description, ToolTextFormat format) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(description);
+        Name = name;
+        Description = description;
+        TextFormat = format;
+    }
+
+    public ToolInputKind InputKind => TextFormat is null ? ToolInputKind.JsonObject : ToolInputKind.Text;
+
+    /// <summary>Only valid for JSON object tools. Text tools have no JSON schema.</summary>
+    public ToolSchema InputSchema => _inputSchema
+        ?? throw new InvalidOperationException("Text tools do not have a JSON input schema.");
+
+    public ToolTextFormat? TextFormat { get; }
+
+    private bool PrintMembers(System.Text.StringBuilder builder) {
+        builder.Append("Name = ").Append(Name)
+            .Append(", Description = ").Append(Description)
+            .Append(", InputKind = ").Append(InputKind);
+        return true;
+    }
+
+    public static ToolDefinition FromText(string name, string description, ToolTextFormat? format = null)
+        => new(name, description, format ?? ToolTextFormat.Unconstrained);
 }

@@ -10,6 +10,7 @@ namespace Atelia.Completion.Abstractions;
 public static class ActionMessageSerialization {
     public const string BlockKindText = "text";
     public const string BlockKindToolCall = "tool-call";
+    public const string BlockKindTextToolCall = "text-tool-call";
     public const string BlockKindReasoning = "reasoning";
 
     private static readonly JsonSerializerOptions DefaultJsonOptions = new() {
@@ -49,13 +50,16 @@ public static class ActionMessageSerialization {
             result[i] = blocks[i] switch {
                 ActionBlock.Text text => new SerializedActionBlock(BlockKindText, text.Content, null, null, null, null),
                 ActionBlock.ToolCall toolCall => new SerializedActionBlock(
-                    BlockKindToolCall,
+                    toolCall.Call.InputKind == ToolInputKind.Text ? BlockKindTextToolCall : BlockKindToolCall,
                     null,
                     toolCall.Call.ToolName,
                     toolCall.Call.ToolCallId,
-                    toolCall.Call.RawArgumentsJson,
+                    toolCall.Call.InputKind == ToolInputKind.JsonObject ? toolCall.Call.RawInput : null,
                     null
-                ),
+                ) {
+                    InputKind = toolCall.Call.InputKind == ToolInputKind.Text ? ToolInputKind.Text : null,
+                    RawInput = toolCall.Call.InputKind == ToolInputKind.Text ? toolCall.Call.RawInput : null
+                },
                 ActionBlock.ReasoningBlock reasoning => new SerializedActionBlock(
                     BlockKindReasoning,
                     null,
@@ -80,8 +84,8 @@ public static class ActionMessageSerialization {
             var dto = blocks[i] ?? throw new InvalidDataException($"Serialized action block at index {i} is null.");
             result[i] = dto.Kind switch {
                 BlockKindText when dto.Content is not null => new ActionBlock.Text(dto.Content),
-                BlockKindToolCall when dto.ToolName is not null && dto.ToolCallId is not null => new ActionBlock.ToolCall(
-                    new RawToolCall(dto.ToolName, dto.ToolCallId, dto.RawArgumentsJson ?? "{}")
+                BlockKindToolCall or BlockKindTextToolCall when dto.ToolName is not null && dto.ToolCallId is not null => new ActionBlock.ToolCall(
+                    DecodeToolCall(dto)
                 ),
                 BlockKindReasoning when dto.Reasoning is not null => registry.Decode(dto.Reasoning),
                 _ => throw new InvalidDataException($"Unsupported serialized action block kind '{dto.Kind}'.")
@@ -89,6 +93,16 @@ public static class ActionMessageSerialization {
         }
 
         return result;
+    }
+
+    private static RawToolCall DecodeToolCall(SerializedActionBlock dto) {
+        return dto.InputKind switch {
+            null or ToolInputKind.JsonObject when dto.Kind == BlockKindToolCall && dto.RawInput is null =>
+                new RawToolCall(dto.ToolName!, dto.ToolCallId!, dto.RawArgumentsJson ?? "{}"),
+            ToolInputKind.Text when dto.Kind == BlockKindTextToolCall && dto.RawInput is not null && dto.RawArgumentsJson is null =>
+                RawToolCall.FromText(dto.ToolName!, dto.ToolCallId!, dto.RawInput),
+            _ => throw new InvalidDataException("Invalid tool input kind or conflicting input payloads.")
+        };
     }
 }
 
@@ -99,4 +113,10 @@ public sealed record SerializedActionBlock(
     string? ToolCallId,
     string? RawArgumentsJson,
     SerializedReasoningBlock? Reasoning
-);
+) {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ToolInputKind? InputKind { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RawInput { get; init; }
+}

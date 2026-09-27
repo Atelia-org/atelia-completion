@@ -79,6 +79,9 @@ internal static class ObjectInputToolRuntime {
         if (context is null) { throw new ArgumentNullException(nameof(context)); }
 
         var rawToolCall = context.RawToolCall;
+        if (rawToolCall.InputKind != ToolInputKind.JsonObject) {
+            return ToolExecuteResult.FromText(ToolExecutionStatus.Failed, "Tool requires JSON object input.");
+        }
         var parsed = JsonArgumentParser.ParseArguments(inputSchema, rawToolCall.RawArgumentsJson);
         if (!string.IsNullOrWhiteSpace(parsed.ParseError)) { return CreateParseFailureResult(rawToolCall, parsed); }
 

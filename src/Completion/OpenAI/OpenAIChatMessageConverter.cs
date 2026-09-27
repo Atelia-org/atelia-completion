@@ -13,6 +13,7 @@ internal static class OpenAIChatMessageConverter {
         OpenAIChatDialect dialect,
         CompletionDescriptor? targetInvocation = null
     ) {
+        CompletionToolInputValidation.RequireJsonTools(request);
         var messages = new List<OpenAIChatMessage>();
         var state = new ProjectionState();
 

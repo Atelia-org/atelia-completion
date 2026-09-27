@@ -130,6 +130,8 @@ internal static class OpenAIResponsesMessageConverter {
             CompletionToolChoiceKind.RequiredNamed =>
                 supportsNativeRequiredNamedToolChoice
                     ? new OpenAIResponsesNamedToolChoice {
+                        Type = outputContract.Tools.Single(tool => tool.Name == outputContract.ToolChoice.RequiredToolName).InputKind
+                            == ToolInputKind.Text ? "custom" : "function",
                         Name = outputContract.ToolChoice.RequiredToolName
                             ?? throw new InvalidOperationException(
                                 "RequiredNamed tool choice is missing its tool name."
@@ -188,10 +190,15 @@ internal static class OpenAIResponsesMessageConverter {
                 if (resultsByCallId.Remove(pendingToolCall.ToolCallId, out var result)) {
                     EnsureMatchingToolName(result, pendingToolCall);
                     inputItems.Add(
-                        new OpenAIResponsesFunctionCallOutputItem {
-                            CallId = result.ToolCallId,
-                            Output = result.GetFlattenedText()
-                        }
+                        pendingToolCall.InputKind == ToolInputKind.Text
+                            ? new OpenAIResponsesCustomCallOutputItem {
+                                CallId = result.ToolCallId,
+                                Output = result.GetFlattenedText()
+                            }
+                            : new OpenAIResponsesFunctionCallOutputItem {
+                                CallId = result.ToolCallId,
+                                Output = result.GetFlattenedText()
+                            }
                     );
                     continue;
                 }
@@ -274,13 +281,19 @@ internal static class OpenAIResponsesMessageConverter {
                     EnsureResponsesFunctionName(toolCallBlock.Call.ToolName);
                     FlushAssistantText();
                     inputItems.Add(
-                        new OpenAIResponsesFunctionCallItem {
-                            CallId = toolCallBlock.Call.ToolCallId,
-                            Name = toolCallBlock.Call.ToolName,
-                            Arguments = StreamParserToolUtility.NormalizeRawArgumentsJson(toolCallBlock.Call.RawArgumentsJson)
-                        }
+                        toolCallBlock.Call.InputKind == ToolInputKind.Text
+                            ? new OpenAIResponsesCustomCallItem {
+                                CallId = toolCallBlock.Call.ToolCallId,
+                                Name = toolCallBlock.Call.ToolName,
+                                Input = toolCallBlock.Call.RawInput
+                            }
+                            : new OpenAIResponsesFunctionCallItem {
+                                CallId = toolCallBlock.Call.ToolCallId,
+                                Name = toolCallBlock.Call.ToolName,
+                                Arguments = StreamParserToolUtility.NormalizeRawArgumentsJson(toolCallBlock.Call.RawArgumentsJson)
+                            }
                     );
-                    pendingToolCalls.Add(new PendingToolCall(toolCallBlock.Call.ToolName, toolCallBlock.Call.ToolCallId));
+                    pendingToolCalls.Add(new PendingToolCall(toolCallBlock.Call.ToolName, toolCallBlock.Call.ToolCallId, toolCallBlock.Call.InputKind));
                     emittedItemCount++;
                     break;
 
@@ -434,6 +447,20 @@ internal static class OpenAIResponsesMessageConverter {
         var list = new List<OpenAIResponsesTool>(tools.Length);
         foreach (var definition in tools) {
             EnsureResponsesFunctionName(definition.Name);
+            if (definition.InputKind == ToolInputKind.Text) {
+                var format = definition.TextFormat!;
+                list.Add(new OpenAIResponsesTool {
+                    Type = "custom",
+                    Name = definition.Name,
+                    Description = definition.Description,
+                    Format = new OpenAIResponsesTextFormat {
+                        Type = format.Syntax is null ? "text" : "grammar",
+                        Syntax = format.Syntax,
+                        Definition = format.Definition
+                    }
+                });
+                continue;
+            }
             list.Add(
                 new OpenAIResponsesTool {
                     Name = definition.Name,
@@ -514,5 +541,5 @@ internal static class OpenAIResponsesMessageConverter {
         }
     }
 
-    private sealed record PendingToolCall(string ToolName, string ToolCallId);
+    private sealed record PendingToolCall(string ToolName, string ToolCallId, ToolInputKind InputKind);
 }

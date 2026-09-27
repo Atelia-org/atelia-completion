@@ -95,7 +95,30 @@ var execution = await session.ExecuteAsync(new RawToolCall("smoke.echo", "call-1
 Require(execution.ExecuteResult.GetFlattenedText() == "bound", "Tool input binding/execution failed.");
 var invalid = await session.ExecuteAsync(new RawToolCall("smoke.echo", "call-2", "{\"text\":17}"), default);
 Require(invalid.ExecuteResult.Status != ToolExecutionStatus.Success, "Invalid tool argument accepted.");
-Console.WriteLine("Package smoke passed: Chat wire/status/failure facts/Retry-After/unknown usage/EOF/cancellation and tool declaration/binding/execution.");
+var textTool = TextToolWrapper.FromDelegate(new EchoHost().EchoTextAsync, ToolTextFormat.Grammar("regex", "(?s).*"));
+var textSession = new ToolRegistry([textTool]).CreateSession();
+const string rawText = " \r\n\t*** Begin Patch\n+\"raw\"\n*** End Patch\n";
+var textCall = RawToolCall.FromText("smoke.text", "text-1", rawText);
+var textExecution = await textSession.ExecuteAsync(textCall, default);
+Require(textExecution.ExecuteResult.GetFlattenedText() == rawText, "Raw text tool altered input.");
+var saved = ActionMessageSerialization.Serialize(new ActionMessage([new ActionBlock.ToolCall(textCall)]));
+Require(ActionMessageSerialization.Deserialize(saved).ToolCalls.Single() == textCall, "Text call persistence changed input kind or text.");
+var textRequest = new CompletionRequest("package-smoke", new CompletionPromptPrefix("Echo.",
+    CompletionOutputContract.ProviderDefault([textTool.Definition]), []), [new ObservationMessage("echo")]);
+var customItem = new { type = "custom_tool_call", id = "item-1", call_id = "text-2", name = "smoke.text", input = rawText };
+var customStream = "event: response.completed\ndata: " + JsonSerializer.Serialize(new {
+    type = "response.completed", response = new { status = "completed", output = new[] { customItem } }
+}) + "\n\n";
+using (var handler = new ControlledHandler(customStream))
+using (var http = CreateHttp(handler)) {
+    var result = await new OpenAIResponsesClient(null, http).StreamCompletionAsync(textRequest, null);
+    Require(result.Termination.Kind == CompletionTerminationKind.Completed, "Text completion failed.");
+    var call = result.Message.ToolCalls.Single();
+    Require(call.InputKind == ToolInputKind.Text && call.RawInput == rawText, "Responses text input lost.");
+    using var wire = JsonDocument.Parse(handler.Body!);
+    Require(wire.RootElement.GetProperty("tools")[0].GetProperty("type").GetString() == "custom", "Custom tool declaration lost.");
+}
+Console.WriteLine("Package smoke passed: Chat wire/status/failure facts/Retry-After/unknown usage/EOF/cancellation and JSON/text tool declaration/binding/execution/persistence/Responses.");
 
 static HttpClient CreateHttp(HttpMessageHandler handler) => new(handler) {
     BaseAddress = new Uri("https://package-smoke.invalid/"), Timeout = Timeout.InfiniteTimeSpan
@@ -135,6 +158,9 @@ sealed class ControlledHandler(string? response, HttpStatusCode status = HttpSta
 
 public sealed record EchoInput([property: JsonPropertyName("text"), Required, Description("Text to echo.")] string Text);
 public sealed class EchoHost {
+    [Tool("smoke.text", "Echo raw text.")]
+    public ValueTask<ToolExecuteResult> EchoTextAsync(string input, ToolExecutionContext context, CancellationToken ct) =>
+        ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, input));
     [Tool("smoke.echo", "Echo a bound string without side effects.")]
     public ValueTask<ToolExecuteResult> EchoAsync(EchoInput input, ToolExecutionContext context, CancellationToken ct) =>
         ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, input.Text));

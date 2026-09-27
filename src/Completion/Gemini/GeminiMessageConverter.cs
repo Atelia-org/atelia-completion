@@ -13,6 +13,7 @@ internal static class GeminiMessageConverter {
         int modelMaximumTokens,
         CompletionDescriptor targetInvocation
     ) {
+        CompletionToolInputValidation.RequireJsonTools(request);
         ArgumentNullException.ThrowIfNull(targetInvocation);
         if (modelMaximumTokens <= 0) {
             throw new ArgumentOutOfRangeException(

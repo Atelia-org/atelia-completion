@@ -61,6 +61,7 @@ public sealed class GeminiClient : ICompletionClient {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
+        CompletionToolInputValidation.RequireJsonTools(request);
         DebugUtil.Debug(
             CompletionDebugCategories.Provider,
             $"[Gemini] Starting call model={request.ModelId}"

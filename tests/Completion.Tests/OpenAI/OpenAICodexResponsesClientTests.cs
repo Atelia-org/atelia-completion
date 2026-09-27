@@ -12,6 +12,37 @@ namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAICodexResponsesClientTests {
     [Fact]
+    public async Task StreamCompletionAsync_CustomToolRoundTripPreservesText() {
+        const string input = " \r\n*** Begin Patch\n*** End Patch\n";
+        var credential = Credential("token", "account", 1);
+        var provider = new ScriptedCredentialProvider(_ => credential);
+        var handler = new CapturingHandler(call => call == 1
+            ? EventStreamResponse("data: " + JsonSerializer.Serialize(new {
+                type = "response.completed",
+                response = new { output = new[] { new {
+                    type = "custom_tool_call", id = "ct_1", call_id = "call_1", name = "apply_patch", input
+                } } }
+            }))
+            : CompletedResponse("done"));
+        using var client = CreateClient(provider, handler, credential.AccountFingerprint);
+        var contract = CompletionOutputContract.ProviderDefault([ToolDefinition.FromText("apply_patch", "Patch")]);
+        var request = new CompletionRequest("test", new CompletionPromptPrefix("", contract, [new ObservationMessage("patch")]), []);
+        var first = await client.StreamCompletionAsync(request, null, CancellationToken.None);
+        Assert.Equal(input, Assert.IsType<ActionBlock.ToolCall>(Assert.Single(first.Message.Blocks)).Call.RawInput);
+        var followup = new CompletionRequest("test", new CompletionPromptPrefix("", contract, [first.Message,
+            new ToolResultsMessage(null, [ToolResult.FromText("apply_patch", "call_1", ToolExecutionStatus.Success, "ok")])]), []);
+        _ = await client.StreamCompletionAsync(followup, null, CancellationToken.None);
+        using var firstBody = JsonDocument.Parse(handler.Requests[0].Body);
+        var tool = firstBody.RootElement.GetProperty("tools")[0];
+        Assert.Equal("custom", tool.GetProperty("type").GetString());
+        Assert.False(tool.TryGetProperty("strict", out _));
+        Assert.False(tool.TryGetProperty("parameters", out _));
+        using var replay = JsonDocument.Parse(handler.Requests[1].Body);
+        Assert.Equal(input, replay.RootElement.GetProperty("input")[0].GetProperty("input").GetString());
+        Assert.Equal("custom_tool_call_output", replay.RootElement.GetProperty("input")[1].GetProperty("type").GetString());
+    }
+
+    [Fact]
     public async Task StreamCompletionAsync_SendsPinnedRequestWithConfigurableOriginator() {
         CodexSubscriptionCredential credential = Credential(
             "ACCESS_CANARY",

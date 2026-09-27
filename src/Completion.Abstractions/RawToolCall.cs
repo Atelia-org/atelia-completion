@@ -1,19 +1,54 @@
 namespace Atelia.Completion.Abstractions;
 
-/// <summary>
-/// Captures a raw tool invocation emitted by a provider.
-/// </summary>
-/// <param name="ToolName">Logical tool identifier selected by the model.</param>
-/// <param name="ToolCallId">Provider specific identifier used to correlate execution results.</param>
-/// <param name="RawArgumentsJson">
-/// Raw JSON arguments text captured from the provider transport. Providers should preserve the original text when available;
-/// if the model omits all parameters, use <c>{}</c> instead of <see langword="null"/>.
-/// </param>
-public record RawToolCall(
-    string ToolName,
-    string ToolCallId,
-    string RawArgumentsJson
-);
+/// <summary>A provider tool invocation with an explicit input protocol.</summary>
+public record RawToolCall {
+    // Preserve the established JSON constructor and named arguments.
+    public RawToolCall(string ToolName, string ToolCallId, string RawArgumentsJson)
+        : this(ToolName, ToolCallId, RawArgumentsJson, ToolInputKind.JsonObject) { }
+
+    private RawToolCall(string toolName, string toolCallId, string rawInput, ToolInputKind inputKind) {
+        ArgumentNullException.ThrowIfNull(toolName);
+        ArgumentNullException.ThrowIfNull(toolCallId);
+        ArgumentNullException.ThrowIfNull(rawInput);
+        ToolName = toolName;
+        ToolCallId = toolCallId;
+        _rawInput = rawInput;
+        InputKind = inputKind;
+    }
+
+    public string ToolName { get; init; }
+    public string ToolCallId { get; init; }
+    public ToolInputKind InputKind { get; }
+    private readonly string _rawInput;
+    public string RawInput => _rawInput;
+    public string RawArgumentsJson {
+        get => InputKind == ToolInputKind.JsonObject
+            ? RawInput
+            : throw new InvalidOperationException("Text tool input is not JSON arguments; use RawInput.");
+        init {
+            if (InputKind != ToolInputKind.JsonObject) {
+                throw new InvalidOperationException("Text tool input cannot be replaced with JSON arguments.");
+            }
+            _rawInput = value ?? throw new ArgumentNullException(nameof(value));
+        }
+    }
+
+    protected virtual bool PrintMembers(System.Text.StringBuilder builder) {
+        builder.Append("ToolName = ").Append(ToolName)
+            .Append(", ToolCallId = ").Append(ToolCallId)
+            .Append(", InputKind = ").Append(InputKind);
+        return true;
+    }
+
+    public static RawToolCall FromText(string toolName, string toolCallId, string text)
+        => new(toolName, toolCallId, text, ToolInputKind.Text);
+
+    public void Deconstruct(out string toolName, out string toolCallId, out string rawArgumentsJson) {
+        toolName = ToolName;
+        toolCallId = ToolCallId;
+        rawArgumentsJson = RawArgumentsJson;
+    }
+}
 
 public enum ToolExecutionStatus {
     Success,

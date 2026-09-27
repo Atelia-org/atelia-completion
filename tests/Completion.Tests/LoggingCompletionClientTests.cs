@@ -25,6 +25,29 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         }
     }
 
+    [Fact]
+    public async Task TextTools_LogRawHistoryAndGrammarUsingV11() {
+        const string input = " \r\n\ttext\n";
+        var call = RawToolCall.FromText("text", "call", input);
+        var inner = new ScriptedCompletionClient(new CompletionResult(
+            new ActionMessage([new ActionBlock.ToolCall(call)]),
+            new CompletionDescriptor("scripted", "test", "model")), exception: null);
+        var client = CreateLoggingClient(inner);
+        var request = new CompletionRequest("model", new CompletionPromptPrefix("",
+            CompletionOutputContract.ProviderDefault([ToolDefinition.FromText("text", "Text tool",
+                ToolTextFormat.Grammar("regex", "(?s).*"))]), []), [new ObservationMessage("run")]);
+        _ = await client.StreamCompletionAsync(request, null);
+        using var json = JsonDocument.Parse(File.ReadAllText(Assert.Single(client.WrittenCallLogPaths)));
+        Assert.Equal("atelia.completion.call-log.v11", json.RootElement.GetProperty("schema").GetString());
+        var definition = json.RootElement.GetProperty("request").GetProperty("promptPrefix")
+            .GetProperty("outputContract").GetProperty("tools")[0];
+        Assert.Equal("text", definition.GetProperty("inputKind").GetString());
+        Assert.Equal("regex", definition.GetProperty("textFormat").GetProperty("syntax").GetString());
+        var block = json.RootElement.GetProperty("response").GetProperty("actionBlocks")[0];
+        Assert.Equal("text-tool-call", block.GetProperty("kind").GetString());
+        Assert.Equal(input, block.GetProperty("rawInput").GetString());
+    }
+
     [Theory]
     [InlineData(CallLogFailureStage.Initialize, false)]
     [InlineData(CallLogFailureStage.Reserve, false)]
@@ -356,7 +379,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v10",
+                "atelia.completion.call-log.v11",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -388,7 +411,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v10",
+            "atelia.completion.call-log.v11",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -523,7 +546,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v10",
+            "atelia.completion.call-log.v11",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -608,7 +631,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         ));
         using JsonDocument document = JsonDocument.Parse(json);
         Assert.Equal(
-            "atelia.completion.call-log.v10",
+            "atelia.completion.call-log.v11",
             document.RootElement.GetProperty("schema").GetString()
         );
         Assert.DoesNotContain(

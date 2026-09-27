@@ -134,6 +134,7 @@ public sealed class AnthropicClient : ICompletionClient {
         CompletionInvocationOptions invocationOptions,
         CancellationToken cancellationToken
     ) {
+        CompletionToolInputValidation.RequireJsonTools(request);
         DebugUtil.Debug(
             CompletionDebugCategories.Provider,
             $"[Anthropic] Starting call model={request.ModelId}"

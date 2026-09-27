@@ -30,6 +30,17 @@ public static class ToolSchemaTextRenderer {
 
     private static void AppendDefinition(StringBuilder sb, ToolDefinition definition) {
         sb.Append("- ").Append(definition.Name).Append(": ").AppendLine(definition.Description);
+        if (definition.InputKind == ToolInputKind.Text) {
+            sb.Append("  - input (raw text)");
+            if (definition.TextFormat!.Syntax is { } syntax) {
+                sb.Append("; grammar: ").Append(syntax);
+            }
+            sb.AppendLine();
+            if (definition.TextFormat.Definition is { } grammar) {
+                sb.AppendLine(grammar);
+            }
+            return;
+        }
         AppendObjectProperties(sb, (ToolSchema.Object)definition.InputSchema, indentLevel: 1);
     }
 

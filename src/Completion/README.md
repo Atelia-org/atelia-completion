@@ -130,3 +130,17 @@ profiler 而补零或推算缺失维度。以上语义在 Linux / Windows 相同
 
 Galatea 接入、connection shape、安全 preflight、环境变量和 live smoke 见
 [`docs/Completion/openai-codex-subscription-client-design.md`](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.5/docs/Completion/openai-codex-subscription-client-design.md)。
+
+## 原生文本工具（尚未发布）
+
+Responses 和 Codex Responses 支持 `ToolDefinition.FromText`：无约束文本或 Lark/regex
+生成语法，投影为 `custom` 工具。流中 `response.custom_tool_call_input.delta` / `.done`
+和 terminal output 的 `custom_tool_call` 被聚合为 `RawToolCall.FromText`；原文不经过 JSON
+参数归一化。历史中的输入种类决定下一轮 `custom_tool_call` / `custom_tool_call_output`，
+与当前工具注册表无关。原有 Completed/Incomplete/Failed、取消和 terminal 前断流合同不变。
+其他 provider adapter 在任何 HTTP（含模型元数据查询）前拒绝文本定义或文本历史调用，reason
+为 `tool-input.unsupported-text`。这项能力已覆盖离线 fixture，未作为实际模型在线验收声明。
+使用入口见 [TextToolWrapper](../Completion.Tools/README.md#11-原生文本工具尚未发布)。
+
+`LoggingCompletionClient` 的 call-log 格式升级为 v11：工具声明记录 `inputKind` 和可选的
+`textFormat`，文本工具的 `inputSchema` 为空；文本历史使用 `text-tool-call` block kind。

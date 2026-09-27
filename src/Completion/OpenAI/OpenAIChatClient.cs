@@ -76,6 +76,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
+        CompletionToolInputValidation.RequireJsonTools(request);
         DebugUtil.Debug(
             CompletionDebugCategories.Provider,
             $"[OpenAI] Starting call model={request.ModelId}"

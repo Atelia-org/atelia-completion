@@ -12,6 +12,9 @@ namespace Atelia.Completion.OpenAI;
 /// </summary>
 internal sealed class OpenAIResponsesStreamParser {
     private const string FunctionCallItemType = "function_call";
+    private const string CustomCallItemType = "custom_tool_call";
+    private readonly Dictionary<string, CustomCallState> _customCalls = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RawToolCall> _completedCustomCalls = new(StringComparer.Ordinal);
 
     private readonly Dictionary<string, FunctionCallState> _functionCalls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _completedFunctionCallItemIds = new(StringComparer.Ordinal);
@@ -44,6 +47,8 @@ internal sealed class OpenAIResponsesStreamParser {
     }
 
     public void DiscardIncompleteStreamingState() {
+        _customCalls.Clear();
+        _completedCustomCalls.Clear();
         _functionCalls.Clear();
         _completedFunctionCallItemIds.Clear();
         _refusalContents.Clear();
@@ -96,6 +101,14 @@ internal sealed class OpenAIResponsesStreamParser {
 
             case "response.output_item.added":
                 HandleOutputItemAdded(obj, aggregator);
+                break;
+
+            case "response.custom_tool_call_input.delta":
+                HandleCustomInputDelta(obj);
+                break;
+
+            case "response.custom_tool_call_input.done":
+                HandleCustomInputDone(obj, aggregator);
                 break;
 
             case "response.function_call_arguments.delta":
@@ -262,6 +275,10 @@ internal sealed class OpenAIResponsesStreamParser {
             aggregator.MarkIncomplete(detail: "OpenAI Responses terminal event arrived with unfinished reasoning.");
         }
 
+        if (_customCalls.Count > 0) {
+            aggregator.MarkIncomplete(detail: "OpenAI Responses terminal event arrived with unfinished custom tool calls.");
+        }
+
         if (_functionCalls.Count > 0) {
             var pendingIds = string.Join(", ", _functionCalls.Keys.OrderBy(static id => id));
             DebugUtil.Debug(
@@ -282,6 +299,10 @@ internal sealed class OpenAIResponsesStreamParser {
 
         var itemType = GetRequiredString(item, "type", "response.output_item.added item");
         switch (itemType) {
+            case CustomCallItemType:
+                UpdateCustomCall(obj, item);
+                break;
+
             case FunctionCallItemType:
                 GetOrCreateFunctionCallState(obj, item);
                 break;
@@ -290,6 +311,91 @@ internal sealed class OpenAIResponsesStreamParser {
                 BeginReasoningIfNeeded(obj, item, aggregator);
                 break;
         }
+    }
+
+    private CustomCallState UpdateCustomCall(JsonObject envelope, JsonObject? item) {
+        string itemId = GetItemId(envelope, item)
+            ?? throw new InvalidDataException("OpenAI Responses custom tool call requires an item id.");
+        if (string.IsNullOrWhiteSpace(itemId)
+            || _functionCalls.ContainsKey(itemId)
+            || _completedFunctionCallItemIds.Contains(itemId)) {
+            throw new InvalidDataException("OpenAI Responses custom tool call has an invalid or conflicting item id.");
+        }
+        if (!_customCalls.TryGetValue(itemId, out var state)) {
+            state = new CustomCallState(itemId);
+            if (_completedCustomCalls.TryGetValue(itemId, out var completed)) {
+                state.CallId = completed.ToolCallId;
+                state.ToolName = completed.ToolName;
+                state.FinalInput = completed.RawInput;
+            }
+            _customCalls.Add(itemId, state);
+        }
+        string? callId = item?["call_id"]?.GetValue<string>() ?? envelope["call_id"]?.GetValue<string>();
+        string? name = item?["name"]?.GetValue<string>() ?? envelope["name"]?.GetValue<string>();
+        if (callId is not null) {
+            if (state.CallId is not null && state.CallId != callId) {
+                throw new InvalidDataException("OpenAI Responses custom tool call id changed.");
+            }
+            state.CallId = callId;
+        }
+        if (name is not null) {
+            if (state.ToolName is not null && state.ToolName != name) {
+                throw new InvalidDataException("OpenAI Responses custom tool name changed.");
+            }
+            state.ToolName = name;
+        }
+        return state;
+    }
+
+    private void HandleCustomInputDelta(JsonObject envelope) {
+        var state = UpdateCustomCall(envelope, envelope["item"] as JsonObject);
+        if (state.FinalInput is not null || _completedCustomCalls.ContainsKey(state.ItemId)) {
+            throw new InvalidDataException("OpenAI Responses custom input delta arrived after final input.");
+        }
+        state.Input.Append(GetRequiredString(envelope, "delta", "custom input delta", allowEmpty: true));
+    }
+
+    private void HandleCustomInputDone(JsonObject envelope, CompletionAggregator aggregator) {
+        var state = UpdateCustomCall(envelope, envelope["item"] as JsonObject);
+        ReconcileCustomInput(state, GetRequiredString(envelope, "input", "custom input done", allowEmpty: true));
+        // Some relays omit metadata until output_item.done.
+        if (!string.IsNullOrWhiteSpace(state.CallId) && !string.IsNullOrWhiteSpace(state.ToolName)) {
+            FinalizeCustomCall(state, aggregator);
+        }
+    }
+
+    private void HandleCustomItemDone(JsonObject envelope, JsonObject item, CompletionAggregator aggregator) {
+        var state = UpdateCustomCall(envelope, item);
+        if (item["status"]?.GetValue<string>() is { } status && status != "completed") {
+            return;
+        }
+        ReconcileCustomInput(state, GetRequiredString(item, "input", "custom tool call item", allowEmpty: true));
+        FinalizeCustomCall(state, aggregator);
+    }
+
+    private static void ReconcileCustomInput(CustomCallState state, string input) {
+        if ((state.FinalInput is not null && state.FinalInput != input)
+            || !input.StartsWith(state.Input.ToString(), StringComparison.Ordinal)) {
+            throw new InvalidDataException("OpenAI Responses custom tool input final evidence is inconsistent.");
+        }
+        state.FinalInput = input;
+    }
+
+    private void FinalizeCustomCall(CustomCallState state, CompletionAggregator aggregator) {
+        if (string.IsNullOrWhiteSpace(state.CallId) || string.IsNullOrWhiteSpace(state.ToolName)) {
+            throw new InvalidDataException("OpenAI Responses custom tool call requires call_id and name.");
+        }
+        var call = RawToolCall.FromText(state.ToolName, state.CallId, state.FinalInput!);
+        if (_completedCustomCalls.TryGetValue(state.ItemId, out var previous)) {
+            if (previous.ToolName != call.ToolName || previous.ToolCallId != call.ToolCallId || previous.RawInput != call.RawInput) {
+                throw new InvalidDataException("OpenAI Responses custom tool call final evidence is inconsistent.");
+            }
+        }
+        else {
+            _completedCustomCalls.Add(state.ItemId, call);
+            aggregator.AppendToolCall(call);
+        }
+        _customCalls.Remove(state.ItemId);
     }
 
     private void HandleFunctionCallArgumentsDelta(JsonObject obj) {
@@ -329,6 +435,10 @@ internal sealed class OpenAIResponsesStreamParser {
 
         var itemType = GetRequiredString(item, "type", "response.output_item.done item");
         switch (itemType) {
+            case CustomCallItemType:
+                HandleCustomItemDone(obj, item, aggregator);
+                break;
+
             case FunctionCallItemType:
                 var itemId = GetItemId(obj, item);
                 if (!string.IsNullOrWhiteSpace(itemId) && _completedFunctionCallItemIds.Contains(itemId)) { return; }
@@ -430,6 +540,13 @@ internal sealed class OpenAIResponsesStreamParser {
                 "type",
                 "terminal response output item"
             );
+            if (itemType == CustomCallItemType) {
+                // A terminal snapshot can supply final input when a relay omitted
+                // the input.done or output_item.done event. Incomplete items are
+                // never promoted into executable calls.
+                HandleCustomItemDone(envelope, item, aggregator);
+                continue;
+            }
             if (!string.Equals(itemType, "message", StringComparison.Ordinal)) {
                 continue;
             }
@@ -645,6 +762,9 @@ internal sealed class OpenAIResponsesStreamParser {
             );
         }
 
+        if (_customCalls.ContainsKey(itemId) || _completedCustomCalls.ContainsKey(itemId)) {
+            throw new InvalidDataException("OpenAI Responses tool call item kind changed.");
+        }
         if (_completedFunctionCallItemIds.Contains(itemId)) { return null; }
 
         if (!_functionCalls.TryGetValue(itemId, out var state)) {
@@ -792,6 +912,14 @@ internal sealed class OpenAIResponsesStreamParser {
             );
         }
         return total.Value - read.Value - write.Value;
+    }
+
+    private sealed class CustomCallState(string itemId) {
+        public string ItemId { get; } = itemId;
+        public string? CallId { get; set; }
+        public string? ToolName { get; set; }
+        public StringBuilder Input { get; } = new();
+        public string? FinalInput { get; set; }
     }
 
     private sealed class FunctionCallState {

@@ -98,14 +98,14 @@ Require(invalid.ExecuteResult.Status != ToolExecutionStatus.Success, "Invalid to
 var textTool = TextToolWrapper.FromDelegate(new EchoHost().EchoTextAsync, ToolTextFormat.Grammar("regex", "(?s).*"));
 var textSession = new ToolRegistry([textTool]).CreateSession();
 const string rawText = " \r\n\t*** Begin Patch\n+\"raw\"\n*** End Patch\n";
-var textCall = RawToolCall.FromText("smoke.text", "text-1", rawText);
+var textCall = RawToolCall.FromText("smoke_text", "text-1", rawText);
 var textExecution = await textSession.ExecuteAsync(textCall, default);
 Require(textExecution.ExecuteResult.GetFlattenedText() == rawText, "Raw text tool altered input.");
 var saved = ActionMessageSerialization.Serialize(new ActionMessage([new ActionBlock.ToolCall(textCall)]));
 Require(ActionMessageSerialization.Deserialize(saved).ToolCalls.Single() == textCall, "Text call persistence changed input kind or text.");
 var textRequest = new CompletionRequest("package-smoke", new CompletionPromptPrefix("Echo.",
     CompletionOutputContract.ProviderDefault([textTool.Definition]), []), [new ObservationMessage("echo")]);
-var customItem = new { type = "custom_tool_call", id = "item-1", call_id = "text-2", name = "smoke.text", input = rawText };
+var customItem = new { type = "custom_tool_call", id = "item-1", call_id = "text-2", name = "smoke_text", input = rawText };
 var customStream = "event: response.completed\ndata: " + JsonSerializer.Serialize(new {
     type = "response.completed", response = new { status = "completed", output = new[] { customItem } }
 }) + "\n\n";
@@ -158,7 +158,7 @@ sealed class ControlledHandler(string? response, HttpStatusCode status = HttpSta
 
 public sealed record EchoInput([property: JsonPropertyName("text"), Required, Description("Text to echo.")] string Text);
 public sealed class EchoHost {
-    [Tool("smoke.text", "Echo raw text.")]
+    [Tool("smoke_text", "Echo raw text.")]
     public ValueTask<ToolExecuteResult> EchoTextAsync(string input, ToolExecutionContext context, CancellationToken ct) =>
         ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, input));
     [Tool("smoke.echo", "Echo a bound string without side effects.")]

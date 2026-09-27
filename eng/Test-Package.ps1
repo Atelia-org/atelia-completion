@@ -266,7 +266,7 @@ var tool = MethodToolWrapper.FromDelegate<EchoInput>(new EchoHost().EchoAsync);
 var textTool = TextToolWrapper.FromDelegate(new EchoHost().EchoTextAsync);
 var textSession = new ToolRegistry([textTool]).CreateSession();
 const string rawText = " \r\n\tpatch\n";
-var textResult = await textSession.ExecuteAsync(RawToolCall.FromText("smoke.text", "text-1", rawText), default);
+var textResult = await textSession.ExecuteAsync(RawToolCall.FromText("smoke_text", "text-1", rawText), default);
 if (textResult.ExecuteResult.GetFlattenedText() != rawText) { throw new Exception("Raw text tool input changed."); }
 var registry = new ToolRegistry([tool]);
 if (registry.AllDefinitions.Length != 1 || registry.AllDefinitions[0].Name != "smoke.echo") { throw new Exception("Tool declaration failed."); }
@@ -275,7 +275,7 @@ var result = await session.ExecuteAsync(new RawToolCall("smoke.echo", "call-1", 
 if (result.ExecuteResult.Status != ToolExecutionStatus.Success || result.ExecuteResult.GetFlattenedText() != "bound") { throw new Exception("Tool binding or execution failed."); }
 public sealed record EchoInput([property: JsonPropertyName("text"), Required, Description("Text to echo.")] string Text);
 public sealed class EchoHost {
-    [Tool("smoke.text", "Echo raw text.")]
+    [Tool("smoke_text", "Echo raw text.")]
     public ValueTask<ToolExecuteResult> EchoTextAsync(string input, ToolExecutionContext context, CancellationToken ct) =>
         ValueTask.FromResult(ToolExecuteResult.FromText(ToolExecutionStatus.Success, input));
     [Tool("smoke.echo", "Echo a bound string.")]

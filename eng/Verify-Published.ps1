@@ -26,9 +26,9 @@ if ($manifest.schemaVersion -ne 2 -or $manifest.version -cne $Version -or @($man
     $manifest.repositoryUrl -cne 'https://github.com/Atelia-org/atelia-completion' -or !$manifest.sdkVersion -or
     !$manifest.ContainsKey('dependencies')) { throw "Expected one schema 2 $packageId candidate." }
 
-$expectedDependencies = if ($Project -eq 'Completion' -or $Project -eq 'Completion.Tools') {
-    @('Atelia.Diagnostics', 'Atelia.Completion.Abstractions')
-} else { @() }
+$expectedDependencies = @(if ($Project -eq 'Completion' -or $Project -eq 'Completion.Tools') {
+    'Atelia.Diagnostics'; 'Atelia.Completion.Abstractions'
+})
 $dependencies = @($manifest.dependencies)
 $dependencyIds = @($dependencies | ForEach-Object { $_.id } | Sort-Object)
 if (($dependencyIds -join '|') -cne (($expectedDependencies | Sort-Object) -join '|')) {

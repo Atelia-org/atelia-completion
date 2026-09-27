@@ -86,7 +86,7 @@ try {
     $origin = (Get-GitValue @('remote', 'get-url', 'origin')) -replace '\.git$', ''
     if ($origin -cne $repositoryUrl) { throw "origin must be $repositoryUrl (optional .git suffix) for Source Link." }
     if ($Project) {
-        $requiredIds = if ($Project -in @('Completion', 'Completion.Tools')) { @('Atelia.Diagnostics', 'Atelia.Completion.Abstractions') } else { @() }
+        $requiredIds = @(if ($Project -in @('Completion', 'Completion.Tools')) { 'Atelia.Diagnostics'; 'Atelia.Completion.Abstractions' })
         if ($requiredIds.Count -gt 0 -and !$PSBoundParameters.ContainsKey('DependencyVersions')) { throw '-DependencyVersions is required for Completion and Completion.Tools.' }
         if (!$DependencyVersions) { $DependencyVersions = @{} }
         $providedIds = @($DependencyVersions.Keys | ForEach-Object { [string]$_ })

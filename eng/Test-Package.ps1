@@ -21,9 +21,9 @@ function Invoke-SelectivePackageSmoke {
 
     $id = "Atelia.$Project"
     $allIds = @('Atelia.Diagnostics', 'Atelia.Completion.Abstractions', 'Atelia.Completion', 'Atelia.Completion.Tools')
-    $dependencyIds = if ($Project -in @('Completion', 'Completion.Tools')) {
-        @('Atelia.Diagnostics', 'Atelia.Completion.Abstractions')
-    } else { @() }
+    $dependencyIds = @(if ($Project -in @('Completion', 'Completion.Tools')) {
+        'Atelia.Diagnostics'; 'Atelia.Completion.Abstractions'
+    })
     $manifestPath = Join-Path $feed "manifest.$id.$Version.json"
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
     if ($manifest.schemaVersion -ne 2 -or $manifest.version -cne $Version -or

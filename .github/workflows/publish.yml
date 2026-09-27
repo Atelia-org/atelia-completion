@@ -95,6 +95,15 @@ jobs:
             ./eng/Pack.ps1 -Project $env:COMPLETION_PROJECT -Version $env:COMPLETION_VERSION -DependencyVersions $dependencies -OutputDirectory $feed
             ./eng/Test-Package.ps1 -Project $env:COMPLETION_PROJECT -Version $env:COMPLETION_VERSION -FeedDirectory $feed -WorkDirectory $smoke
           }
+      # Archive the frozen candidate and manifest before obtaining credentials or pushing.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: completion-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/completion-tests
+            ${{ runner.temp }}/completion-feed
+            ${{ runner.temp }}/completion-package-smoke/package-smoke-results.json
+          if-no-files-found: error
       # NUGET_USER is the individual login (Robird); the trusted policy names package owner Atelia.
       # Configure the policy for this repository, publish.yml and environment nuget before dispatch.
       - uses: NuGet/login@v1
@@ -149,8 +158,7 @@ jobs:
             dotnet nuget push $path --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-      - name: Verify selected public package and consumer
-        if: inputs.project != 'All'
+      - name: Verify public packages and consumers
         shell: pwsh
         env:
           COMPLETION_VERSION: ${{ inputs.version }}
@@ -160,10 +168,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: completion-release-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/completion-tests
-            ${{ runner.temp }}/completion-feed
-            ${{ runner.temp }}/completion-package-smoke/package-smoke-results.json
-            ${{ runner.temp }}/completion-public-smoke/published-check.json
+          name: completion-public-check-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/completion-public-smoke/published-check.json
           if-no-files-found: ignore

@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Diagnostics', 'Completion.Abstractions', 'Completion', 'Completion.Tools')][string]$Project,
+    [ValidateSet('All', 'Diagnostics', 'Completion.Abstractions', 'Completion', 'Completion.Tools')][string]$Project = 'All',
     [Parameter(Mandatory)][ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[a-z0-9]+([.-][a-z0-9]+)*)?$')][string]$Version,
     [Parameter(Mandatory)][string]$FeedDirectory,
     [Parameter(Mandatory)][string]$WorkDirectory
@@ -18,18 +18,22 @@ if ($work.Equals($repo, [StringComparison]::OrdinalIgnoreCase) -or
     throw 'WorkDirectory must be outside the source repository.'
 }
 
-$packageId = "Atelia.$Project"
-$manifestPath = Join-Path $feed "manifest.$packageId.$Version.json"
+$allIds = @('Atelia.Diagnostics', 'Atelia.Completion.Abstractions', 'Atelia.Completion', 'Atelia.Completion.Tools')
+$publishIds = @(if ($Project -eq 'All') { $allIds } else { "Atelia.$Project" })
+$manifestName = if ($Project -eq 'All') { "manifest.$Version.json" } else { "manifest.$($publishIds[0]).$Version.json" }
+$manifestPath = Join-Path $feed $manifestName
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
-if ($manifest.schemaVersion -ne 2 -or $manifest.version -cne $Version -or @($manifest.packages).Count -ne 1 -or
-    $manifest.packages[0].id -cne $packageId -or $manifest.sourceRevision -cnotmatch '^[0-9a-f]{40}$' -or
+$schema = if ($Project -eq 'All') { 1 } else { 2 }
+if ($manifest.schemaVersion -ne $schema -or $manifest.version -cne $Version -or
+    @($manifest.packages).Count -ne $publishIds.Count -or
+    $manifest.sourceRevision -cnotmatch '^[0-9a-f]{40}$' -or
     $manifest.repositoryUrl -cne 'https://github.com/Atelia-org/atelia-completion' -or !$manifest.sdkVersion -or
-    !$manifest.ContainsKey('dependencies')) { throw "Expected one schema 2 $packageId candidate." }
+    ($Project -ne 'All' -and !$manifest.ContainsKey('dependencies'))) { throw "Invalid $Project release manifest." }
 
-$expectedDependencies = @(if ($Project -eq 'Completion' -or $Project -eq 'Completion.Tools') {
+$expectedDependencies = @(if ($Project -in @('Completion', 'Completion.Tools')) {
     'Atelia.Diagnostics'; 'Atelia.Completion.Abstractions'
 })
-$dependencies = @($manifest.dependencies)
+$dependencies = @(if ($Project -ne 'All') { $manifest.dependencies })
 $dependencyIds = @($dependencies | ForEach-Object { $_.id } | Sort-Object)
 if (($dependencyIds -join '|') -cne (($expectedDependencies | Sort-Object) -join '|')) {
     throw "Unexpected manifest dependency set: $($dependencyIds -join ', ')."
@@ -45,18 +49,22 @@ foreach ($dependency in $dependencies) {
     }
 }
 
-$candidate = $manifest.packages[0]
-if ($candidate.file -cne "$packageId.$Version.nupkg" -or
-    $candidate.symbolsFile -cne "$packageId.$Version.snupkg" -or
-    $candidate.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $candidate.symbolsSha256 -cnotmatch '^[0-9a-f]{64}$') {
-    throw 'Invalid candidate file identity or hash in manifest.'
-}
-$candidatePath = Join-Path $feed $candidate.file
-$symbolsPath = Join-Path $feed $candidate.symbolsFile
-$candidateHash = (Get-FileHash -LiteralPath $candidatePath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($candidateHash -cne $candidate.sha256 -or
-    (Get-FileHash -LiteralPath $symbolsPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $candidate.symbolsSha256) {
-    throw 'Frozen candidate or symbols changed before public verification.'
+$candidates = @{}
+for ($index = 0; $index -lt $publishIds.Count; $index++) {
+    $id = $publishIds[$index]
+    $candidate = $manifest.packages[$index]
+    if ($candidate.id -cne $id -or $candidate.file -cne "$id.$Version.nupkg" -or
+        $candidate.symbolsFile -cne "$id.$Version.snupkg" -or
+        $candidate.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $candidate.symbolsSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "Invalid candidate file identity or hash in manifest: $id."
+    }
+    $candidatePath = Join-Path $feed $candidate.file
+    $symbolsPath = Join-Path $feed $candidate.symbolsFile
+    if ((Get-FileHash -LiteralPath $candidatePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $candidate.sha256 -or
+        (Get-FileHash -LiteralPath $symbolsPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $candidate.symbolsSha256) {
+        throw "Frozen candidate or symbols changed before public verification: $id."
+    }
+    $candidates[$id] = @{ entry = $candidate; path = $candidatePath }
 }
 
 function Read-Nuspec([IO.Compression.ZipArchive]$Archive, [string]$Id) {
@@ -92,50 +100,60 @@ function Get-EntryHash([IO.Compression.ZipArchiveEntry]$Entry) {
 }
 
 [void][IO.Directory]::CreateDirectory($work)
-$publicPath = Join-Path $work "$packageId.$Version.nupkg"
-$normalizedId = $packageId.ToLowerInvariant()
-$normalizedVersion = $Version.ToLowerInvariant()
-$url = "https://api.nuget.org/v3-flatcontainer/$normalizedId/$normalizedVersion/$normalizedId.$normalizedVersion.nupkg"
 $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
-while ($true) {
-    try {
-        Invoke-WebRequest -Uri $url -OutFile $publicPath -TimeoutSec 30 | Out-Null
-        break
-    }
-    catch {
-        if (Test-Path -LiteralPath $publicPath) { Remove-Item -LiteralPath $publicPath }
+$publicPackages = @{}
+foreach ($packageId in $publishIds) {
+    $publicPath = Join-Path $work "$packageId.$Version.nupkg"
+    $normalizedId = $packageId.ToLowerInvariant()
+    $normalizedVersion = $Version.ToLowerInvariant()
+    $url = "https://api.nuget.org/v3-flatcontainer/$normalizedId/$normalizedVersion/$normalizedId.$normalizedVersion.nupkg"
+    while ($true) {
         $remaining = ($deadline - [DateTimeOffset]::UtcNow).TotalSeconds
-        if ($remaining -le 0) { throw "Published package was not downloadable within 15 minutes: $url. Rerun this read-only script with the archived feed and a new WorkDirectory." }
-        Start-Sleep -Seconds ([Math]::Min(15, [Math]::Ceiling($remaining)))
-    }
-}
-$publicHash = (Get-FileHash -LiteralPath $publicPath -Algorithm SHA256).Hash.ToLowerInvariant()
-$candidateArchive = [IO.Compression.ZipFile]::OpenRead($candidatePath)
-$publicArchive = [IO.Compression.ZipFile]::OpenRead($publicPath)
-try {
-    if (!$publicArchive.GetEntry('.signature.p7s')) { throw 'Downloaded public package has no NuGet signature.' }
-    $candidateEntries = @($candidateArchive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
-    $publicEntries = @($publicArchive.Entries | Where-Object FullName -CNE '.signature.p7s' | ForEach-Object { $_.FullName } | Sort-Object)
-    if (($candidateEntries -join '|') -cne ($publicEntries -join '|')) { throw 'Published package asset list differs from candidate.' }
-    foreach ($name in $candidateEntries) {
-        if ((Get-EntryHash ($candidateArchive.GetEntry($name))) -cne (Get-EntryHash ($publicArchive.GetEntry($name)))) {
-            throw "Published package asset differs from candidate: $name"
+        if ($remaining -le 0) { throw "Public readback exceeded 15 minutes at $packageId. Rerun this read-only script with the archived feed and a new WorkDirectory." }
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $publicPath -TimeoutSec ([Math]::Min(30, [Math]::Ceiling($remaining))) | Out-Null
+            break
+        }
+        catch {
+            if (Test-Path -LiteralPath $publicPath) { Remove-Item -LiteralPath $publicPath }
+            $remaining = ($deadline - [DateTimeOffset]::UtcNow).TotalSeconds
+            if ($remaining -le 0) { throw "Published package was not downloadable within 15 minutes: $url. Rerun this read-only script with the archived feed and a new WorkDirectory." }
+            Start-Sleep -Seconds ([Math]::Min(15, [Math]::Ceiling($remaining)))
         }
     }
-    $metadata = Assert-NuspecIdentity (Read-Nuspec $publicArchive $packageId) $packageId $Version $manifest.sourceRevision $manifest.repositoryUrl
-    $direct = @($metadata.SelectNodes('.//*[local-name()="dependency"]') | Where-Object { $_.GetAttribute('id') -like 'Atelia.*' })
-    if ($direct.Count -ne $dependencies.Count) { throw 'Published package direct dependency count differs from manifest.' }
-    foreach ($dependency in $dependencies) {
-        $match = @($direct | Where-Object { $_.GetAttribute('id') -ceq $dependency.id })
-        if ($match.Count -ne 1 -or
-            ($match[0].GetAttribute('version') -cne "[$($dependency.version), )" -and
-             $match[0].GetAttribute('version') -cne "[$($dependency.version),)" -and
-             $match[0].GetAttribute('version') -cne $dependency.version)) {
-            throw "Published package direct dependency lower bound differs: $($dependency.id)."
+    $publicHash = (Get-FileHash -LiteralPath $publicPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $candidateArchive = [IO.Compression.ZipFile]::OpenRead($candidates[$packageId].path)
+    $publicArchive = [IO.Compression.ZipFile]::OpenRead($publicPath)
+    try {
+        if (!$publicArchive.GetEntry('.signature.p7s')) { throw "Downloaded public package has no NuGet signature: $packageId." }
+        $candidateEntries = @($candidateArchive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
+        $publicEntries = @($publicArchive.Entries | Where-Object FullName -CNE '.signature.p7s' | ForEach-Object { $_.FullName } | Sort-Object)
+        if (($candidateEntries -join '|') -cne ($publicEntries -join '|')) { throw "Published package asset list differs from candidate: $packageId." }
+        foreach ($name in $candidateEntries) {
+            if ((Get-EntryHash ($candidateArchive.GetEntry($name))) -cne (Get-EntryHash ($publicArchive.GetEntry($name)))) {
+                throw "Published package asset differs from candidate: $packageId/$name"
+            }
+        }
+        $metadata = Assert-NuspecIdentity (Read-Nuspec $publicArchive $packageId) $packageId $Version $manifest.sourceRevision $manifest.repositoryUrl
+        $direct = @($metadata.SelectNodes('.//*[local-name()="dependency"]') | Where-Object { $_.GetAttribute('id') -like 'Atelia.*' })
+        $expectedDirect = @(if ($Project -eq 'All') {
+            if ($packageId -in @('Atelia.Completion', 'Atelia.Completion.Tools')) {
+                [ordered]@{ id = 'Atelia.Diagnostics'; version = $Version }
+                [ordered]@{ id = 'Atelia.Completion.Abstractions'; version = $Version }
+            }
+        } else { $dependencies })
+        if ($direct.Count -ne $expectedDirect.Count) { throw "Published package direct dependency count differs: $packageId." }
+        foreach ($dependency in $expectedDirect) {
+            $match = @($direct | Where-Object { $_.GetAttribute('id') -ceq $dependency.id })
+            if ($match.Count -ne 1 -or
+                $match[0].GetAttribute('version') -cnotin @($dependency.version, "[$($dependency.version), )", "[$($dependency.version),)")) {
+                throw "Published package direct dependency lower bound differs: $packageId -> $($dependency.id)."
+            }
         }
     }
+    finally { $candidateArchive.Dispose(); $publicArchive.Dispose() }
+    $publicPackages[$packageId] = @{ path = $publicPath; sha256 = $publicHash; url = $url }
 }
-finally { $candidateArchive.Dispose(); $publicArchive.Dispose() }
 
 $utf8 = [Text.UTF8Encoding]::new($false)
 function Write-Utf8([string]$Path, [string]$Content) { [IO.File]::WriteAllText($Path, $Content, $utf8) }
@@ -147,17 +165,6 @@ Write-Utf8 (Join-Path $work 'NuGet.Config') @'
 <?xml version="1.0" encoding="utf-8"?>
 <configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources><fallbackPackageFolders><clear /></fallbackPackageFolders></configuration>
 '@
-$probe = Join-Path $work 'PublicProbe'
-[void][IO.Directory]::CreateDirectory($probe)
-Write-Utf8 (Join-Path $probe 'PublicProbe.csproj') "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><IsPackable>false</IsPackable></PropertyGroup><ItemGroup><PackageReference Include=`"$packageId`" Version=`"$Version`" /></ItemGroup></Project>"
-$type = switch ($Project) {
-    Diagnostics { 'Atelia.Diagnostics.DebugUtil' }
-    Completion.Abstractions { 'Atelia.Completion.Abstractions.CompletionRequest' }
-    Completion { 'Atelia.Completion.OpenAI.OpenAIChatClient' }
-    Completion.Tools { 'Atelia.Completion.Tools.MethodToolWrapper' }
-}
-Write-Utf8 (Join-Path $probe 'Program.cs') "System.Console.WriteLine(typeof($type).Assembly.GetName().Name);"
-
 $savedEnvironment = @{}
 foreach ($name in @('NUGET_PACKAGES', 'NUGET_HTTP_CACHE_PATH', 'NUGET_FALLBACK_PACKAGES')) {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -165,57 +172,84 @@ foreach ($name in @('NUGET_PACKAGES', 'NUGET_HTTP_CACHE_PATH', 'NUGET_FALLBACK_P
 $env:NUGET_PACKAGES = Join-Path $work 'packages'
 $env:NUGET_HTTP_CACHE_PATH = Join-Path $work 'http-cache'
 $env:NUGET_FALLBACK_PACKAGES = ''
+$checks = [Collections.Generic.List[object]]::new()
 try {
-    & dotnet nuget verify $publicPath --all --configfile (Join-Path $work 'NuGet.Config')
+    $publicPaths = @($publishIds | ForEach-Object { $publicPackages[$_].path })
+    & dotnet nuget verify @publicPaths --all --configfile (Join-Path $work 'NuGet.Config')
     if ($LASTEXITCODE -ne 0) { throw 'NuGet signature verification failed.' }
-    & dotnet restore (Join-Path $probe 'PublicProbe.csproj') --configfile (Join-Path $work 'NuGet.Config') --packages $env:NUGET_PACKAGES --no-http-cache '-p:RestoreFallbackFolders=' '-p:RestoreAdditionalProjectSources=' '-p:RestoreAdditionalProjectFallbackFolders='
-    if ($LASTEXITCODE -ne 0) { throw 'Public NuGet restore failed.' }
-    $assets = Get-Content -LiteralPath (Join-Path $probe 'obj/project.assets.json') -Raw | ConvertFrom-Json -AsHashtable
-    if (@($assets.libraries.Values | Where-Object { $_.type -eq 'project' }).Count -ne 0 -or $assets.packageFolders.Count -ne 1 -or
-        ![IO.Path]::GetFullPath(@($assets.packageFolders.Keys)[0]).TrimEnd('/','\').Equals(
-            [IO.Path]::GetFullPath($env:NUGET_PACKAGES).TrimEnd('/','\'), [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Public consumer resolved project references or an unexpected package cache.'
-    }
-    $expected = @("$packageId/$Version") + @($dependencies | ForEach-Object { "$($_.id)/$($_.version)" })
-    $actual = @($assets.libraries.Keys | Where-Object { $_ -like 'Atelia.*/*' } | Sort-Object)
-    if (($actual -join '|') -cne (($expected | Sort-Object) -join '|')) {
-        throw "Public Atelia package closure differs: $($actual -join ', ')."
-    }
-    & dotnet run --project (Join-Path $probe 'PublicProbe.csproj') -c Release --no-restore
-    if ($LASTEXITCODE -ne 0) { throw 'Public package consumer failed.' }
-
-    $cachedNew = Join-Path $env:NUGET_PACKAGES "$normalizedId/$normalizedVersion/$normalizedId.$normalizedVersion.nupkg"
-    if ((Get-FileHash -LiteralPath $cachedNew -Algorithm SHA256).Hash.ToLowerInvariant() -cne $publicHash) {
-        throw 'Restored new package bytes differ from public download.'
-    }
-    foreach ($dependency in $dependencies) {
-        $id = ([string]$dependency.id).ToLowerInvariant()
-        $dependencyVersion = ([string]$dependency.version).ToLowerInvariant()
-        $cached = Join-Path $env:NUGET_PACKAGES "$id/$dependencyVersion/$id.$dependencyVersion.nupkg"
-        if ((Get-FileHash -LiteralPath $cached -Algorithm SHA256).Hash.ToLowerInvariant() -cne $dependency.sha256) {
-            throw "Restored dependency bytes differ from frozen public package: $($dependency.id)."
+    foreach ($packageId in $publishIds) {
+        $probe = Join-Path $work "PublicProbe-$packageId"
+        [void][IO.Directory]::CreateDirectory($probe)
+        $projectPath = Join-Path $probe 'PublicProbe.csproj'
+        Write-Utf8 $projectPath "<Project Sdk=`"Microsoft.NET.Sdk`"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><IsPackable>false</IsPackable></PropertyGroup><ItemGroup><PackageReference Include=`"$packageId`" Version=`"$Version`" /></ItemGroup></Project>"
+        $type = switch ($packageId) {
+            Atelia.Diagnostics { 'Atelia.Diagnostics.DebugUtil' }
+            Atelia.Completion.Abstractions { 'Atelia.Completion.Abstractions.CompletionRequest' }
+            Atelia.Completion { 'Atelia.Completion.OpenAI.OpenAIChatClient' }
+            Atelia.Completion.Tools { 'Atelia.Completion.Tools.MethodToolWrapper' }
         }
-        if ($dependency.sourceRevision) {
-            $archive = [IO.Compression.ZipFile]::OpenRead($cached)
-            try { [void](Assert-NuspecIdentity (Read-Nuspec $archive $dependency.id) $dependency.id $dependency.version $dependency.sourceRevision $manifest.repositoryUrl) }
-            finally { $archive.Dispose() }
+        Write-Utf8 (Join-Path $probe 'Program.cs') "System.Console.WriteLine(typeof($type).Assembly.GetName().Name);"
+        $expectedRecords = @([ordered]@{ id = $packageId; version = $Version; sha256 = $publicPackages[$packageId].sha256; sourceRevision = $manifest.sourceRevision })
+        if ($packageId -in @('Atelia.Completion', 'Atelia.Completion.Tools')) {
+            foreach ($dependencyId in @('Atelia.Diagnostics', 'Atelia.Completion.Abstractions')) {
+                if ($Project -eq 'All') {
+                    $expectedRecords += [ordered]@{ id = $dependencyId; version = $Version; sha256 = $publicPackages[$dependencyId].sha256; sourceRevision = $manifest.sourceRevision }
+                } else {
+                    $dependency = @($dependencies | Where-Object { $_.id -ceq $dependencyId })[0]
+                    $expectedRecords += $dependency
+                }
+            }
         }
+        & dotnet restore $projectPath --configfile (Join-Path $work 'NuGet.Config') --packages $env:NUGET_PACKAGES --no-http-cache '-p:RestoreFallbackFolders=' '-p:RestoreAdditionalProjectSources=' '-p:RestoreAdditionalProjectFallbackFolders='
+        if ($LASTEXITCODE -ne 0) { throw "Public NuGet restore failed: $packageId." }
+        $assets = Get-Content -LiteralPath (Join-Path $probe 'obj/project.assets.json') -Raw | ConvertFrom-Json -AsHashtable
+        if (@($assets.libraries.Values | Where-Object { $_.type -eq 'project' }).Count -ne 0 -or $assets.packageFolders.Count -ne 1 -or
+            ![IO.Path]::GetFullPath(@($assets.packageFolders.Keys)[0]).TrimEnd('/','\').Equals(
+                [IO.Path]::GetFullPath($env:NUGET_PACKAGES).TrimEnd('/','\'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Public consumer resolved project references or an unexpected package cache: $packageId."
+        }
+        $expected = @($expectedRecords | ForEach-Object { "$($_.id)/$($_.version)" } | Sort-Object)
+        $actual = @($assets.libraries.Keys | Where-Object { $_ -like 'Atelia.*/*' } | Sort-Object)
+        if (($actual -join '|') -cne ($expected -join '|')) {
+            throw "Public Atelia package closure differs for $packageId`: $($actual -join ', ')."
+        }
+        & dotnet run --project $projectPath -c Release --no-restore
+        if ($LASTEXITCODE -ne 0) { throw "Public package consumer failed: $packageId." }
+        foreach ($record in $expectedRecords) {
+            $id = ([string]$record.id).ToLowerInvariant()
+            $resolvedVersion = ([string]$record.version).ToLowerInvariant()
+            $cached = Join-Path $env:NUGET_PACKAGES "$id/$resolvedVersion/$id.$resolvedVersion.nupkg"
+            if ((Get-FileHash -LiteralPath $cached -Algorithm SHA256).Hash.ToLowerInvariant() -cne $record.sha256) {
+                throw "Restored package bytes differ from frozen public evidence: $($record.id)."
+            }
+            if (!$publicPackages.ContainsKey($record.id)) {
+                $archive = [IO.Compression.ZipFile]::OpenRead($cached)
+                try { [void](Assert-NuspecIdentity (Read-Nuspec $archive $record.id) $record.id $record.version $record.sourceRevision $manifest.repositoryUrl) }
+                finally { $archive.Dispose() }
+            }
+        }
+        $checks.Add([ordered]@{
+            id = $packageId; version = $Version; candidateSha256 = $candidates[$packageId].entry.sha256
+            candidateSymbolsSha256 = $candidates[$packageId].entry.symbolsSha256
+            publishedSha256 = $publicPackages[$packageId].sha256; publicUrl = $publicPackages[$packageId].url
+            resolvedPackages = $actual
+        })
     }
 }
 finally {
     foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
 }
 
-$result = [ordered]@{
-    id = $packageId
-    version = $Version
-    sourceRevision = $manifest.sourceRevision
-    candidateSha256 = $candidateHash
-    candidateSymbolsSha256 = $candidate.symbolsSha256
-    publishedSha256 = $publicHash
-    publicUrl = $url
-    resolvedPackages = $actual
-    dependencies = @($dependencies | ForEach-Object { [ordered]@{ id = $_.id; version = $_.version; sha256 = $_.sha256; sourceRevision = $_.sourceRevision } })
+$result = [ordered]@{ project = $Project; version = $Version; sourceRevision = $manifest.sourceRevision; checks = $checks.ToArray() }
+if ($Project -ne 'All') {
+    $check = $checks[0]
+    $result.id = $check.id
+    $result.candidateSha256 = $check.candidateSha256
+    $result.candidateSymbolsSha256 = $check.candidateSymbolsSha256
+    $result.publishedSha256 = $check.publishedSha256
+    $result.publicUrl = $check.publicUrl
+    $result.resolvedPackages = $check.resolvedPackages
+    $result.dependencies = @($dependencies | ForEach-Object { [ordered]@{ id = $_.id; version = $_.version; sha256 = $_.sha256; sourceRevision = $_.sourceRevision } })
 }
 Write-Utf8 (Join-Path $work 'published-check.json') ($result | ConvertTo-Json -Depth 5)
-Write-Host "Public $packageId/$Version verified from nuget.org: $publicHash"
+Write-Host "Public $Project/$Version verified from nuget.org: $($checks.Count) package consumer(s)."

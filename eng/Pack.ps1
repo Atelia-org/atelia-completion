@@ -60,7 +60,10 @@ function Get-PublicPackage([string]$Id, [string]$PackageVersion, [string]$Destin
         try { Invoke-WebRequest -Uri $url -OutFile $Destination -TimeoutSec 60 -ErrorAction Stop; return }
         catch {
             if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination }
-            if ($_.Exception.Response.StatusCode -eq [Net.HttpStatusCode]::NotFound) { throw "Published dependency does not exist: $Id $PackageVersion" }
+            if ($_.Exception -is [Microsoft.PowerShell.Commands.HttpResponseException] -and
+                $_.Exception.Response.StatusCode -eq [Net.HttpStatusCode]::NotFound) {
+                throw "Published dependency does not exist: $Id $PackageVersion"
+            }
             if ($attempt -eq 3) { throw }
             Start-Sleep -Seconds (2 * $attempt)
         }
@@ -75,7 +78,8 @@ function Assert-UnusedVersion([string]$Id, [string]$PackageVersion) {
         Invoke-WebRequest -Uri $url -Method Head -TimeoutSec 60 -ErrorAction Stop | Out-Null
         throw "$Id $PackageVersion already exists on nuget.org."
     } catch {
-        if ($_.Exception.Response.StatusCode -ne [Net.HttpStatusCode]::NotFound) { throw }
+        if ($_.Exception -isnot [Microsoft.PowerShell.Commands.HttpResponseException] -or
+            $_.Exception.Response.StatusCode -ne [Net.HttpStatusCode]::NotFound) { throw }
     }
 }
 

@@ -131,10 +131,13 @@ try {
         }
         $escapedFeed = [Security.SecurityElement]::Escape($dependencyFeed)
         $maps = ($requiredIds | ForEach-Object { '<package pattern="' + $_ + '" />' }) -join ''
-        $config = @"
+        $config = if ($requiredIds.Count -eq 0) { @'
+<?xml version="1.0" encoding="utf-8"?>
+<configuration><packageSources><clear /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources><fallbackPackageFolders><clear /></fallbackPackageFolders></configuration>
+'@ } else { @"
 <?xml version="1.0" encoding="utf-8"?>
 <configuration><packageSources><clear /><add key="frozen" value="$escapedFeed" /><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources><fallbackPackageFolders><clear /></fallbackPackageFolders><packageSourceMapping><clear /><packageSource key="frozen">$maps</packageSource><packageSource key="nuget.org"><package pattern="*" /></packageSource></packageSourceMapping></configuration>
-"@
+"@ }
         $configPath = Join-Path $stage 'NuGet.Config'
         [IO.File]::WriteAllText($configPath, $config, [Text.UTF8Encoding]::new($false))
         $obj = Join-Path $stage 'obj'

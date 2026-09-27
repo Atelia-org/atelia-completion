@@ -141,7 +141,8 @@ try {
         $bin = Join-Path $stage 'bin'
         $cache = Join-Path $stage 'cache'
         $projectPath = Join-Path $repo "src/$Project/$Project.csproj"
-        $props = @('-p:CompletionPackageMode=true', "-p:PackageVersion=$Version", "-p:RepositoryCommit=$revision",
+        $props = @('-p:CompletionPackageMode=true', '-p:DefaultItemExcludesInProjectFolder=obj/**',
+            "-p:PackageVersion=$Version", "-p:RepositoryCommit=$revision",
             '-p:RepositoryBranch=', '-p:ContinuousIntegrationBuild=true',
             "-p:BaseIntermediateOutputPath=$obj/", "-p:MSBuildProjectExtensionsPath=$obj/",
             "-p:BaseOutputPath=$bin/", "-p:RestorePackagesPath=$cache/")

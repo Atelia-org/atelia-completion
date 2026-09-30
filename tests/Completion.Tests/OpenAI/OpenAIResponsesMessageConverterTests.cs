@@ -266,7 +266,8 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [InlineData(CompletionReasoningEffort.Low, "low", "auto")]
     [InlineData(CompletionReasoningEffort.Medium, "medium", "auto")]
     [InlineData(CompletionReasoningEffort.High, "high", "auto")]
-    [InlineData(CompletionReasoningEffort.Max, "xhigh", "auto")]
+    [InlineData(CompletionReasoningEffort.XHigh, "xhigh", "auto")]
+    [InlineData(CompletionReasoningEffort.Max, "max", "auto")]
     public void ConvertToApiRequest_MapsReasoningEffortAndRequestsReadableSummary(
         CompletionReasoningEffort effort,
         string expectedEffort,

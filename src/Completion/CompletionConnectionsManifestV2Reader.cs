@@ -392,6 +392,7 @@ internal static class CompletionConnectionsManifestV2Reader {
             "low" => CompletionReasoningEffort.Low,
             "medium" => CompletionReasoningEffort.Medium,
             "high" => CompletionReasoningEffort.High,
+            "xhigh" => CompletionReasoningEffort.XHigh,
             "max" => CompletionReasoningEffort.Max,
             _ => throw new InvalidDataException(
                 "reasoningEffort is unsupported."

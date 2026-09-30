@@ -23,7 +23,8 @@ internal static class OpenAIResponsesReasoningWireMapping {
         CompletionReasoningEffort.Low => Enabled("low"),
         CompletionReasoningEffort.Medium => Enabled("medium"),
         CompletionReasoningEffort.High => Enabled("high"),
-        CompletionReasoningEffort.Max => Enabled("xhigh"),
+        CompletionReasoningEffort.XHigh => Enabled("xhigh"),
+        CompletionReasoningEffort.Max => Enabled("max"),
         _ => throw new ArgumentOutOfRangeException(
             nameof(reasoningEffort),
             reasoningEffort,

@@ -250,7 +250,8 @@ public sealed class OpenAIChatClient : ICompletionClient {
             CompletionReasoningEffort.Low => "low",
             CompletionReasoningEffort.Medium => "medium",
             CompletionReasoningEffort.High => "high",
-            CompletionReasoningEffort.Max => "xhigh",
+            CompletionReasoningEffort.XHigh => "xhigh",
+            CompletionReasoningEffort.Max => "max",
             _ => throw UnknownReasoningEffort(effort)
         };
 

@@ -547,6 +547,7 @@ public sealed class CompletionConnectionConfigLoaderTests {
     [InlineData("low")]
     [InlineData("medium")]
     [InlineData("high")]
+    [InlineData("xhigh")]
     [InlineData("max")]
     public void Decode_AcceptsExactReasoningNames(string value) {
         Assert.Single(Decode(Connection(

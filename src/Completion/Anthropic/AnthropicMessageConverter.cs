@@ -216,6 +216,7 @@ internal static class AnthropicMessageConverter {
                 CompletionReasoningEffort.Low => "low",
                 CompletionReasoningEffort.Medium => "medium",
                 CompletionReasoningEffort.High => "high",
+                CompletionReasoningEffort.XHigh => "xhigh",
                 CompletionReasoningEffort.Max => "max",
                 _ => throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.")
             }

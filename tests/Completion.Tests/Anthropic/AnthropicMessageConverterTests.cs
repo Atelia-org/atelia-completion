@@ -1180,6 +1180,7 @@ public sealed class AnthropicMessageConverterTests {
     [InlineData(CompletionReasoningEffort.Low, "low")]
     [InlineData(CompletionReasoningEffort.Medium, "medium")]
     [InlineData(CompletionReasoningEffort.High, "high")]
+    [InlineData(CompletionReasoningEffort.XHigh, "xhigh")]
     [InlineData(CompletionReasoningEffort.Max, "max")]
     public void ConvertToApiRequest_ReasoningEffortUsesAdaptiveThinking(
         CompletionReasoningEffort reasoningEffort,

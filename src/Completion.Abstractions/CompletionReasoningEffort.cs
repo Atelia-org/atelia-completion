@@ -21,6 +21,8 @@ public enum CompletionReasoningEffort {
 
     High,
 
+    XHigh,
+
     Max,
 }
 
@@ -46,6 +48,7 @@ public sealed class CompletionReasoningEffortJsonConverter
             "low" => CompletionReasoningEffort.Low,
             "medium" => CompletionReasoningEffort.Medium,
             "high" => CompletionReasoningEffort.High,
+            "xhigh" => CompletionReasoningEffort.XHigh,
             "max" => CompletionReasoningEffort.Max,
             var value => throw new JsonException(
                 $"Unsupported completion reasoning effort '{value ?? "<null>"}'."
@@ -63,6 +66,7 @@ public sealed class CompletionReasoningEffortJsonConverter
         CompletionReasoningEffort.Low => "low",
         CompletionReasoningEffort.Medium => "medium",
         CompletionReasoningEffort.High => "high",
+        CompletionReasoningEffort.XHigh => "xhigh",
         CompletionReasoningEffort.Max => "max",
         _ => throw new JsonException($"Unsupported completion reasoning effort '{value}'.")
     });

@@ -1125,7 +1125,8 @@ public sealed class OpenAICodexResponsesClientTests {
     [Theory]
     [InlineData(CompletionReasoningEffort.Disabled, "none", null)]
     [InlineData(CompletionReasoningEffort.Low, "low", "auto")]
-    [InlineData(CompletionReasoningEffort.Max, "xhigh", "auto")]
+    [InlineData(CompletionReasoningEffort.XHigh, "xhigh", "auto")]
+    [InlineData(CompletionReasoningEffort.Max, "max", "auto")]
     public async Task StreamCompletionAsync_UsesCodexReasoningMappingEntry(
         CompletionReasoningEffort effort,
         string expectedEffort,

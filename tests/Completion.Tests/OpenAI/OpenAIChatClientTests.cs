@@ -263,7 +263,8 @@ public sealed class OpenAIChatClientTests {
     [InlineData(CompletionReasoningEffort.Low, "low")]
     [InlineData(CompletionReasoningEffort.Medium, "medium")]
     [InlineData(CompletionReasoningEffort.High, "high")]
-    [InlineData(CompletionReasoningEffort.Max, "xhigh")]
+    [InlineData(CompletionReasoningEffort.XHigh, "xhigh")]
+    [InlineData(CompletionReasoningEffort.Max, "max")]
     public async Task StreamCompletionAsync_MapsStrictOpenAIReasoningEffort(
         CompletionReasoningEffort effort,
         string expectedWireValue

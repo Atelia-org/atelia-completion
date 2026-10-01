@@ -21,6 +21,19 @@ internal static class GeminiMessageConverter {
                 "Provider-resolved model maximum must be positive."
             );
         }
+        var apiRequest = ProjectRequest(request, targetInvocation);
+        apiRequest.GenerationConfig = new GeminiGenerationConfig {
+            MaxOutputTokens = modelMaximumTokens
+        };
+        return apiRequest;
+    }
+
+    // Project and validate before capability I/O, without a placeholder output limit.
+    internal static GeminiGenerateContentRequest ProjectRequest(
+        CompletionRequest request,
+        CompletionDescriptor targetInvocation
+    ) {
+        ArgumentNullException.ThrowIfNull(targetInvocation);
         var contents = new List<GeminiContent>();
         var pendingToolCalls = new List<PendingToolCall>();
 
@@ -53,10 +66,7 @@ internal static class GeminiMessageConverter {
                     }
                 },
             Tools = BuildToolDefinitions(outputContract.Tools),
-            ToolConfig = BuildToolConfig(outputContract),
-            GenerationConfig = new GeminiGenerationConfig {
-                MaxOutputTokens = modelMaximumTokens
-            }
+            ToolConfig = BuildToolConfig(outputContract)
         };
 
         int contextMessageCount = checked(

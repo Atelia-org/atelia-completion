@@ -1141,7 +1141,7 @@ public sealed class AnthropicMessageConverterTests {
             tailMessages: []
         );
 
-        Assert.Throws<NotSupportedException>(
+        Assert.Throws<CompletionRequestRejectedException>(
             () => AnthropicMessageConverter.ConvertToApiRequest(
                 request,
                 modelMaximumTokens: 200_000,

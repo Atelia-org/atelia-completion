@@ -384,6 +384,7 @@ public sealed class GeminiClientTests {
         return parameters.Any(parameter => parameter.ParameterType == typeof(HttpClient))
             && parameters.All(
                 parameter => parameter.ParameterType == typeof(HttpClient)
+                    || parameter.ParameterType == typeof(GeminiClientOptions)
                     || (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase))
             );
     }

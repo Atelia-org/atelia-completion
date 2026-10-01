@@ -1,11 +1,100 @@
 using System.Collections.Immutable;
+using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
+using Atelia.Completion.ModelSpecs;
 using Xunit;
 
 namespace Atelia.Completion.Tests;
 
 public sealed class DefaultCompletionClientFactoryTests {
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task StrictConnectionLoader_ToGeminiFactory_PreservesEffortAndSelectsCatalogOnce(int version) {
+        string defaultField = version == 2 ? ",\"defaultConnectionId\":\"gemini\"" : "";
+        byte[] json = Encoding.UTF8.GetBytes($$"""
+            {"v":{{version}},"connections":[{"id":"gemini","kind":"gemini","modelId":"model-a",
+            "completionSurfaceId":"gemini","baseAddress":"https://example.invalid/","reasoningEffort":"medium"}]{{defaultField}}}
+            """);
+        CompletionConnectionConfig connection = version == 2
+            ? Assert.Single(CompletionConnectionConfigLoader.Decode(json).Connections)
+            : Assert.Single(CompletionConnectionConfigLoader.DecodeCatalog(json).Connections);
+        var mapper = new RejectingMapper();
+        int selections = 0;
+        var factory = new DefaultCompletionClientFactory(config => {
+            Assert.Same(connection, config);
+            selections++;
+            return CompletionModelSpecCatalog.Empty.WithModel("model-a", new() { ReasoningMapper = mapper });
+        });
+        using var client = Assert.IsType<OwnedHttpCompletionClient>(factory.Create(connection));
+        Assert.Equal("google-gemini-generate-content-v1beta", client.ApiSpecId);
+        Assert.Equal(Timeout.InfiniteTimeSpan, client.HttpClientTimeout);
+        for (int i = 0; i < 2; i++) {
+            var error = await Assert.ThrowsAsync<ArgumentException>(() => client.StreamCompletionAsync(Request(), null));
+            Assert.Equal("fixture.mapper_invoked", error.Message);
+        }
+        Assert.Equal(1, selections);
+        Assert.Equal(2, mapper.Calls);
+    }
+
+    [Theory]
+    [InlineData("openai-chat", "openai-chat/strict")]
+    [InlineData("anthropic", "anthropic")]
+    [InlineData("gemini", "gemini")]
+    public async Task ModelSpecsAreSelectedOnceAndReachTheConcreteClient(string kind, string surface) {
+        var mapper = new RejectingMapper();
+        var catalog = CompletionModelSpecCatalog.Empty.WithModel(
+            "model-a", new CompletionModelSpec { ReasoningMapper = mapper });
+        var connection = Connection("selected") with {
+            Kind = kind,
+            CompletionSurfaceId = surface,
+            ReasoningEffort = CompletionReasoningEffort.Medium
+        };
+        int selections = 0;
+        var factory = new DefaultCompletionClientFactory(config => {
+            Assert.Same(connection, config);
+            selections++;
+            return catalog;
+        });
+        using var client = Assert.IsType<OwnedHttpCompletionClient>(factory.Create(connection));
+
+        for (int i = 0; i < 2; i++) {
+            var error = await Assert.ThrowsAsync<ArgumentException>(
+                () => client.StreamCompletionAsync(Request(), observer: null));
+            Assert.Equal("fixture.mapper_invoked", error.Message);
+        }
+        Assert.Equal(1, selections);
+        Assert.Equal(2, mapper.Calls);
+    }
+
+    [Fact]
+    public void ResponsesDoesNotSelectModelSpecs() {
+        var factory = new DefaultCompletionClientFactory(_ =>
+            throw new InvalidOperationException("Unexpected selection."));
+        using var client = Assert.IsType<OwnedHttpCompletionClient>(factory.Create(
+            Connection("responses") with { Kind = "openai-responses", CompletionSurfaceId = "openai-responses" }));
+        Assert.Equal("openai-responses-v2", client.ApiSpecId);
+    }
+
+    [Fact]
+    public void SelectorFailurePrecedesTransportConstruction() {
+        var factory = new DefaultCompletionClientFactory(_ =>
+            throw new ArgumentException("fixture.selection_failed"));
+        var error = Assert.Throws<ArgumentException>(() => factory.Create(
+            Connection("invalid-endpoint") with { BaseAddress = "not an absolute uri" }));
+        Assert.Equal("fixture.selection_failed", error.Message);
+    }
+
+    private sealed class RejectingMapper : ICompletionReasoningEffortMapper {
+        public int Calls { get; private set; }
+        public ReasoningEffortMapping Map(CompletionReasoningEffort requested) {
+            Assert.Equal(CompletionReasoningEffort.Medium, requested);
+            Calls++;
+            throw new ArgumentException("fixture.mapper_invoked");
+        }
+    }
+
     [Fact]
     public void CreateUsesAnInfiniteHttpClientTimeout() {
         var factory = new DefaultCompletionClientFactory();

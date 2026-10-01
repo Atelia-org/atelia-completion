@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.ModelSpecs;
 using Atelia.Completion.Transport;
 using Atelia.Diagnostics;
 
@@ -16,11 +17,13 @@ public sealed class GeminiClient : ICompletionClient {
     private readonly HttpClient _httpClient;
     private readonly string? _apiKey;
     private readonly ProviderModelMaximumCache _modelMaximums;
+    private readonly CompletionModelSpecCatalog _modelSpecs;
+    private readonly CompletionReasoningEffort _reasoningEffort;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "generativelanguage.googleapis.com";
     public string ApiSpecId => "google-gemini-generate-content-v1beta";
 
-    public GeminiClient(string? apiKey, HttpClient httpClient) {
+    public GeminiClient(string? apiKey, HttpClient httpClient, GeminiClientOptions? options = null) {
         Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
 
         _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
@@ -29,6 +32,11 @@ public sealed class GeminiClient : ICompletionClient {
         _modelMaximums = new ProviderModelMaximumCache(
             FetchModelMaximumAsync
         );
+        options ??= new GeminiClientOptions();
+        _modelSpecs = options.ModelSpecs ?? BuiltinModelSpecs.GeminiGenerateContent;
+        _reasoningEffort = Enum.IsDefined(options.ReasoningEffort)
+            ? options.ReasoningEffort
+            : throw new ArgumentOutOfRangeException(nameof(options), "Unknown reasoning effort.");
 
         DebugUtil.Debug(
             CompletionDebugCategories.Provider,
@@ -58,16 +66,22 @@ public sealed class GeminiClient : ICompletionClient {
             $"[Gemini] Starting call model={request.ModelId}"
         );
 
-        int modelMaximumTokens = await _modelMaximums.GetAsync(
+        CompletionModelSpec? spec = _modelSpecs.Lookup(request.ModelId);
+        GeminiThinkingConfig? thinking = ResolveThinkingConfig(spec);
+        ValidateToolChoice(request.PromptPrefix.OutputContract, spec);
+        var invocation = CompletionDescriptor.From(this, request);
+        var apiRequest = GeminiMessageConverter.ProjectRequest(
+            request,
+            invocation
+        );
+        int modelMaximumTokens = spec?.OutputTokenLimit ?? await _modelMaximums.GetAsync(
             request.ModelId,
             cancellationToken
         ).ConfigureAwait(false);
-        var invocation = CompletionDescriptor.From(this, request);
-        var apiRequest = GeminiMessageConverter.ConvertToApiRequest(
-            request,
-            modelMaximumTokens,
-            invocation
-        );
+        apiRequest.GenerationConfig = new GeminiGenerationConfig {
+            MaxOutputTokens = modelMaximumTokens,
+            ThinkingConfig = thinking
+        };
         using var response = await SendStreamingRequestAsync(request.ModelId, apiRequest, cancellationToken);
 
         await using var stream = await CompletionHttpRequestUtility.OpenStreamAsync(response.Content, cancellationToken);
@@ -124,6 +138,38 @@ public sealed class GeminiClient : ICompletionClient {
             "[Gemini] Stream completed"
         );
         return aggregator.Build();
+    }
+
+    private GeminiThinkingConfig? ResolveThinkingConfig(CompletionModelSpec? spec) {
+        ReasoningEffortMapping? mapping = ModelSpecReasoning.Resolve(_reasoningEffort, spec);
+        if (mapping is not { } resolved) { return null; }
+        if (spec?.ReasoningMapper is null) {
+            throw new NotSupportedException(
+                "Explicit Gemini reasoning effort requires a model specification with a thinking-level mapper."
+            );
+        }
+        // Generate Content level control cannot express truly disabled thinking.
+        // Hosts may map to minimal with enabled semantics on models supporting it.
+        if (resolved.EffectiveEffort is CompletionReasoningEffort.Disabled
+            || resolved.WireLevel is not ("minimal" or "low" or "medium" or "high"
+                or "MINIMAL" or "LOW" or "MEDIUM" or "HIGH")) {
+            throw new ArgumentException(
+                "The Gemini reasoning mapper must return an enabled effort and a supported native thinking-level name.",
+                nameof(spec)
+            );
+        }
+        return new GeminiThinkingConfig { ThinkingLevel = resolved.WireLevel };
+    }
+
+    private static void ValidateToolChoice(CompletionOutputContract contract, CompletionModelSpec? spec) {
+        if (spec?.ForcedToolChoiceSupported is false
+            && contract.ToolChoice.Kind is CompletionToolChoiceKind.RequiredAny or CompletionToolChoiceKind.RequiredNamed) {
+            throw new CompletionRequestRejectedException(new CompletionTermination(
+                CompletionTerminationKind.Failed,
+                "model_specs.incompatible_tool_choice",
+                "The selected model specification does not support forced tool selection."
+            ));
+        }
     }
 
     /// <summary>

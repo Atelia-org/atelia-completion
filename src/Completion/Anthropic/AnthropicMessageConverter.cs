@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.ModelSpecs;
 using Atelia.Completion.Utils;
 
 namespace Atelia.Completion.Anthropic;
@@ -21,6 +22,22 @@ internal static class AnthropicMessageConverter {
         CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
         AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault,
         CompletionDescriptor? targetInvocation = null
+    ) => ConvertWithMappedReasoning(
+        request, modelMaximumTokens, enablePromptCaching,
+        ModelSpecReasoning.Resolve(reasoningEffort, null),
+        promptCacheTtl, targetInvocation,
+        hasReasoningMapper: false, forcedToolChoiceSupported: null
+    );
+
+    internal static AnthropicApiRequest ConvertWithMappedReasoning(
+        CompletionRequest request,
+        int modelMaximumTokens,
+        bool enablePromptCaching,
+        ReasoningEffortMapping? reasoning,
+        AnthropicPromptCacheTtl promptCacheTtl,
+        CompletionDescriptor? targetInvocation,
+        bool hasReasoningMapper,
+        bool? forcedToolChoiceSupported
     ) {
         if (modelMaximumTokens <= 0) {
             throw new ArgumentOutOfRangeException(
@@ -29,6 +46,10 @@ internal static class AnthropicMessageConverter {
                 "Provider-resolved model maximum must be positive."
             );
         }
+        ValidateRequestOptions(
+            request.PromptPrefix.OutputContract, reasoning,
+            hasReasoningMapper, forcedToolChoiceSupported
+        );
         var messages = new List<AnthropicMessage>();
         var pendingToolCalls = new List<PendingToolCall>();
 
@@ -81,10 +102,10 @@ internal static class AnthropicMessageConverter {
                 : request.PromptPrefix.SystemPrompt,
             Stream = true,
             Tools = BuildToolDefinitions(outputContract.Tools),
-            ToolChoice = BuildToolChoice(outputContract, reasoningEffort)
+            ToolChoice = BuildToolChoice(outputContract)
         };
 
-        ApplyReasoningConfig(apiRequest, reasoningEffort);
+        ApplyReasoningConfig(apiRequest, reasoning);
 
         if (enablePromptCaching) {
             ApplyPromptCaching(
@@ -100,7 +121,7 @@ internal static class AnthropicMessageConverter {
         );
         DebugUtil.Debug(
             CompletionDebugCategories.Provider,
-            $"[Anthropic] Converted {contextMessageCount} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={reasoningEffort}"
+            $"[Anthropic] Converted {contextMessageCount} context messages to {messages.Count} API messages, tools={apiRequest.Tools?.Count ?? 0}, reasoningEffort={reasoning?.EffectiveEffort}"
         );
         return apiRequest;
     }
@@ -138,31 +159,54 @@ internal static class AnthropicMessageConverter {
         }
     }
 
-    private static AnthropicToolChoice? BuildToolChoice(
+    internal static void ValidateRequestOptions(
         CompletionOutputContract outputContract,
-        CompletionReasoningEffort reasoningEffort
+        ReasoningEffortMapping? reasoning,
+        bool hasReasoningMapper,
+        bool? forcedToolChoiceSupported
     ) {
+        if (reasoning is { } mapping) {
+            if (mapping.EffectiveEffort is CompletionReasoningEffort.Disabled) {
+                if (mapping.WireLevel is not null) {
+                    throw new ArgumentException("Anthropic disabled thinking cannot consume a named wire level.");
+                }
+            }
+            else if (hasReasoningMapper && mapping.WireLevel is null) {
+                throw new ArgumentException("Anthropic enabled thinking requires the configured mapper to return a wire level.");
+            }
+        }
+
         CompletionToolChoice toolChoice = outputContract.ToolChoice;
         if (toolChoice.Kind is (
                 CompletionToolChoiceKind.RequiredAny
                 or CompletionToolChoiceKind.RequiredNamed
             )
-            && reasoningEffort is not (
-                CompletionReasoningEffort.ProviderDefault
-                or CompletionReasoningEffort.Disabled
-            )) {
-            throw new NotSupportedException(
-                "Anthropic forced tool choice is incompatible with enabled extended thinking."
+            && (forcedToolChoiceSupported is false
+                || (forcedToolChoiceSupported is null
+                    && reasoning is { EffectiveEffort: not CompletionReasoningEffort.Disabled }))) {
+            throw new CompletionRequestRejectedException(
+                CompletionTermination.Failed(
+                    "anthropic.incompatible-tool-choice",
+                    "Anthropic forced tool choice is incompatible with the selected model and effective thinking configuration."
+                )
             );
         }
 
         if (toolChoice.Kind is CompletionToolChoiceKind.None
             && outputContract.AllowParallelToolCalls is not null) {
-            throw new NotSupportedException(
-                "Anthropic parallel tool-call policy is not meaningful when tool choice is None."
+            throw new CompletionRequestRejectedException(
+                CompletionTermination.Failed(
+                    "anthropic.invalid-parallel-tool-policy",
+                    "Anthropic parallel tool-call policy is not meaningful when tool choice is None."
+                )
             );
         }
+    }
 
+    private static AnthropicToolChoice? BuildToolChoice(
+        CompletionOutputContract outputContract
+    ) {
+        CompletionToolChoice toolChoice = outputContract.ToolChoice;
         if (toolChoice.Kind is CompletionToolChoiceKind.ProviderDefault
             && outputContract.AllowParallelToolCalls is null) {
             return null;
@@ -196,12 +240,10 @@ internal static class AnthropicMessageConverter {
     /// </summary>
     private static void ApplyReasoningConfig(
         AnthropicApiRequest apiRequest,
-        CompletionReasoningEffort reasoningEffort
+        ReasoningEffortMapping? reasoning
     ) {
-        if (!Enum.IsDefined(reasoningEffort)) {
-            throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.");
-        }
-        if (reasoningEffort is CompletionReasoningEffort.ProviderDefault) { return; }
+        if (reasoning is not { } mapping) { return; }
+        CompletionReasoningEffort reasoningEffort = mapping.EffectiveEffort;
         if (reasoningEffort is CompletionReasoningEffort.Disabled) {
             apiRequest.Thinking = new AnthropicThinkingConfig { Type = "disabled" };
             return;
@@ -212,14 +254,14 @@ internal static class AnthropicMessageConverter {
             Display = "summarized"
         };
         apiRequest.OutputConfig = new AnthropicOutputConfig {
-            Effort = reasoningEffort switch {
+            Effort = mapping.WireLevel ?? (reasoningEffort switch {
                 CompletionReasoningEffort.Low => "low",
                 CompletionReasoningEffort.Medium => "medium",
                 CompletionReasoningEffort.High => "high",
                 CompletionReasoningEffort.XHigh => "xhigh",
                 CompletionReasoningEffort.Max => "max",
                 _ => throw new ArgumentOutOfRangeException(nameof(reasoningEffort), reasoningEffort, "Unknown reasoning effort.")
-            }
+            })
         };
     }
 

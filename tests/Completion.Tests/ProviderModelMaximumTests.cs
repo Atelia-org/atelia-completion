@@ -319,7 +319,7 @@ public sealed class ProviderModelMaximumTests {
     [InlineData(501, "unknown-model")]
     [InlineData(404, "claude-opus-5-custom")]
     [InlineData(404, "claude-opus-5-5-custom")]
-    public async Task Anthropic_MissingModelsEndpointUsesCachedFallback(
+    public async Task Anthropic_MissingModelsEndpointFailsAndDoesNotCacheGuess(
         int status, string modelId
     ) {
         var handler = new RecordingHandler((request, _) => Task.FromResult(
@@ -333,22 +333,16 @@ public sealed class ProviderModelMaximumTests {
         var client = new AnthropicClient(null, httpClient);
 
         for (int i = 0; i < 2; i++) {
-            _ = await client.StreamCompletionAsync(
-                Request(modelId), null, CancellationToken.None
+            var failure = await Assert.ThrowsAsync<CompletionFailureException>(() =>
+                client.StreamCompletionAsync(Request(modelId), null, CancellationToken.None)
             );
+            Assert.Equal(status, failure.Failure.HttpStatusCode);
         }
 
         Assert.Equal(
-            [HttpMethod.Get, HttpMethod.Post, HttpMethod.Post],
+            [HttpMethod.Get, HttpMethod.Get],
             handler.Requests.Select(static request => request.Method)
         );
-        foreach (var post in handler.Requests.Where(
-            static request => request.Method == HttpMethod.Post
-        )) {
-            using var body = JsonDocument.Parse(post.Body!);
-            Assert.Equal(32_768, body.RootElement.GetProperty("max_tokens").GetInt32());
-            Assert.Equal(modelId, body.RootElement.GetProperty("model").GetString());
-        }
     }
 
     [Theory]

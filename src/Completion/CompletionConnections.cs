@@ -1,6 +1,8 @@
 using System.Runtime.ExceptionServices;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
+using Atelia.Completion.Gemini;
+using Atelia.Completion.ModelSpecs;
 using Atelia.Completion.OpenAI;
 using Atelia.Completion.Transport;
 
@@ -28,14 +30,13 @@ public sealed record CompletionConnectionCatalogConfig(
 /// ceiling.
 /// </summary>
 /// <remarks>
-/// Per-connection output caps are intentionally unsupported. Provider limit
-/// fields are omitted when omission has maximum/unlimited semantics; when a
-/// numeric field is required to realize those semantics, the adapter may use
-/// only the selected model's provider-reported maximum.
+/// Output caps remain separate from business connection configuration.
+/// Chat/Responses optional limit fields are omitted. Anthropic and Gemini use
+/// the selected model specification's limit, or a capability query when absent.
 /// </remarks>
 /// <param name="Id">Stable connection identifier used for catalog selection and binding.</param>
 /// <param name="Kind">Provider protocol kind, such as <c>openai-chat</c>,
-/// <c>openai-responses</c>, or <c>anthropic</c>.</param>
+/// <c>openai-responses</c>, <c>anthropic</c>, or <c>gemini</c>.</param>
 /// <param name="ModelId">Provider model identifier passed to the completion client.</param>
 /// <param name="CompletionSurfaceId">Surface selector that disambiguates multi-surface
 /// kinds (for example <c>openai-chat/strict</c>); single-surface kinds use the kind itself.</param>
@@ -528,12 +529,13 @@ public static class CompletionConnectionConfigLoader {
         if (!string.IsNullOrWhiteSpace(explicitSurfaceId)) { return explicitSurfaceId; }
 
         // openai-chat defaults to the strict dialect, matching DefaultCompletionClientFactory's
-        // fallback; anthropic/openai-responses have a single surface. Unknown kinds fall back to
+        // fallback; anthropic/openai-responses/gemini have a single surface. Unknown kinds fall back to
         // the kind itself so the value stays non-blank for logging/storage.
         return kind.Trim().ToLowerInvariant() switch {
             "openai-chat" => "openai-chat/strict",
             "openai-responses" => "openai-responses",
             "anthropic" => "anthropic",
+            "gemini" => "gemini",
             _ => kind.Trim()
         };
     }
@@ -544,23 +546,42 @@ public interface ICompletionClientFactory {
 }
 
 public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
+    private readonly Func<CompletionConnectionConfig, CompletionModelSpecCatalog?>? _modelSpecsSelector;
+
+    /// <param name="modelSpecsSelector">
+    /// Construction-time catalog selection for Chat, Anthropic and Gemini clients.
+    /// Null selects the client/dialect default; Empty disables builtin knowledge.
+    /// Other protocol clients are unchanged and do not invoke this selector.
+    /// </param>
+    public DefaultCompletionClientFactory(
+        Func<CompletionConnectionConfig, CompletionModelSpecCatalog?>? modelSpecsSelector = null
+    ) {
+        _modelSpecsSelector = modelSpecsSelector;
+    }
+
     public ICompletionClient Create(CompletionConnectionConfig connection) {
         ArgumentNullException.ThrowIfNull(connection);
         ValidateReasoningConfiguration(connection);
         CompletionConnectionConfigValidation
             .ValidateAnthropicPromptCacheTtl(connection);
 
+        string kind = connection.Kind.Trim().ToLowerInvariant();
+        CompletionModelSpecCatalog? modelSpecs = kind is "openai-chat" or "anthropic" or "gemini"
+            ? _modelSpecsSelector?.Invoke(connection)
+            : null;
+
         var httpClient = CompletionHttpTransportFactory.CreateLiveClient(
             new Uri(connection.BaseAddress, UriKind.Absolute)
         );
         try {
-            ICompletionClient client = connection.Kind.Trim().ToLowerInvariant() switch {
+            ICompletionClient client = kind switch {
                 "openai-chat" => new OpenAIChatClient(
                     apiKey: connection.ApiKey,
                     httpClient: httpClient,
                     dialect: ResolveOpenAiChatDialect(connection.CompletionSurfaceId),
                     options: new OpenAIChatClientOptions {
-                        ReasoningEffort = connection.ReasoningEffort
+                        ReasoningEffort = connection.ReasoningEffort,
+                        ModelSpecs = modelSpecs
                     }
                 ),
                 "openai-responses" => new OpenAIResponsesClient(
@@ -574,7 +595,16 @@ public sealed class DefaultCompletionClientFactory : ICompletionClientFactory {
                     apiKey: connection.ApiKey,
                     httpClient: httpClient,
                     reasoningEffort: connection.ReasoningEffort,
-                    promptCacheTtl: connection.AnthropicPromptCacheTtl
+                    promptCacheTtl: connection.AnthropicPromptCacheTtl,
+                    modelSpecs: modelSpecs
+                ),
+                "gemini" => new GeminiClient(
+                    apiKey: connection.ApiKey,
+                    httpClient: httpClient,
+                    options: new GeminiClientOptions {
+                        ReasoningEffort = connection.ReasoningEffort,
+                        ModelSpecs = modelSpecs
+                    }
                 ),
                 _ => throw new InvalidOperationException($"Unsupported completion connection kind '{connection.Kind}'.")
             };

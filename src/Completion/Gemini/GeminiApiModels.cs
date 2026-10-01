@@ -23,6 +23,14 @@ internal sealed class GeminiGenerateContentRequest {
 internal sealed class GeminiGenerationConfig {
     [JsonPropertyName("maxOutputTokens")]
     public required int MaxOutputTokens { get; set; }
+
+    [JsonPropertyName("thinkingConfig")]
+    public GeminiThinkingConfig? ThinkingConfig { get; set; }
+}
+
+internal sealed class GeminiThinkingConfig {
+    [JsonPropertyName("thinkingLevel")]
+    public required string ThinkingLevel { get; set; }
 }
 
 internal sealed class GeminiContent {

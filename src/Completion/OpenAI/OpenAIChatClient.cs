@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.ModelSpecs;
 using Atelia.Completion.Transport;
 using Atelia.Diagnostics;
 
@@ -16,6 +17,7 @@ public sealed class OpenAIChatClient : ICompletionClient {
     private readonly string? _apiKey;
     private readonly OpenAIChatDialect _dialect;
     private readonly OpenAIChatClientOptions _options;
+    private readonly CompletionModelSpecCatalog _modelSpecs;
 
     public string Name => _httpClient.BaseAddress?.Host ?? "openai";
     public string ApiSpecId => "openai-chat-v1";
@@ -42,8 +44,14 @@ public sealed class OpenAIChatClient : ICompletionClient {
             );
         }
         _options = new OpenAIChatClientOptions {
-            ReasoningEffort = options.ReasoningEffort
+            ReasoningEffort = options.ReasoningEffort,
+            ModelSpecs = options.ModelSpecs
         };
+        _modelSpecs = options.ModelSpecs ?? (_dialect.ReasoningControlMode switch {
+            OpenAIChatReasoningControlMode.OpenAIReasoningEffort => BuiltinModelSpecs.StandardChat,
+            OpenAIChatReasoningControlMode.DeepSeekV4ReasoningEffort => BuiltinModelSpecs.DeepSeekChat,
+            _ => CompletionModelSpecCatalog.Empty
+        });
 
         DebugUtil.Debug(
             CompletionDebugCategories.Provider,
@@ -74,11 +82,27 @@ public sealed class OpenAIChatClient : ICompletionClient {
         );
 
         var invocation = CompletionDescriptor.From(this, request);
+        CompletionModelSpec? modelSpec = _modelSpecs.Lookup(request.ModelId);
+        ReasoningEffortMapping? reasoning = ModelSpecReasoning.Resolve(
+            _options.ReasoningEffort,
+            modelSpec
+        );
         var apiRequest = OpenAIChatMessageConverter.ConvertToApiRequest(
             request,
             _dialect,
             invocation
         );
+        ApplyReasoningControl(apiRequest, reasoning, modelSpec?.ReasoningMapper is not null);
+        if (modelSpec?.ForcedToolChoiceSupported is false
+            && request.PromptPrefix.OutputContract.ToolChoice.Kind
+                is CompletionToolChoiceKind.RequiredAny or CompletionToolChoiceKind.RequiredNamed) {
+            throw new CompletionRequestRejectedException(
+                CompletionTermination.Failed(
+                    "model_forced_tool_choice_unsupported",
+                    "The configured model specification does not support forced tool choice."
+                )
+            );
+        }
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
         await using var stream = await CompletionHttpRequestUtility.OpenStreamAsync(response.Content, cancellationToken);
@@ -183,7 +207,6 @@ public sealed class OpenAIChatClient : ICompletionClient {
     }
 
     private HttpRequestMessage CreateHttpRequest(OpenAIChatApiRequest apiRequest) {
-        ApplyReasoningControl(apiRequest);
         var json = JsonSerializer.Serialize(apiRequest, SerializerOptions);
         DebugUtil.Debug(
             CompletionDebugCategories.Provider,
@@ -202,33 +225,47 @@ public sealed class OpenAIChatClient : ICompletionClient {
         return request;
     }
 
-    private void ApplyReasoningControl(OpenAIChatApiRequest apiRequest) {
-        CompletionReasoningEffort effort = _options.ReasoningEffort;
-        if (effort is CompletionReasoningEffort.ProviderDefault) { return; }
+    private void ApplyReasoningControl(
+        OpenAIChatApiRequest apiRequest,
+        ReasoningEffortMapping? reasoning,
+        bool hasMapper
+    ) {
+        if (reasoning is not { } mapping) { return; }
+        CompletionReasoningEffort effort = mapping.EffectiveEffort;
 
         switch (_dialect.ReasoningControlMode) {
             case OpenAIChatReasoningControlMode.OpenAIReasoningEffort:
-                apiRequest.ReasoningEffort = MapOpenAIReasoningEffort(effort);
+                apiRequest.ReasoningEffort = mapping.WireLevel
+                    ?? (hasMapper && effort is not CompletionReasoningEffort.Disabled
+                        ? throw UnconsumableMapping()
+                        : MapOpenAIReasoningEffort(effort));
                 return;
 
             case OpenAIChatReasoningControlMode.DeepSeekV4ReasoningEffort:
+                if (effort is CompletionReasoningEffort.Disabled && mapping.WireLevel is not null) {
+                    throw UnconsumableMapping();
+                }
                 apiRequest.Thinking = new OpenAIChatThinkingConfig {
                     Type = effort is CompletionReasoningEffort.Disabled
                         ? "disabled"
                         : "enabled"
                 };
                 if (effort is not CompletionReasoningEffort.Disabled) {
-                    apiRequest.ReasoningEffort = effort switch {
-                        CompletionReasoningEffort.Max => "max",
-                        CompletionReasoningEffort.Low or
-                        CompletionReasoningEffort.Medium or
-                        CompletionReasoningEffort.High => "high",
-                        _ => throw UnknownReasoningEffort(effort)
-                    };
+                    apiRequest.ReasoningEffort = mapping.WireLevel
+                        ?? (hasMapper ? throw UnconsumableMapping() : effort switch {
+                            CompletionReasoningEffort.Max => "max",
+                            CompletionReasoningEffort.Low or
+                            CompletionReasoningEffort.Medium or
+                            CompletionReasoningEffort.High => "high",
+                            _ => throw UnknownReasoningEffort(effort)
+                        });
                 }
                 return;
 
             case OpenAIChatReasoningControlMode.QwenThinkingSwitch:
+                if (mapping.WireLevel is not null) {
+                    throw UnconsumableMapping();
+                }
                 apiRequest.ChatTemplateKwargs =
                     new OpenAIChatTemplateKwargs {
                         EnableThinking = effort
@@ -243,6 +280,11 @@ public sealed class OpenAIChatClient : ICompletionClient {
                 );
         }
     }
+
+    private static ArgumentException UnconsumableMapping() => new(
+        "The configured reasoning mapper result cannot be represented by this Chat dialect.",
+        nameof(OpenAIChatClientOptions.ModelSpecs)
+    );
 
     private static string MapOpenAIReasoningEffort(CompletionReasoningEffort effort)
         => effort switch {

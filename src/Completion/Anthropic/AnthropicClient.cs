@@ -1,9 +1,9 @@
-using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.ModelSpecs;
 using Atelia.Completion.Transport;
 
 namespace Atelia.Completion.Anthropic;
@@ -24,6 +24,7 @@ public sealed class AnthropicClient : ICompletionClient {
     private readonly string? _apiKey;
     private readonly string _apiVersion;
     private readonly ProviderModelMaximumCache _modelMaximums;
+    private readonly CompletionModelSpecCatalog _modelSpecs;
     private readonly bool _enablePromptCaching;
     private readonly CompletionReasoningEffort _reasoningEffort;
     private readonly AnthropicPromptCacheTtl _promptCacheTtl;
@@ -37,7 +38,8 @@ public sealed class AnthropicClient : ICompletionClient {
         string? apiVersion = null,
         bool enablePromptCaching = true,
         CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
-        AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault
+        AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault,
+        CompletionModelSpecCatalog? modelSpecs = null
     ) {
         Atelia.Completion.ReasoningBlockCodecs.EnsureRegistered();
 
@@ -49,6 +51,7 @@ public sealed class AnthropicClient : ICompletionClient {
         _modelMaximums = new ProviderModelMaximumCache(
             FetchModelMaximumAsync
         );
+        _modelSpecs = modelSpecs ?? BuiltinModelSpecs.AnthropicMessages;
         _enablePromptCaching = enablePromptCaching;
         _reasoningEffort = Enum.IsDefined(reasoningEffort)
             ? reasoningEffort
@@ -137,17 +140,28 @@ public sealed class AnthropicClient : ICompletionClient {
         );
 
         var invocation = CompletionDescriptor.From(this, request);
-        int modelMaximumTokens = await _modelMaximums.GetAsync(
-            request.ModelId,
-            cancellationToken
-        ).ConfigureAwait(false);
-        var apiRequest = AnthropicMessageConverter.ConvertToApiRequest(
+        CompletionModelSpec? spec = _modelSpecs.Lookup(request.ModelId);
+        ReasoningEffortMapping? reasoning = ModelSpecReasoning.Resolve(_reasoningEffort, spec);
+        AnthropicMessageConverter.ValidateRequestOptions(
+            request.PromptPrefix.OutputContract,
+            reasoning,
+            hasReasoningMapper: spec?.ReasoningMapper is not null,
+            spec?.ForcedToolChoiceSupported
+        );
+        int modelMaximumTokens = spec?.OutputTokenLimit
+            ?? await _modelMaximums.GetAsync(
+                request.ModelId,
+                cancellationToken
+            ).ConfigureAwait(false);
+        var apiRequest = AnthropicMessageConverter.ConvertWithMappedReasoning(
             request,
             modelMaximumTokens,
             enablePromptCaching,
-            _reasoningEffort,
+            reasoning,
             promptCacheTtl,
-            invocation
+            invocation,
+            hasReasoningMapper: spec?.ReasoningMapper is not null,
+            spec?.ForcedToolChoiceSupported
         );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 
@@ -361,29 +375,11 @@ public sealed class AnthropicClient : ICompletionClient {
         string modelId,
         CancellationToken cancellationToken
     ) {
-        if (GetKnownMaximumTokens(modelId) is int knownMaximum) {
-            return knownMaximum;
-        }
-
         using HttpRequestMessage request = CreateModelInfoRequest(modelId);
         using HttpResponseMessage response = await CompletionHttpRequestUtility.SendAsync(
             _httpClient, request,
             cancellationToken
         ).ConfigureAwait(false);
-        // Some Messages-compatible servers do not implement the Models API.
-        // Authentication, transient transport/server errors and malformed successful
-        // responses must still fail instead of silently becoming cached defaults.
-        if (response.StatusCode is HttpStatusCode.NotFound
-            or HttpStatusCode.MethodNotAllowed
-            or HttpStatusCode.NotImplemented) {
-            cancellationToken.ThrowIfCancellationRequested();
-            const int fallback = 32_768;
-            DebugUtil.Warning(
-                CompletionDebugCategories.Provider,
-                $"[Anthropic] Model capability endpoint unavailable (HTTP {(int)response.StatusCode}); using fallback max_tokens={fallback}."
-            );
-            return fallback;
-        }
         using JsonDocument document = await ProviderModelCapabilityResponse
             .ReadJsonObjectAsync(
                 response,
@@ -396,17 +392,6 @@ public sealed class AnthropicClient : ICompletionClient {
             "Anthropic"
         );
     }
-
-    // Standard Messages output limits (no Batch/beta extension), checked 2026-09-24:
-    // https://platform.claude.com/docs/en/models/overview
-    // https://platform.claude.com/docs/en/models/opus-5-5/overview
-    // https://platform.claude.com/docs/en/build-with-claude/streaming (max_tokens=128000)
-    // Exact IDs only: aliases and future models still query the configured endpoint.
-    private static int? GetKnownMaximumTokens(string modelId) => modelId switch {
-        "claude-opus-4-6" or "claude-opus-4-7" or "claude-opus-4-8"
-            or "claude-opus-5" or "claude-opus-5-5" => 128_000,
-        _ => null
-    };
 
     private HttpRequestMessage CreateModelInfoRequest(string modelId) {
         var request = new HttpRequestMessage(

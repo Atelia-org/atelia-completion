@@ -17,7 +17,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Atelia.Completion" Version="0.1.0-preview.3" />
+    <PackageReference Include="Atelia.Completion" Version="0.1.0-preview.4" />
   </ItemGroup>
 </Project>
 ```
@@ -115,9 +115,9 @@ Codex 文件凭据支持 Windows/Linux。客户端借用 access-token snapshot�
 
 请求合同没有调用者自设 output-token cap；需要显式数值的 provider 使用模型能力规则。`CompletionInvocationOptions.PromptCacheReuseHint` 是 best-effort 的复用提示，不是禁止存储或隐私保证，也不属于请求逻辑身份。
 
-## 5. 分离业务意图与模型规格（当前源码）
+## 5. 分离业务意图与模型规格
 
-以下 API 属于当前源码新增内容，不表示上文固定的 `0.1.0-preview.3` 已包含它们。已接入 OpenAI Chat（含 DeepSeek wrapper）、Anthropic Messages 和 Gemini Generate Content；Responses、Codex 保持原行为。
+这些模型规格 API 自 `0.1.0-preview.4` 起随包发布。已接入 OpenAI Chat（含 DeepSeek wrapper）、Anthropic Messages 和 Gemini Generate Content；Responses、Codex 保持原行为。
 
 业务配置只选择 effort。目录在客户端构造时选定，描述此服务实际采用的模型知识：
 

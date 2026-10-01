@@ -396,7 +396,7 @@ Responses/Codex 的规格接入仍不作为首版前置工程。Gemini 已在后
 - [Chat client](../../src/Completion/OpenAI/OpenAIChatClient.cs)：`OpenAIChatClientOptions.ModelSpecs`；默认目录按 dialect 选择，DeepSeek wrapper 已透传同一 options。
 - [Anthropic client](../../src/Completion/Anthropic/AnthropicClient.cs)：构造参数 `modelSpecs`；先解析映射和校验，选中本地限值直接 POST，否则沿既有 maximum cache 查询。没有新增 Anthropic options 类或兼容层。
 - [DefaultCompletionClientFactory](../../src/Completion/CompletionConnections.cs)：构造期 `modelSpecsSelector` 函数；只在创建 Chat/Anthropic/Gemini 时调用一次，null 使用默认目录。Responses 不调用它。
-- [快速上手](quick-start.md#5-分离业务意图与模型规格当前源码) 增补当前源码用法；三份调查同步校准。没有自动登记额外模型别名或推定旧 Opus 的工具支持；显式 true 的 adapter 路径由 fixture 验证。
+- [快速上手](quick-start.md#5-分离业务意图与模型规格) 增补当前源码用法；三份调查同步校准。没有自动登记额外模型别名或推定旧 Opus 的工具支持；显式 true 的 adapter 路径由 fixture 验证。
 
 2026-10-01 于 Windows、根 `global.json` 的 .NET SDK 10.0.201 执行：
 

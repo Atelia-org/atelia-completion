@@ -8,6 +8,8 @@ using System.Runtime.ExceptionServices;
 using System.Runtime.Versioning;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Anthropic;
+using Atelia.Completion.Gemini;
+using Atelia.Completion.ModelSpecs;
 using Atelia.Completion.OpenAI;
 using Microsoft.Win32.SafeHandles;
 using Xunit;
@@ -1033,12 +1035,18 @@ public sealed class CompletionHttpTransportTests {
         return parameters.Any(parameter => parameter.ParameterType == typeof(HttpClient))
             && parameters.All(
                 parameter => parameter.ParameterType == typeof(HttpClient)
+                    || parameter.ParameterType == typeof(GeminiClientOptions)
                     || (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase))
             );
     }
 
     private static object? ResolveGeminiConstructorArgument(ParameterInfo parameter, HttpClient httpClient) {
         if (parameter.ParameterType == typeof(HttpClient)) { return httpClient; }
+
+        // Keep recording the capability GET alongside generation for this replay fixture.
+        if (parameter.ParameterType == typeof(GeminiClientOptions)) {
+            return new GeminiClientOptions { ModelSpecs = CompletionModelSpecCatalog.Empty };
+        }
 
         if (parameter.ParameterType == typeof(string) && string.Equals(parameter.Name, "apiKey", StringComparison.OrdinalIgnoreCase)) { return null; }
 

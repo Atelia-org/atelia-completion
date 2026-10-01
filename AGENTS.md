@@ -15,7 +15,9 @@
 
 ## 验证与交付
 
-使用根 `global.json` 的 SDK；构建、测试、Pack 命令见 README。同一可写构建图的 dotnet 操作串行运行。常规离线测试按 [.github/workflows/ci.yml](.github/workflows/ci.yml) 关闭五个 opt-in 开关和 `OPENROUTER_API_KEY`，并排除 `Category=LiveE2E` 与 `Category=LocalE2E`；标注平台限定测试和未执行项，不把提前返回的 live 测试当作在线成功。
+公开 preview 发布或上传后只读验收恢复，使用仓库 skill [publish-nuget-preview](.agents/skills/publish-nuget-preview/SKILL.md)；通用命令见其 [runbook](.agents/skills/publish-nuget-preview/references/runbook.md)，本仓参数见 [eng/README](eng/README.md)。它复用现有脚本和 GitHub Actions NuGet policy，不授予超出用户指令的发布权限。
+
+使用根 `global.json` 的 SDK；构建、测试、Pack 命令见 README。同一可写构建图的 dotnet 操作串行运行。常规离线测试按 [.github/workflows/ci.yml](.github/workflows/ci.yml) 关闭当前全部 opt-in 开关和 `OPENROUTER_API_KEY`，并排除 `Category=LiveE2E` 与 `Category=LocalE2E`；标注平台限定测试和未执行项，不把提前返回的 live 测试当作在线成功。
 
 改代码后跑受影响测试；改包元数据或 README 后核验实际 nupkg 与独立 `Test-Package.ps1` 消费者。新候选内容使用唯一版本，记录来源 commit 和实际包哈希；SDK 相同不证明跨平台字节相同。不要覆盖已发布版本，也不要清全局缓存来隐藏来源错误。
 

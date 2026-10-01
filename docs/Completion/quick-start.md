@@ -17,7 +17,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Atelia.Completion" Version="0.1.0-preview.4" />
+    <PackageReference Include="Atelia.Completion" Version="0.1.0-preview.5" />
   </ItemGroup>
 </Project>
 ```

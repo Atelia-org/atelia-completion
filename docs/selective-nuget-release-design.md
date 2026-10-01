@@ -37,8 +37,10 @@ $version = '0.1.1-dev.2026092802'
 
 ## 公开发布
 
+操作命令和恢复见仓库 skill 的 [发布指引](../.agents/skills/publish-nuget-preview/references/runbook.md)，本仓参数见 [eng/README](../eng/README.md)；本文保留按包依赖与候选合同。
+
 手动 workflow 从包专属 tag 触发，输入项目、版本及上层包的两个直接依赖版本。workflow 构建并运行离线测试，再从同一份候选 feed 做隔离包消费验收，只推送 manifest 中唯一的新 nupkg。上传前冻结候选包哈希及 manifest 到 Actions artifact。`push` 成功后等待 nuget.org 可下载并重新从公开源核对签名包、来源、包资产与消费闭包。公开包经过 nuget.org 仓库签名，整包哈希通常与上传前候选不同；两阶段分别记录。
 
 如果公开回读超时，保留已推送记录和 artifact，稍后单独重跑只读 `eng/Verify-Published.ps1`。不要重跑含 push 的 workflow，也不要以同一 ID/版本重新打包。下游仓库若只用一个 Completion 版本属性，还需要按包版本迁移后才能消费混合版本；发布方的完成不代表下游迁移完成。
 
-`0.1.0-preview.4` 是最近一次四包同版公开组合；面向使用者的版本示例与固定 tag 链接已随之更新。
+`0.1.0-preview.5` 是本次准备发布的四包同版组合；面向使用者的版本示例与固定 tag 链接已随之更新。

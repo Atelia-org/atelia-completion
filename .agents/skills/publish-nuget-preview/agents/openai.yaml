@@ -1,0 +1,3 @@
+interface:
+  display_name: "NuGet preview 发布"
+  short_description: "使用目标仓现有 GitHub Actions 与 NuGet policy 发布并公开回读验证预览包"

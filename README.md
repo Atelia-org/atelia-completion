@@ -40,7 +40,7 @@ pwsh -File eng/Test-Package.ps1 -Version $version -FeedDirectory $feed -WorkDire
 
 离线测试前按 [.github/workflows/ci.yml](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.5/.github/workflows/ci.yml) 关闭显式 live opt-in 开关和 `OPENROUTER_API_KEY`；默认测试不应读取真实凭据。Pack 要求已提交的干净源码、正确 origin 和全新或空输出目录。不同内容用不同版本，多个验证者共享一次 Pack 的候选 feed，不重建同版不同内容。`Test-Package.ps1` 使用独立 public API 消费者；其结果与源码测试分别记录。普通消费仓使用明确版本 PackageReference，直接从 nuget.org restore，不要求先 clone 本仓。
 
-只为一个项目生成新版本时，按 [按包发布落地方案](docs/selective-nuget-release-design.md) 传入 `-Project`；上层包再显式给出两个已公开的直接依赖版本。新包以自己的版本和 tag 发布，其他三个包保持原有版本。`0.1.0-preview.5` 是本次准备发布的四包同版组合。
+只为一个项目生成新版本时，按 [按包发布落地方案](docs/selective-nuget-release-design.md) 传入 `-Project`；上层包再显式给出两个已公开的直接依赖版本。新包以自己的版本和 tag 发布，其他三个包保持原有版本。`0.1.0-preview.5` 是最近一次四包同版公开组合。
 
 需要同时修改消费仓与本库时，按消费仓自己的依赖指南显式配置源码引用和本仓绝对路径，切换后重新 restore。源码联调只用于 build/test；需要下游 pack 时先制作唯一版本开发包，不从兄弟目录自动选择依赖身份。
 

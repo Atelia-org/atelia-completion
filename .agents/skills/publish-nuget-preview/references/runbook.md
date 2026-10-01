@@ -156,6 +156,7 @@ if ($project -eq 'All') {
 
 完成条件是身份正确且公开回读和独立 PackageReference 消费成功，不只是 push。
 公开处理有延迟，按目标回读脚本的窗口继续等待。
+已确认 push 成功但 flat-container 索引暂未列出新版本时，继续只读回读等待，不重新 dispatch。
 
 ```powershell
 $run = (& $gh run view $runId -R $repo --json attempt,headSha,status,conclusion | ConvertFrom-Json)

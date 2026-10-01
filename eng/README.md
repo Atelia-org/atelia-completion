@@ -87,3 +87,9 @@ $manifestName = if ($project -eq 'All') {
 2026-10-01 四包 `0.1.0-preview.4` 已通过
 [发布 run 36826029935](https://github.com/Atelia-org/atelia-completion/actions/runs/36826029935)，
 来源 `ecab67c50c4a1b7082d9cfd9a5315067dac01e99`。这是历史参考，不是下次的输入。
+
+同日使用上述 skill，由独立 Luna 子代理完成四包 `0.1.0-preview.5` 的真实发布：
+[发布 run 36830080745](https://github.com/Atelia-org/atelia-completion/actions/runs/36830080745)，
+来源 `fc8bcc22d1082cbc20dc90575f14f4a30cbc5740`。主线程另从归档候选在 Windows 回读验收，
+与 Actions 的 Linux 公开包哈希一致。该次公开处理约需六分钟；push 成功后索引暂未列出
+新版本不代表上传失败，应按 15 分钟回读窗口等待，不重复上传。

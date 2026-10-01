@@ -3,10 +3,10 @@
 `Atelia.Completion` 面向 `net10.0`，依赖 Abstractions 与 Diagnostics。本包使用 MIT 许可证。
 
 ```powershell
-dotnet add package Atelia.Completion --version 0.1.0-preview.5
+dotnet add package Atelia.Completion --version 0.1.0-preview.6
 ```
 
-完整离线 public client 示例与 HttpClient 所有权见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.5/docs/Completion/quick-start.md)。Release 包中 Debug 级别调用已被 `[Conditional("DEBUG")]` 编译裁掉，无法由环境变量恢复；需要库内详细调试时使用源码 Debug 联调。
+完整离线 public client 示例与 HttpClient 所有权见 [对应版本快速上手](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.6/docs/Completion/quick-start.md)。Release 包中 Debug 级别调用已被 `[Conditional("DEBUG")]` 编译裁掉，无法由环境变量恢复；需要库内详细调试时使用源码 Debug 联调。
 
 `Completion`只判断能够从HTTP/SSE链路和provider协议中直接观察到的事实，不猜测LLM是否仍在工作。
 一次streaming调用没有elapsed-operation timeout，也没有stream-idle timeout；不可见reasoning、排队或长时间
@@ -129,9 +129,9 @@ if (result.Termination.Kind == CompletionTerminationKind.Completed) {
 profiler 而补零或推算缺失维度。以上语义在 Linux / Windows 相同。
 
 Galatea 接入、connection shape、安全 preflight、环境变量和 live smoke 见
-[`docs/Completion/openai-codex-subscription-client-design.md`](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.5/docs/Completion/openai-codex-subscription-client-design.md)。
+[`docs/Completion/openai-codex-subscription-client-design.md`](https://github.com/Atelia-org/atelia-completion/blob/v0.1.0-preview.6/docs/Completion/openai-codex-subscription-client-design.md)。
 
-## 原生文本工具（尚未发布）
+## 原生文本工具
 
 Responses 和 Codex Responses 支持 `ToolDefinition.FromText`：无约束文本或 Lark/regex
 生成语法，投影为 `custom` 工具。流中 `response.custom_tool_call_input.delta` / `.done`
@@ -140,7 +140,7 @@ Responses 和 Codex Responses 支持 `ToolDefinition.FromText`：无约束文本
 与当前工具注册表无关。原有 Completed/Incomplete/Failed、取消和 terminal 前断流合同不变。
 其他 provider adapter 在任何 HTTP（含模型元数据查询）前拒绝文本定义或文本历史调用，reason
 为 `tool-input.unsupported-text`。这项能力已覆盖离线 fixture，未作为实际模型在线验收声明。
-使用入口见 [TextToolWrapper](../Completion.Tools/README.md#11-原生文本工具尚未发布)。
+使用入口见 [TextToolWrapper](../Completion.Tools/README.md#11-原生文本工具)。
 
 `LoggingCompletionClient` 的 call-log 格式升级为 v11：工具声明记录 `inputKind` 和可选的
 `textFormat`，文本工具的 `inputSchema` 为空；文本历史使用 `text-tool-call` block kind。

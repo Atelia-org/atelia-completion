@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-01",
+  "protocol": "google-gemini-generate-content-v1beta",
+  "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/{id}:streamGenerateContent?alt=sse",
+  "client": "Atelia.Completion.Gemini.GeminiClient",
+  "source": "working tree based on 72cc91a",
+  "testSource": "tests/Completion.Tests/Gemini/GeminiModelSpecsLiveTests.cs",
+  "optIn": "ATELIA_RUN_GEMINI_MODEL_SPECS_LIVE=1",
+  "testsPassed": 2,
+  "modelGets": 0,
+  "generationPosts": 3,
+  "retries": 0,
+  "observations": [
+    {
+      "stage": "lite-text",
+      "modelId": "gemini-3.5-flash-lite",
+      "requestedEffort": "Disabled",
+      "thinkingLevel": "low",
+      "maxOutputTokens": 65536,
+      "httpStatus": 200,
+      "termination": "Completed",
+      "libraryOutputTokens": 3,
+      "productMatched": true
+    },
+    {
+      "stage": "flash-tool",
+      "modelId": "gemini-3.8-flash",
+      "requestedEffort": "Disabled",
+      "thinkingLevel": "low",
+      "maxOutputTokens": 65536,
+      "toolMode": "ANY",
+      "allowedFunctionNames": ["report_product"],
+      "httpStatus": 200,
+      "termination": "Completed",
+      "libraryOutputTokens": 16,
+      "singleToolCall": true,
+      "productMatched": true
+    },
+    {
+      "stage": "flash-continuation",
+      "modelId": "gemini-3.8-flash",
+      "requestedEffort": "Disabled",
+      "thinkingLevel": "low",
+      "maxOutputTokens": 65536,
+      "toolMode": "NONE",
+      "httpStatus": 200,
+      "termination": "Completed",
+      "libraryOutputTokens": 4,
+      "thoughtSignaturesPreserved": true,
+      "functionResponseIdAndNameMatched": true,
+      "finalUserTextPresent": true,
+      "toolResultMarkerMatched": true
+    }
+  ],
+  "limitations": [
+    "Normalized observations, not raw HTTP recording.",
+    "No credentials, headers, call IDs, thought signatures or raw responses retained.",
+    "Other models, full effort matrix and invalid-turn rejection were not tested online.",
+    "No minimal, numeric budget, Vertex or Interactions validation."
+  ]
+}

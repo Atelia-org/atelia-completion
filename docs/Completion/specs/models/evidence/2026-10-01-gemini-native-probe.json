@@ -1,0 +1,141 @@
+[
+  {
+    "model": "gemini-3.1-flash-lite",
+    "mode": "model-resource",
+    "surface": "v1beta/models GET",
+    "httpStatus": 200,
+    "elapsedMs": 1130,
+    "resourceName": "models/gemini-3.1-flash-lite",
+    "outputTokenLimit": 65536,
+    "inputTokenLimit": 1048576,
+    "thinking": true,
+    "supportedGenerationMethods": [
+      "generateContent",
+      "countTokens",
+      "createCachedContent",
+      "batchGenerateContent"
+    ]
+  },
+  {
+    "model": "gemini-3.5-flash-lite",
+    "mode": "model-resource",
+    "surface": "v1beta/models GET",
+    "httpStatus": 200,
+    "elapsedMs": 233,
+    "resourceName": "models/gemini-3.5-flash-lite",
+    "outputTokenLimit": 65536,
+    "inputTokenLimit": 1048576,
+    "thinking": true,
+    "supportedGenerationMethods": [
+      "generateContent",
+      "countTokens",
+      "createCachedContent",
+      "batchGenerateContent"
+    ]
+  },
+  {
+    "model": "gemini-3.8-flash",
+    "mode": "model-resource",
+    "surface": "v1beta/models GET",
+    "httpStatus": 200,
+    "elapsedMs": 233,
+    "resourceName": "models/gemini-3.8-flash",
+    "outputTokenLimit": 65536,
+    "inputTokenLimit": 1048576,
+    "thinking": true,
+    "supportedGenerationMethods": [
+      "generateContent",
+      "countTokens",
+      "createCachedContent",
+      "batchGenerateContent"
+    ]
+  },
+  {
+    "model": "gemini-3.8-flash",
+    "mode": "low",
+    "surface": "v1beta/models:streamGenerateContent?alt=sse",
+    "httpStatus": 200,
+    "elapsedMs": 1180,
+    "maxOutputTokens": 65536,
+    "thinkingLevel": "low",
+    "finishReasons": [
+      "STOP"
+    ],
+    "textLength": 3,
+    "usage": {
+      "promptTokenCount": 17,
+      "candidatesTokenCount": 3,
+      "totalTokenCount": 88,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 17
+        }
+      ],
+      "thoughtsTokenCount": 68,
+      "serviceTier": "standard"
+    },
+    "sseFrames": 3
+  },
+  {
+    "model": "gemini-3.8-flash",
+    "mode": "minimal",
+    "surface": "v1beta/models:streamGenerateContent?alt=sse",
+    "httpStatus": 400,
+    "elapsedMs": 264,
+    "providerErrorCode": 400,
+    "providerErrorStatus": "INVALID_ARGUMENT"
+  },
+  {
+    "model": "gemini-3.5-flash-lite",
+    "mode": "low",
+    "surface": "v1beta/models:streamGenerateContent?alt=sse",
+    "httpStatus": 200,
+    "elapsedMs": 636,
+    "maxOutputTokens": 65536,
+    "thinkingLevel": "low",
+    "finishReasons": [
+      "STOP"
+    ],
+    "textLength": 3,
+    "usage": {
+      "promptTokenCount": 17,
+      "candidatesTokenCount": 3,
+      "totalTokenCount": 20,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 17
+        }
+      ],
+      "serviceTier": "standard"
+    },
+    "sseFrames": 3
+  },
+  {
+    "model": "gemini-3.5-flash-lite",
+    "mode": "omitted",
+    "surface": "v1beta/models:streamGenerateContent?alt=sse",
+    "httpStatus": 200,
+    "elapsedMs": 637,
+    "maxOutputTokens": 65536,
+    "thinkingLevel": null,
+    "finishReasons": [
+      "STOP"
+    ],
+    "textLength": 3,
+    "usage": {
+      "promptTokenCount": 17,
+      "candidatesTokenCount": 3,
+      "totalTokenCount": 20,
+      "promptTokensDetails": [
+        {
+          "modality": "TEXT",
+          "tokenCount": 17
+        }
+      ],
+      "serviceTier": "standard"
+    },
+    "sseFrames": 2
+  }
+]

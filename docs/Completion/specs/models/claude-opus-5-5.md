@@ -10,7 +10,7 @@
 
 - **`xhigh` 受支持**，官方定位为"长程工作（long-horizon work）"：超过 30 分钟的长时 agentic/编码任务、百万级 token 预算。这正是本仓需要新增 `XHigh` 挡位的直接依据。
 - **thinking 恒开且无法关闭**：adaptive thinking 始终启用，`thinking: {"type": "disabled"}` 在所有 effort 挡位均返回 HTTP 400；`enabled`/`budget_tokens` 与 `between_tools` 同样返回 400。**effort 是该模型唯一的思考深度控制**，不存在 budget 数值控制。
-- 本仓枚举中 `Low/Medium/High/XHigh(新增)/Max` 可与该模型**直接一一映射**；`Disabled` 无 wire 等价物（发送即 400），适配层需拒绝或另行映射（属主线程后续决策）。
+- 本仓枚举中 `Low/Medium/High/XHigh/Max` 可与该模型直接一一映射；`Disabled` 无 wire 等价物。现已按 [model-specs](../../model-specs-design.md) 的库内政策归一为 Low；此意图不能作为严格关闭保证。
 - `ProviderDefault` 映射为省略 effort 参数（服务端默认 `medium`）；显式传 `medium` 与省略行为完全一致。
 
 ## API surface 与参数
@@ -47,13 +47,19 @@ Wire 字段名：请求级为顶层 `output_config.effort`；不支持在 `think
 1. **effort 是行为信号而非硬 token 预算**：低挡位下模型在足够困难的问题上仍会思考，只是更少；不要把它当作严格预算上限依赖。
 2. **`max_tokens` 是总输出硬上限**：thinking 加正文一起计入；高挡位官方建议设大 `max_tokens`（Opus 5.5 上限 128K），否则思考可能被截断。
 3. **采样参数被禁**：`temperature`、`top_p`、`top_k` 任一非默认值即返回 400（每请求强制，与是否 thinking 无关）。
-4. **预填充与强制工具调用被拒**：assistant 预填充（thinking 恒开）与 `tool_choice: {"type":"any"}` / `{"type":"tool"}` 在该模型上每请求 400；应改用 `tool_choice: {"type":"auto"}` 搭配 strict tool use / structured outputs。
+4. **预填充与强制工具调用被拒**：assistant 预填充（thinking 恒开）与 `tool_choice: {"type":"any"}` / `{"type":"tool"}` 在该模型上每请求 400。本库在网络前拒绝 RequiredAny/RequiredNamed，不把它们自动改为 Auto；宿主若更改业务要求须显式选择新合同。
 5. **prompt cache 与 effort 变更**：请求之间改顶层 effort 会使已缓存前缀失效；需要在同一会话内变挡时用 per-message effort（beta），它保留 prompt cache。依赖缓存的长会话应选定挡位后保持不变。
 6. **interleaved thinking 自动启用**：adaptive thinking 下工具调用之间自动交错思考，无需 beta header；模型可在工具调用间写 progress update。
 7. **thinking 内容默认不可见**：默认 `display: "omitted"`——thinking block 的 `thinking` 字段为空，`signature` 携带加密思考内容用于多轮延续；完整思考输出需联系 Anthropic 销售；在正文中诱导模型复述内部推理可能触发 `reasoning_extraction` 拒绝类别。
 8. **thinking block 跨模型兼容**：Opus 5.5 读取 Opus 5 及更早 Opus/Sonnet/Haiku 模型的 thinking blocks，不读取 Fable/Mythos 系列的 blocks。
 9. **定价**：$4 / input MTok，$20 / output MTok；thinking token 按输出 token 计费。
 10. **streaming**：支持流式响应，含 thinking trace 的流式输出。
+
+## 首版内建与验收边界
+
+2026-10-01 再次核查 [模型页](https://platform.claude.com/docs/en/models/opus-5-5/overview)、[Effort](https://platform.claude.com/docs/en/build-with-claude/effort) 与 [Thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)。内建仅登记精确 `claude-opus-5-5` 的 128,000 标准 Messages 输出限值、五个启用挡位、不可关闭与 forced-tool 禁令；不采用 Batch beta 的 300K，也不把同族前缀当相同能力。
+
+ProviderDefault 始终省略，不调用 mapper；Disabled→Low 是本库政策。adapter 保留已有 adaptive 与 summarized 投影。`AnthropicModelSpecsTests` 使用真实 client 与内存 HTTP/SSE 验证七种意图及两种 forced 选择，无真实服务调用。旧四个 Opus 的迁移条目只声明原有输出限值，不借本页推定 reasoning 或工具支持。
 
 ## 官方证实 vs 未证实
 

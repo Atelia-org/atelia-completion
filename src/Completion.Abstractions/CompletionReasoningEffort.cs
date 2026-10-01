@@ -12,7 +12,11 @@ public enum CompletionReasoningEffort {
     /// <summary>Do not send an explicit reasoning control; preserve the provider/model default.</summary>
     ProviderDefault,
 
-    /// <summary>Explicitly request a non-thinking mode when the selected provider surface supports it.</summary>
+    /// <summary>
+    /// Request non-thinking when supported. A model specification may normalize
+    /// this intent to the lowest enabled level for a model that cannot disable
+    /// thinking; this is not a guarantee that thinking will be disabled.
+    /// </summary>
     Disabled,
 
     Low,

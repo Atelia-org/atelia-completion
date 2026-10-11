@@ -7,9 +7,13 @@
 | 模型 | 文档 |
 | --- | --- |
 | Claude Opus 5.5 | [claude-opus-5-5](claude-opus-5-5.md) |
+| Claude Sonnet 5.5 | [claude-sonnet-5-5](claude-sonnet-5-5.md) |
+| Claude Haiku 5.5 | [claude-haiku-5-5](claude-haiku-5-5.md) |
 | DeepSeek V4.1 Flash，API ID deepseek-flash | [deepseek-v4-1-flash](deepseek-v4-1-flash.md) |
 | GLM-5.3 | [glm-5.3](glm-5.3.md) |
 | GPT-6 Astra | [gpt-6-astra](gpt-6-astra.md) |
+
+2026-10-11 源码新增 Sonnet/Haiku 5.5 的标准 Messages 精确条目，尚未发布 NuGet。两款均登记 128,000 输出限值与五个 effort 挡位；Sonnet 的 Disabled→Low 与 forced-tool 禁令、Haiku 的可关闭与 forced-tool 支持分别维护。证据为本次官方文档核查与离线 fixture，无本次在线模型调用。
 
 ## Gemini
 

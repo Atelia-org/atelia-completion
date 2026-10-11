@@ -9,60 +9,102 @@ namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicModelSpecsTests {
     [Theory]
-    [InlineData(CompletionReasoningEffort.ProviderDefault, null)]
-    [InlineData(CompletionReasoningEffort.Disabled, "low")]
-    [InlineData(CompletionReasoningEffort.Low, "low")]
-    [InlineData(CompletionReasoningEffort.Medium, "medium")]
-    [InlineData(CompletionReasoningEffort.High, "high")]
-    [InlineData(CompletionReasoningEffort.XHigh, "xhigh")]
-    [InlineData(CompletionReasoningEffort.Max, "max")]
-    public async Task Opus55_UsesBuiltInLimitAndMapsAllEfforts(
-        CompletionReasoningEffort effort, string? expectedWireLevel
+    [MemberData(nameof(Claude55Efforts))]
+    public async Task Claude55_UsesBuiltInLimitAndMapsAllEfforts(
+        string modelId, CompletionReasoningEffort effort, string? expectedThinkingType, string? expectedWireLevel
     ) {
         using var handler = new RecordingHandler();
         using var httpClient = CreateHttpClient(handler);
         var client = new AnthropicClient(null, httpClient, reasoningEffort: effort);
 
-        CompletionResult result = await client.StreamCompletionAsync(Request("claude-opus-5-5"), null);
+        CompletionResult result = await client.StreamCompletionAsync(Request(modelId), null);
 
         Assert.True(result.Termination.IsSuccess);
         var sent = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, sent.Method);
         using var body = JsonDocument.Parse(sent.Body!);
+        Assert.Equal(modelId, body.RootElement.GetProperty("model").GetString());
         Assert.Equal(128_000, body.RootElement.GetProperty("max_tokens").GetInt32());
-        if (expectedWireLevel is null) {
+        if (expectedThinkingType is null) {
             Assert.False(body.RootElement.TryGetProperty("thinking", out _));
+        }
+        else {
+            var thinking = body.RootElement.GetProperty("thinking");
+            Assert.Equal(expectedThinkingType, thinking.GetProperty("type").GetString());
+            if (expectedThinkingType == "adaptive") {
+                Assert.Equal("summarized", thinking.GetProperty("display").GetString());
+            }
+            else {
+                Assert.False(thinking.TryGetProperty("display", out _));
+            }
+        }
+        if (expectedWireLevel is null) {
             Assert.False(body.RootElement.TryGetProperty("output_config", out _));
         }
         else {
-            Assert.Equal("adaptive", body.RootElement.GetProperty("thinking").GetProperty("type").GetString());
-            Assert.Equal("summarized", body.RootElement.GetProperty("thinking").GetProperty("display").GetString());
             Assert.Equal(expectedWireLevel, body.RootElement.GetProperty("output_config").GetProperty("effort").GetString());
         }
     }
 
     [Theory]
-    [InlineData(CompletionReasoningEffort.ProviderDefault, false)]
-    [InlineData(CompletionReasoningEffort.Disabled, false)]
-    [InlineData(CompletionReasoningEffort.High, false)]
-    [InlineData(CompletionReasoningEffort.ProviderDefault, true)]
-    [InlineData(CompletionReasoningEffort.Disabled, true)]
-    [InlineData(CompletionReasoningEffort.High, true)]
-    public async Task Opus55_RejectsForcedToolChoiceBeforeDispatch(CompletionReasoningEffort effort, bool named) {
+    [MemberData(nameof(Claude55ForcedToolChoices))]
+    public async Task Claude55_EnforcesModelForcedToolChoiceSupport(
+        string modelId, CompletionReasoningEffort effort, bool named, bool supported
+    ) {
         using var handler = new RecordingHandler();
         using var httpClient = CreateHttpClient(handler);
         var client = new AnthropicClient(null, httpClient, reasoningEffort: effort);
 
-        CompletionRequestRejectedException failure = await Assert.ThrowsAsync<CompletionRequestRejectedException>(
-            () => client.StreamCompletionAsync(Request("claude-opus-5-5", forcedToolChoice: true, named: named), null)
-        );
+        if (supported) {
+            CompletionResult result = await client.StreamCompletionAsync(Request(modelId, forcedToolChoice: true, named: named), null);
+            Assert.True(result.Termination.IsSuccess);
+            var sent = Assert.Single(handler.Requests);
+            Assert.Equal(HttpMethod.Post, sent.Method);
+            using var body = JsonDocument.Parse(sent.Body!);
+            var choice = body.RootElement.GetProperty("tool_choice");
+            Assert.Equal(named ? "tool" : "any", choice.GetProperty("type").GetString());
+            if (named) {
+                Assert.Equal("emit", choice.GetProperty("name").GetString());
+            }
+        }
+        else {
+            CompletionRequestRejectedException failure = await Assert.ThrowsAsync<CompletionRequestRejectedException>(
+                () => client.StreamCompletionAsync(Request(modelId, forcedToolChoice: true, named: named), null)
+            );
 
-        Assert.Equal("anthropic.incompatible-tool-choice", failure.Termination.ProviderReason);
-        Assert.Empty(handler.Requests);
+            Assert.Equal("anthropic.incompatible-tool-choice", failure.Termination.ProviderReason);
+            Assert.Empty(handler.Requests);
+        }
+    }
+
+    public static IEnumerable<object?[]> Claude55Efforts() {
+        foreach (string modelId in new[] { "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5" }) {
+            yield return [modelId, CompletionReasoningEffort.ProviderDefault, null, null];
+            yield return modelId == "claude-haiku-5-5"
+                ? [modelId, CompletionReasoningEffort.Disabled, "disabled", null]
+                : [modelId, CompletionReasoningEffort.Disabled, "adaptive", "low"];
+            yield return [modelId, CompletionReasoningEffort.Low, "adaptive", "low"];
+            yield return [modelId, CompletionReasoningEffort.Medium, "adaptive", "medium"];
+            yield return [modelId, CompletionReasoningEffort.High, "adaptive", "high"];
+            yield return [modelId, CompletionReasoningEffort.XHigh, "adaptive", "xhigh"];
+            yield return [modelId, CompletionReasoningEffort.Max, "adaptive", "max"];
+        }
+    }
+
+    public static IEnumerable<object[]> Claude55ForcedToolChoices() {
+        foreach (object?[] row in Claude55Efforts()) {
+            string modelId = (string)row[0]!;
+            var effort = (CompletionReasoningEffort)row[1]!;
+            foreach (bool named in new[] { false, true }) {
+                yield return [modelId, effort, named, modelId == "claude-haiku-5-5"];
+            }
+        }
     }
 
     [Theory]
     [InlineData("claude-opus-5-5", 128_000)]
+    [InlineData("claude-sonnet-5-5", 128_000)]
+    [InlineData("claude-haiku-5-5", 128_000)]
     [InlineData("claude-opus-future", 90_000)]
     [InlineData("claude-future", 70_000)]
     [InlineData("other", 50_000)]

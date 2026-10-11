@@ -147,7 +147,10 @@ public sealed class CompletionModelSpecCatalogTests {
         Assert.Null(BuiltinModelSpecs.DeepSeekChat.Lookup("glm-5.3"));
         Assert.NotNull(BuiltinModelSpecs.DeepSeekChat.Lookup("deepseek-flash")?.ReasoningMapper);
         Assert.Null(BuiltinModelSpecs.DeepSeekChat.Lookup("deepseek-v4-1-flash"));
-        foreach (string id in new[] { "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-opus-5-5" }) {
+        foreach (string id in new[] {
+            "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5", "claude-opus-5-5",
+            "claude-sonnet-5-5", "claude-haiku-5-5"
+        }) {
             Assert.Equal(128_000, BuiltinModelSpecs.AnthropicMessages.Lookup(id)!.OutputTokenLimit);
         }
 
@@ -156,8 +159,20 @@ public sealed class CompletionModelSpecCatalogTests {
         Assert.False(opus.ForcedToolChoiceSupported);
         Assert.Equal(CompletionReasoningEffort.Low, opus.ReasoningMapper!.Map(CompletionReasoningEffort.Disabled).EffectiveEffort);
         Assert.Equal(CompletionReasoningEffort.XHigh, opus.ReasoningMapper.Map(CompletionReasoningEffort.XHigh).EffectiveEffort);
+        var sonnet = BuiltinModelSpecs.AnthropicMessages.Lookup("claude-sonnet-5-5")!;
+        Assert.False(sonnet.ForcedToolChoiceSupported);
+        Assert.Equal(CompletionReasoningEffort.Low, sonnet.ReasoningMapper!.Map(CompletionReasoningEffort.Disabled).EffectiveEffort);
+        var haiku = BuiltinModelSpecs.AnthropicMessages.Lookup("claude-haiku-5-5")!;
+        Assert.True(haiku.ForcedToolChoiceSupported);
+        Assert.Equal(new ReasoningEffortMapping(CompletionReasoningEffort.Disabled, null),
+            haiku.ReasoningMapper!.Map(CompletionReasoningEffort.Disabled));
+        Assert.Null(BuiltinModelSpecs.AnthropicMessages.Lookup("cluade-sonnet-5-5"));
+        Assert.Null(BuiltinModelSpecs.AnthropicMessages.Lookup("claude-sonnet-5-5-custom"));
+        Assert.Null(BuiltinModelSpecs.AnthropicMessages.Lookup("claude-haiku-5-5-custom"));
         var withFallback = BuiltinModelSpecs.AnthropicMessages.WithPattern("claude-*", new() { OutputTokenLimit = 10 });
         Assert.Same(opus, withFallback.Lookup("claude-opus-5-5"));
+        Assert.Same(sonnet, withFallback.Lookup("claude-sonnet-5-5"));
+        Assert.Same(haiku, withFallback.Lookup("claude-haiku-5-5"));
         Assert.Null(BuiltinModelSpecs.AnthropicMessages.Lookup("claude-new"));
         Assert.Equal(10, withFallback.Lookup("claude-new")!.OutputTokenLimit);
     }

@@ -67,10 +67,12 @@ public static class BuiltinModelSpecs {
 
         // https://platform.claude.com/docs/en/build-with-claude/effort
         // https://platform.claude.com/docs/en/build-with-claude/thinking
-        // See docs/Completion/specs/models/claude-opus-5-5.md.
-        // Reviewed 2026-10-01: Opus 5.5 has five effort levels, always-on adaptive
-        // thinking and no forced tool selection. Do not infer this for the whole family.
-        return catalog.WithModel("claude-opus-5-5", new() {
+        // See docs/Completion/specs/models/claude-opus-5-5.md and claude-sonnet-5-5.md.
+        // Opus 5.5 reviewed 2026-10-01; Sonnet 5.5 reviewed 2026-10-11.
+        // Both have five effort levels, reject disabled thinking and forced tool
+        // selection. Disabled -> Low is library policy; Sonnet's between_tools mode
+        // is not projected by this adapter. Do not infer this for the whole family.
+        catalog = catalog.WithModels(["claude-opus-5-5", "claude-sonnet-5-5"], new() {
             OutputTokenLimit = 128_000,
             ReasoningMapper = ReasoningEffortMappers.ForSupportedLevels([
                 CompletionReasoningEffort.Low, CompletionReasoningEffort.Medium,
@@ -78,6 +80,20 @@ public static class BuiltinModelSpecs {
                 CompletionReasoningEffort.Max
             ]),
             ForcedToolChoiceSupported = false
+        });
+
+        // Reviewed 2026-10-11: https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide
+        // See docs/Completion/specs/models/claude-haiku-5-5.md. Haiku supports forced
+        // tool selection with adaptive thinking. Disabled omits effort, leaving its
+        // medium default, where disabled thinking is supported (not at xhigh/max).
+        return catalog.WithModel("claude-haiku-5-5", new() {
+            OutputTokenLimit = 128_000,
+            ReasoningMapper = ReasoningEffortMappers.ForSupportedLevels([
+                CompletionReasoningEffort.Low, CompletionReasoningEffort.Medium,
+                CompletionReasoningEffort.High, CompletionReasoningEffort.XHigh,
+                CompletionReasoningEffort.Max
+            ], supportsDisabled: true),
+            ForcedToolChoiceSupported = true
         });
     }
 }

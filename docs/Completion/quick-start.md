@@ -184,6 +184,8 @@ var factory = new DefaultCompletionClientFactory(connection =>
 
 工具要求不会随 effort 舍入被削弱。例如 Opus 5.5 的 forced tool choice 在 ProviderDefault 或 Disabled→Low 时均于网络调用前拒绝。模型规格不改变终止、usage、取消、reasoning 回放或 dispatch identity 合同。更多规则与维护边界见 [设计文档](model-specs-design.md)。
 
+当前源码另已登记 [Sonnet 5.5](specs/models/claude-sonnet-5-5.md) 与 [Haiku 5.5](specs/models/claude-haiku-5-5.md)，尚未发布到 NuGet；本文的 `0.1.0-preview.6` 包不包含这次补充。两款标准 Messages 输出限值均为 128,000，启用 effort 均支持五挡。Sonnet 的 Disabled→Low，且拒绝 forced tool choice；Haiku 的 Disabled 真正发送关闭配置并保留默认 medium effort，且支持强制工具选择。ProviderDefault 保留各自服务端默认值。
+
 ## 6. Tools、日志与验证入口
 
 Tools 独立引用 `Atelia.Completion.Tools`。从 `MethodToolWrapper` 或 `ArtifactToolWrapper<T>` 建立工具，放进 `ToolRegistry`，通过 `registry.CreateSession(...)` 获得 `ToolSession`，用 `VisibleDefinitions` 构造本轮工具合同并调用 `session.ExecuteAsync(...)`。当前不使用旧的 ToolExecutor/ToolSessionState 接口；完整 DTO 示例见 [Tools README](../../src/Completion.Tools/README.md)。

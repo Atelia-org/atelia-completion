@@ -330,6 +330,13 @@ var anthropicSpecs = BuiltinModelSpecs.AnthropicMessages
 | glm-5.3 | Low/High/Max，关闭不支持；标准 Chat 目录 | 已核查共同能力可共享条目；Flash 的精确 ID 与其他协议须分别确认 |
 | deepseek-flash | Disabled 与 Low/High/Max；当前 DeepSeek Chat 投影 | 旧 alias 经官方逐条确认后登记；文件名不是模型 ID |
 
+2026-10-11 后续源码补充（尚未发布 NuGet），逐模型官方证据见调查条目：
+
+| 精确条目 | 新增内容 | 边界 |
+| --- | --- | --- |
+| [claude-sonnet-5-5](specs/models/claude-sonnet-5-5.md) | 128,000；五挡；Disabled→Low；ForcedToolChoiceSupported=false | 标准 Messages；不投影 between_tools，不承诺关闭 thinking |
+| [claude-haiku-5-5](specs/models/claude-haiku-5-5.md) | 128,000；五挡；支持 Disabled；ForcedToolChoiceSupported=true | Disabled 省略 effort，默认 medium 满足关闭条件；xhigh/max 仍使用 adaptive |
+
 不要自动注册 `deepseek-v4-1-flash` 仅因为调查文件叫这个名字，也不要默认注册大小写变种。其他 OpenAI/Codex/Gemini 模型可以复用设施，但本次不把未核查模型全纳入内建列表。
 
 本次官方 Models API 已列出 max_tokens 与 capabilities，包括 effort 和 thinking。这为未来补充 discovery 提供依据，但首版只复用现有 maximum 查询；不建设综合能力抓取器，也不将服务端兼容别名直接视为独立行为挡位。[Anthropic Models API](https://platform.claude.com/docs/en/api/models/retrieve)

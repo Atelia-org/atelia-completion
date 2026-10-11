@@ -285,6 +285,8 @@ public sealed class ProviderModelMaximumTests {
     [InlineData("claude-opus-4-8")]
     [InlineData("claude-opus-5")]
     [InlineData("claude-opus-5-5")]
+    [InlineData("claude-sonnet-5-5")]
+    [InlineData("claude-haiku-5-5")]
     public async Task Anthropic_KnownModelUsesPublishedMaximumWithoutCapabilityLookup(
         string modelId
     ) {
@@ -319,6 +321,8 @@ public sealed class ProviderModelMaximumTests {
     [InlineData(501, "unknown-model")]
     [InlineData(404, "claude-opus-5-custom")]
     [InlineData(404, "claude-opus-5-5-custom")]
+    [InlineData(404, "claude-sonnet-5-5-custom")]
+    [InlineData(404, "claude-haiku-5-5-custom")]
     public async Task Anthropic_MissingModelsEndpointFailsAndDoesNotCacheGuess(
         int status, string modelId
     ) {

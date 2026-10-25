@@ -121,12 +121,16 @@ public sealed class ToolSession {
     /// <remarks>
     /// 允许重复使用当前最后一个序号，以便 uncertain execution 按同一个 durable operation 重试；
     /// 小于当前序号会被拒绝。大于当前序号允许跨进程恢复直接跳到 durable checkpoint。
+    /// 设置 propagateUnexpectedExceptions 时，工具执行中的未分类异常转换为
+    /// ToolExecutionUnsettledException；宿主应保留未知 Started，不能保存为失败结果。
+    /// 授权、路由和输入种类不匹配仍返回确定的 Failed。
     /// </remarks>
     public ValueTask<ToolCallExecutionResult> ExecuteReservedAsync(
         RawToolCall request,
         long reservedExecutionSequence,
         string? operationId,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool propagateUnexpectedExceptions = false
     ) {
         if (operationId is not null && string.IsNullOrWhiteSpace(operationId)) {
             throw new ArgumentException(
@@ -140,7 +144,8 @@ public sealed class ToolSession {
             request,
             reservedExecutionSequence,
             operationId,
-            cancellationToken
+            cancellationToken,
+            propagateUnexpectedExceptions
         );
     }
 

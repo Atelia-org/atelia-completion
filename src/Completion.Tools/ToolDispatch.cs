@@ -17,7 +17,8 @@ internal static class ToolDispatch {
         RawToolCall request,
         long executionSequence,
         string? operationId,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool propagateUnexpectedExceptions = false
     ) {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(request);
@@ -106,6 +107,12 @@ internal static class ToolDispatch {
         }
         catch (Exception ex) {
             stopwatch.Stop();
+            if (propagateUnexpectedExceptions) {
+                throw new ToolExecutionUnsettledException(
+                    "UnexpectedExecutionException",
+                    "Tool execution ended without a confirmed terminal result.",
+                    ex);
+            }
             DebugUtil.Debug(
                 CompletionToolsDebugCategories.Tools,
                 $"[Dispatch] Failed toolName={request.ToolName} toolCallId={request.ToolCallId} executionSequence={executionSequence} exceptionType={ex.GetType().FullName}"

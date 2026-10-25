@@ -8,8 +8,9 @@ namespace Atelia.Completion.Tools;
 /// current uncertain boundary and retry/reconcile with the same operation id.
 /// </summary>
 public sealed class ToolExecutionUnsettledException : Exception {
-    public ToolExecutionUnsettledException(string code, string detail)
-        : base(RequireBounded(detail, nameof(detail), 4 * 1024)) {
+    public ToolExecutionUnsettledException(string code, string detail,
+        Exception? innerException = null)
+        : base(RequireBounded(detail, nameof(detail), 4 * 1024), innerException) {
         Code = RequireBounded(code, nameof(code), 128);
     }
 

@@ -271,6 +271,54 @@ public sealed class ToolSessionTests {
     }
 
     [Fact]
+    public async Task ReservedStrictExecution_PreservesUnknownMutationAndCause() {
+        int mutations = 0;
+        var cause = new IOException("private execution detail");
+        var session = new ToolRegistry([
+            new ThrowingTool(() => { mutations++; return cause; })
+        ]).CreateSession();
+
+        var exception = await Assert.ThrowsAsync<ToolExecutionUnsettledException>(() =>
+            session.ExecuteReservedAsync(new RawToolCall("throw", "call", "{}"),
+                9, "operation", CancellationToken.None,
+                propagateUnexpectedExceptions: true).AsTask());
+
+        Assert.Equal(1, mutations);
+        Assert.Equal(9, session.LastIssuedExecutionSequence);
+        Assert.Same(cause, exception.InnerException);
+        Assert.Equal("UnexpectedExecutionException", exception.Code);
+        Assert.DoesNotContain(cause.Message, exception.Message);
+    }
+
+    [Fact]
+    public async Task ReservedStrictExecution_KeepsKnownRoutingFailuresAndDefaultBehavior() {
+        int invocations = 0;
+        var registry = new ToolRegistry([
+            new ThrowingTool(() => { invocations++; return new IOException("failure"); })
+        ]);
+        var session = registry.CreateSession();
+        foreach (var call in new[] {
+            new RawToolCall("missing", "missing", "{}"),
+            RawToolCall.FromText("throw", "wrong-kind", "text")
+        }) {
+            var rejected = await session.ExecuteReservedAsync(call,
+                session.LastIssuedExecutionSequence + 1, "operation", CancellationToken.None,
+                propagateUnexpectedExceptions: true);
+            Assert.Equal(ToolExecutionStatus.Failed, rejected.ExecuteResult.Status);
+        }
+        var hidden = registry.CreateSession(ToolAccessSnapshot.Hide(["throw"]));
+        var forbidden = await hidden.ExecuteReservedAsync(new RawToolCall("throw", "hidden", "{}"),
+            1, "operation", CancellationToken.None, propagateUnexpectedExceptions: true);
+        Assert.Equal(ToolExecutionStatus.Failed, forbidden.ExecuteResult.Status);
+        Assert.Equal(0, invocations);
+
+        var legacy = await session.ExecuteReservedAsync(new RawToolCall("throw", "legacy", "{}"),
+            3, "operation", CancellationToken.None);
+        Assert.Equal(ToolExecutionStatus.Failed, legacy.ExecuteResult.Status);
+        Assert.Equal(1, invocations);
+    }
+
+    [Fact]
     public void UnsettledDiagnosticsAreStrictAndBounded() {
         Assert.Throws<ArgumentException>(() =>
             new ToolExecutionUnsettledException("bad\ud800", "detail"));

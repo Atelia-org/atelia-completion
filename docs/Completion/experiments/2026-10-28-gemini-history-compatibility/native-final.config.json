@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "requestTimeoutSeconds": 90,
+  "maxRequests": 4,
+  "outputDirectory": "../../../../artifacts/tool-call-id-matrix",
+  "endpoints": [
+    {
+      "id": "gemini38-flash",
+      "kind": "gemini",
+      "modelId": "gemini-3.8-flash",
+      "baseAddress": "https://generativelanguage.googleapis.com/",
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "reasoningEffort": "low"
+    }
+  ]
+}

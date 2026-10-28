@@ -1,0 +1,18 @@
+{
+  "sourceCommit": "e2cfab7bd0bef199ca11f0a1b6b700b86fbeecfa",
+  "files": {
+    "src/Completion/Gemini/GeminiApiModels.cs": "e00257c43fcfbd60c408f2a517e9e1bbbe6b6994779bef9b24dce6912b5de882",
+    "src/Completion/Gemini/GeminiClient.cs": "4939dd967e5ce84c39ae731ba25af638573982258add26b4148e6963819e6000",
+    "src/Completion/Gemini/GeminiClientOptions.cs": "34d8c2c6240d0e7bb84fc21add9854477d41d6faa8e8f3ac9879ccc01791a3ef",
+    "src/Completion/Gemini/GeminiMessageConverter.cs": "f8a650d8fc7bfbb7e8d47d03a8ff427f2c5a79548dbe5f6f11e12a95a26b7236",
+    "src/Completion/Gemini/GeminiReplayBlock.cs": "a95cc79034a75dc2624709606cad8c067b83794c32417689f991f24f6cf46cec",
+    "src/Completion/Gemini/GeminiReplayPayloadCodec.cs": "e7de327b741f309038c86f644e9622aaee9a63e8f5fbda61e32868495b5bb15a",
+    "src/Completion/Gemini/GeminiStreamParser.cs": "ecd60477ea7aac881aece11772bc5f7cb2f3843747fcb17567bd8205b1f94c9c",
+    "experiments/ToolCallIdMatrix/Clients.cs": "843e8633ff1c7cd85d94dac2b6715392efdf2ef4eaf9078183077691f0eda3f2",
+    "experiments/ToolCallIdMatrix/Configuration.cs": "bf1a9775b106686c1b59053312f9f89096d7afc44ea7f3bf458a168ab0903fc5",
+    "experiments/ToolCallIdMatrix/GeminiHistoryProbe.cs": "1d89aed92c5456269238160f1530b987e460a322923246f6136344f3eb7ea284",
+    "experiments/ToolCallIdMatrix/Program.cs": "020d6c294732fe60c4e176d76e27a88ba2b710afa76cb455ed10eb33a198df80",
+    "experiments/ToolCallIdMatrix/SelfTest.cs": "4fae2e24815cf922b4f3c23db0df804b35fd1a25dc2f06224358d99738c3ad98",
+    "experiments/ToolCallIdMatrix/WireEvidence.cs": "976a085e5522528038b1f7d82730495a58c1ea74760f03bb36d8922adb38332c"
+  }
+}

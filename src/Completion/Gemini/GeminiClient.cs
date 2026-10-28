@@ -69,7 +69,6 @@ public sealed class GeminiClient : ICompletionClient {
 
         CompletionModelSpec? spec = _modelSpecs.Lookup(request.ModelId);
         GeminiThinkingConfig? thinking = ResolveThinkingConfig(spec);
-        ValidateToolChoice(request.PromptPrefix.OutputContract, spec);
         var invocation = CompletionDescriptor.From(this, request);
         var apiRequest = GeminiMessageConverter.ProjectRequest(
             request,
@@ -160,17 +159,6 @@ public sealed class GeminiClient : ICompletionClient {
             );
         }
         return new GeminiThinkingConfig { ThinkingLevel = resolved.WireLevel };
-    }
-
-    private static void ValidateToolChoice(CompletionOutputContract contract, CompletionModelSpec? spec) {
-        if (spec?.ForcedToolChoiceSupported is false
-            && contract.ToolChoice.Kind is CompletionToolChoiceKind.RequiredAny or CompletionToolChoiceKind.RequiredNamed) {
-            throw new CompletionRequestRejectedException(new CompletionTermination(
-                CompletionTerminationKind.Failed,
-                "model_specs.incompatible_tool_choice",
-                "The selected model specification does not support forced tool selection."
-            ));
-        }
     }
 
     /// <summary>

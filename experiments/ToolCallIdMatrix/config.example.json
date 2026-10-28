@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "requestTimeoutSeconds": 120,
+  "maxRequests": 40,
+  "outputDirectory": "results",
+  "endpoints": [
+    {
+      "id": "anthropic-haiku",
+      "kind": "anthropic",
+      "modelId": "FILL_MODEL_ID",
+      "baseAddress": "https://api.anthropic.com/",
+      "apiKeyEnv": "ANTHROPIC_API_KEY",
+      "reasoningEffort": "provider-default"
+    },
+    {
+      "id": "openai-responses",
+      "kind": "openai-responses",
+      "modelId": "FILL_MODEL_ID",
+      "baseAddress": "https://api.openai.com/",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    {
+      "id": "openai-chat",
+      "kind": "openai-chat",
+      "completionSurfaceId": "openai-chat/strict",
+      "modelId": "FILL_MODEL_ID",
+      "baseAddress": "https://api.openai.com/",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    {
+      "id": "codex-subscription",
+      "kind": "openai-codex-responses",
+      "modelId": "FILL_MODEL_ID",
+      "reasoningEffort": "low"
+    },
+    {
+      "id": "gemini-native",
+      "kind": "gemini",
+      "modelId": "FILL_MODEL_ID",
+      "baseAddress": "https://generativelanguage.googleapis.com/",
+      "apiKeyEnv": "GEMINI_API_KEY"
+    }
+  ]
+}

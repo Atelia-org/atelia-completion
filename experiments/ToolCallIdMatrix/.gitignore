@@ -1,0 +1,4 @@
+bin/
+obj/
+results/
+config.local.json

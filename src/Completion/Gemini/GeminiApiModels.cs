@@ -89,8 +89,8 @@ internal sealed class GeminiFunctionDeclaration {
     [JsonPropertyName("description")]
     public string? Description { get; set; }
 
-    [JsonPropertyName("parameters")]
-    public required JsonElement Parameters { get; set; }
+    [JsonPropertyName("parametersJsonSchema")]
+    public required JsonElement ParametersJsonSchema { get; set; }
 }
 
 internal sealed class GeminiToolConfig {

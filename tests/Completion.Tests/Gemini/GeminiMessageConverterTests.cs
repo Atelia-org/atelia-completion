@@ -222,7 +222,7 @@ public sealed class GeminiMessageConverterTests {
     }
 
     [Fact]
-    public void ConvertToApiRequest_ToolReplayWithoutGeminiReplayPayloadFailsFast() {
+    public void ConvertToApiRequest_ToolReplayWithoutGeminiReplayPayloadProjectsVisibleCall() {
         if (!GeminiProductionTypesPresent()) { return; }
 
         var request = new CompletionRequest(
@@ -253,16 +253,15 @@ public sealed class GeminiMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => ConvertToApiRequest(request)
-        );
-
-        Assert.Contains("Gemini", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("replay", exception.Message, StringComparison.OrdinalIgnoreCase);
+        using var document = SerializeApiRequest(ConvertToApiRequest(request));
+        var part = document.RootElement.GetProperty("contents")[0].GetProperty("parts")[0];
+        Assert.Equal("skip_thought_signature_validator", part.GetProperty("thoughtSignature").GetString());
+        Assert.Equal("call-1", part.GetProperty("functionCall").GetProperty("id").GetString());
+        Assert.Equal("weather", part.GetProperty("functionCall").GetProperty("args").GetProperty("query").GetString());
     }
 
     [Fact]
-    public void ConvertToApiRequest_MissingPendingToolResultsThrows() {
+    public void ConvertToApiRequest_MissingPendingToolResultsPreservesProvidedResults() {
         if (!GeminiProductionTypesPresent()) { return; }
 
         var actionMessage = new ActionMessage(
@@ -291,16 +290,14 @@ public sealed class GeminiMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => ConvertToApiRequest(request)
-        );
-
-        Assert.Contains("call-2", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("align 1:1", exception.Message, StringComparison.Ordinal);
+        using var document = SerializeApiRequest(ConvertToApiRequest(request));
+        var parts = document.RootElement.GetProperty("contents")[1].GetProperty("parts");
+        var response = Assert.Single(parts.EnumerateArray()).GetProperty("functionResponse");
+        Assert.Equal("call-1", response.GetProperty("id").GetString());
     }
 
     [Fact]
-    public void ConvertToApiRequest_ToolNameMismatchThrows() {
+    public void ConvertToApiRequest_ToolNameMismatchPreservesProvidedName() {
         if (!GeminiProductionTypesPresent()) { return; }
 
         var actionMessage = new ActionMessage(
@@ -331,13 +328,10 @@ public sealed class GeminiMessageConverterTests {
             tailMessages: []
         );
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => ConvertToApiRequest(request)
-        );
-
-        Assert.Contains("expected 'search'", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("got 'lookup'", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("ToolCallId + ToolName", exception.Message, StringComparison.Ordinal);
+        using var document = SerializeApiRequest(ConvertToApiRequest(request));
+        var response = document.RootElement.GetProperty("contents")[1].GetProperty("parts")[0].GetProperty("functionResponse");
+        Assert.Equal("lookup", response.GetProperty("name").GetString());
+        Assert.Equal("call-1", response.GetProperty("id").GetString());
     }
 
     [Fact]

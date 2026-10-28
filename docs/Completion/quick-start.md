@@ -109,9 +109,9 @@ Codex 文件凭据支持 Windows/Linux。客户端借用 access-token snapshot�
 
 `CompletionRequest` 由模型 ID、冻结的 `CompletionPromptPrefix` 和尾部消息组成。SystemPrompt 与普通观察消息分开；工具只从 `PromptPrefix.OutputContract` 进入请求。共享前缀与 tail 显式划分，不在 provider adapter 中猜测消息边界。
 
-下一轮历史使用成功结果的 `CompletionResult.Message`，它实现 `IHistoryMessage`；`CompletionResult` envelope 本身不是历史消息。工具结果的 `ToolCallId + ToolName` 必须与待回复调用一一对应，缺失、重复或错配会在请求构造/投影时失败。
+下一轮历史使用成功结果的 `CompletionResult.Message`，它实现 `IHistoryMessage`；`CompletionResult` envelope 本身不是历史消息。宿主应让工具结果的 `ToolCallId + ToolName` 与调用对应。Gemini 对可表示的历史直接投影，缺失、重复或错配由服务端判定；其他 adapter 仍可能在投影时验证配对。
 
-可见正文与 reasoning 原生 payload 分开。保留 `ActionBlock` 中的 Origin、协议身份与 replay payload，不能用 flatten 后的正文替代；Gemini tool continuation 需要它的 replay 信息。Codex Responses 与 public OpenAI Responses 的 `ApiSpecId` 不同，不可交叉回放。跨模型约束见 [Codex adapter 合同](openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
+可见正文与 reasoning 原生 payload 分开。保留 `ActionBlock` 中的 Origin、协议身份与 replay payload，不能用 flatten 后的正文替代。Gemini 对匹配 provider/API 的 replay 信息原样回放；没有可回放原生块时，投影可见正文与 JSON 工具调用，并在每个 action 的首个调用上使用官方导入标记 `skip_thought_signature_validator`，保留调用 ID。异源 opaque payload 不发送。原生块与可见内容矛盾、参数不是有效 JSON object、或要求协议无法表达的行为仍会本地失败；服务端拒绝走通常的 HTTP failure 通道。Codex Responses 与 public OpenAI Responses 的 `ApiSpecId` 不同，不可交叉回放。跨模型约束见 [Codex adapter 合同](openai-codex-subscription-client-design.md#64-独立-protocol-identity)。
 
 请求合同没有调用者自设 output-token cap；需要显式数值的 provider 使用模型能力规则。`CompletionInvocationOptions.PromptCacheReuseHint` 是 best-effort 的复用提示，不是禁止存储或隐私保证，也不属于请求逻辑身份。
 

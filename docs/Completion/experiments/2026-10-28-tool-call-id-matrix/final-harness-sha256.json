@@ -1,0 +1,11 @@
+{
+  ".gitignore": "1a0f6ccffcdc0bdbbcc69577a8f6a878d05ee72f5ae1dc7d688d428a177b9932",
+  "Clients.cs": "843e8633ff1c7cd85d94dac2b6715392efdf2ef4eaf9078183077691f0eda3f2",
+  "config.example.json": "2d217d325356ee05232ed37e2e35d1e3753c89f86a4891857ecbea9b7fd6e27c",
+  "Configuration.cs": "bf1a9775b106686c1b59053312f9f89096d7afc44ea7f3bf458a168ab0903fc5",
+  "Program.cs": "fcaae2b48beea65b10643e82b5dff1ac06e45a86fe75d2d11dcb0eacf421f5bb",
+  "SelfTest.cs": "4fae2e24815cf922b4f3c23db0df804b35fd1a25dc2f06224358d99738c3ad98",
+  "ToolCallIdMatrix.csproj": "c907279564c92e7790c67d9a41513121bfe468028fd68f38e361269015d9fbad",
+  "USAGE.md": "fe2c0ab90bb9d0fb8fc1f082d759bf3d4ec784f13592e551efa91b5de5f22065",
+  "WireEvidence.cs": "02e774b1266f5c92b830d9981ae11b6a18b4ebb50c60f5a7f1f3ad72da0676c0"
+}

@@ -105,7 +105,7 @@ public sealed class GeminiProjectionRoundTripTests {
     [Theory]
     [InlineData("other.example", "google-gemini-generate-content-v1beta")]
     [InlineData("generativelanguage.googleapis.com", "google-gemini-interactions-v1beta")]
-    public void ReplayBlockFromDifferentProviderOrProtocol_IsRejected(
+    public void ReplayBlockFromDifferentProviderOrProtocol_DoesNotExposeNativePayload(
         string providerId,
         string apiSpecId
     ) {
@@ -128,7 +128,7 @@ public sealed class GeminiProjectionRoundTripTests {
 
         var error = Assert.Throws<InvalidOperationException>(
             () => ConvertToGeminiApiRequest(request));
-        Assert.Contains("Origin", error.Message, StringComparison.Ordinal);
+        Assert.Contains("no Gemini-replayable content", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -17,7 +17,7 @@ internal static class GeminiReplayPayloadCodec {
 
     internal sealed record GeminiReplayPayloadFunctionCall(
         string Name,
-        string ToolCallId,
+        string? ToolCallId,
         string RawArgumentsJson
     );
 
@@ -42,9 +42,11 @@ internal static class GeminiReplayPayloadCodec {
 
                         if (part.FunctionCall is not null) {
                             var functionCallObject = new JsonObject {
-                                ["name"] = part.FunctionCall.Name,
-                                ["id"] = part.FunctionCall.ToolCallId
+                                ["name"] = part.FunctionCall.Name
                             };
+                            if (part.FunctionCall.ToolCallId is not null) {
+                                functionCallObject["id"] = part.FunctionCall.ToolCallId;
+                            }
 
                             try {
                                 functionCallObject["args"] = JsonNode.Parse(part.FunctionCall.RawArgumentsJson);
@@ -101,18 +103,21 @@ internal static class GeminiReplayPayloadCodec {
                     var name = functionCallElement.TryGetProperty("name", out var nameElement) && nameElement.ValueKind is JsonValueKind.String
                         ? nameElement.GetString()
                         : null;
-                    if (string.IsNullOrWhiteSpace(name)) { throw new InvalidOperationException("Replay payload functionCall is missing required string property 'name'."); }
+                    if (name is null) { throw new InvalidOperationException("Replay payload functionCall is missing required string property 'name'."); }
 
-                    var toolCallId = functionCallElement.TryGetProperty("id", out var idElement) && idElement.ValueKind is JsonValueKind.String
-                        ? idElement.GetString()
-                        : null;
-                    if (string.IsNullOrWhiteSpace(toolCallId)) { throw new InvalidOperationException("Replay payload functionCall is missing required string property 'id'."); }
+                    string? toolCallId = null;
+                    if (functionCallElement.TryGetProperty("id", out var idElement)) {
+                        if (idElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)) {
+                            throw new InvalidOperationException("Replay payload functionCall property 'id' must be a string or null.");
+                        }
+                        toolCallId = idElement.ValueKind == JsonValueKind.String ? idElement.GetString() : null;
+                    }
 
                     var rawArgumentsJson = functionCallElement.TryGetProperty("args", out var argsElement)
                         ? argsElement.GetRawText()
                         : "{}";
 
-                    functionCall = new GeminiReplayPayloadFunctionCall(name!, toolCallId!, rawArgumentsJson);
+                    functionCall = new GeminiReplayPayloadFunctionCall(name, toolCallId, rawArgumentsJson);
                 }
 
                 parts.Add(new GeminiReplayPayloadPart(text, thoughtSignature, functionCall));

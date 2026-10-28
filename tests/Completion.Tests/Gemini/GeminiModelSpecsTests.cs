@@ -226,7 +226,7 @@ public sealed class GeminiModelSpecsTests {
     [InlineData(CompletionReasoningEffort.ProviderDefault, false)]
     [InlineData(CompletionReasoningEffort.Disabled, true)]
     [InlineData(CompletionReasoningEffort.High, false)]
-    public async Task ForcedFalse_RejectsBeforeDiscoveryRegardlessOfEffort(CompletionReasoningEffort effort, bool named) {
+    public async Task ForcedFalse_DefersSupportDecisionToServerRegardlessOfEffort(CompletionReasoningEffort effort, bool named) {
         var specs = CompletionModelSpecCatalog.Empty.WithModel("route", new() {
             ReasoningMapper = ThreeLevels(), ForcedToolChoiceSupported = false
         });
@@ -234,10 +234,15 @@ public sealed class GeminiModelSpecsTests {
         using var http = CreateHttp(handler);
         var contract = new CompletionOutputContract([Tool()], named
             ? CompletionToolChoice.RequiredNamed("emit") : CompletionToolChoice.RequiredAny);
-        var error = await Assert.ThrowsAsync<CompletionRequestRejectedException>(() =>
-            Client(http, effort, specs).StreamCompletionAsync(Request("route", contract), null));
-        Assert.Equal("model_specs.incompatible_tool_choice", error.Termination.ProviderReason);
-        Assert.Empty(handler.Methods);
+        CompletionResult result = await Client(http, effort, specs)
+            .StreamCompletionAsync(Request("route", contract), null);
+        Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);
+        Assert.Equal([HttpMethod.Get, HttpMethod.Post], handler.Methods);
+        using JsonDocument body = JsonDocument.Parse(Assert.Single(handler.Bodies));
+        JsonElement config = body.RootElement.GetProperty("toolConfig").GetProperty("functionCallingConfig");
+        Assert.Equal("ANY", config.GetProperty("mode").GetString());
+        Assert.Equal(named, config.TryGetProperty("allowedFunctionNames", out JsonElement names));
+        if (named) { Assert.Equal("emit", Assert.Single(names.EnumerateArray()).GetString()); }
     }
 
     [Theory]
@@ -269,9 +274,10 @@ public sealed class GeminiModelSpecsTests {
         await Assert.ThrowsAsync<NotSupportedException>(() => client.StreamCompletionAsync(
             Request("unknown", new CompletionOutputContract([Tool()], CompletionToolChoice.Auto,
                 allowParallelToolCalls: false)), null));
+        var origin = new CompletionDescriptor("example.invalid", "google-gemini-generate-content-v1beta", "unknown");
         var request = new CompletionRequest("unknown", new CompletionPromptPrefix("",
             CompletionOutputContract.ProviderDefault([]), [new ActionMessage([
-                new ActionBlock.ToolCall(new RawToolCall("emit", "call-1", "{}"))
+                new GeminiReplayBlock(Encoding.UTF8.GetBytes("not-json"), origin)
             ])]), []);
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.StreamCompletionAsync(request, null));
         Assert.Empty(handler.Methods);

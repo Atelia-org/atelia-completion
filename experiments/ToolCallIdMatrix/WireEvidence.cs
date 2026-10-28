@@ -11,8 +11,18 @@ sealed record ExchangeEvidence(string Method, int? Status, List<WireId> RequestI
 sealed class EvidenceSink : ICompletionHttpExchangeSink {
     public List<ExchangeEvidence> Exchanges { get; } = [];
     public int ParseFailures { get; private set; }
+    // Transient comparison only. Never serialize these signatures into receipts.
+    public List<string> RequestSignatures { get; } = [];
     public void OnExchange(CompletionHttpExchange exchange) {
         try {
+            if (exchange.Method == "POST" && !string.IsNullOrWhiteSpace(exchange.RequestText)) {
+                using var request = JsonDocument.Parse(exchange.RequestText);
+                if (request.RootElement.TryGetProperty("contents", out var contents)) {
+                    foreach (var content in contents.EnumerateArray())
+                        foreach (var part in content.GetProperty("parts").EnumerateArray())
+                            if (part.TryGetProperty("thoughtSignature", out var signature)) RequestSignatures.Add(signature.GetString()!);
+                }
+            }
             var requestIds = Extract(exchange.RequestText, out int requestErrors);
             var responseIds = Extract(exchange.ResponseText, out int responseErrors);
             ParseFailures += requestErrors + responseErrors;
@@ -22,7 +32,7 @@ sealed class EvidenceSink : ICompletionHttpExchangeSink {
         catch { ParseFailures++; }
     }
 
-    public void Reset() { Exchanges.Clear(); ParseFailures = 0; }
+    public void Reset() { Exchanges.Clear(); RequestSignatures.Clear(); ParseFailures = 0; }
 
     public static List<WireId> Extract(string? text) => Extract(text, out _);
 
@@ -75,7 +85,6 @@ sealed class EvidenceSink : ICompletionHttpExchangeSink {
         if (String(node, name) is { Length: > 0 } id) ids.Add(new(role, id, field));
     }
 }
-
 sealed class CountingHandler : DelegatingHandler {
     public int Posts { get; private set; }
     public int Others { get; private set; }

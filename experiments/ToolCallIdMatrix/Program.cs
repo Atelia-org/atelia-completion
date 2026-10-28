@@ -10,20 +10,22 @@ static class Program {
     public static async Task<int> Main(string[] args) {
         try {
             if (args.SequenceEqual(["--self-test"])) { await SelfTest.Run(); return 0; }
-            if (args.Length is < 1 or > 2 || args.Length == 2 && args[0] is not ("--validate" or "--live")) {
-                Console.WriteLine("Usage: ToolCallIdMatrix [--validate|--live] config.json | --self-test");
+            if (args.Length is < 1 or > 2 || args.Length == 2 && args[0] is not ("--validate" or "--live" or "--gemini-history")) {
+                Console.WriteLine("Usage: ToolCallIdMatrix [--validate|--live|--gemini-history] config.json | --self-test");
                 return 2;
             }
-            bool live = args.Length == 2 && args[0] == "--live";
+            bool history = args.Length == 2 && args[0] == "--gemini-history";
+            bool live = history || args.Length == 2 && args[0] == "--live";
             string path = Path.GetFullPath(args[^1]);
             var config = MatrixConfig.Parse(await File.ReadAllTextAsync(path));
-            int planned = config.Endpoints.Count + config.Endpoints.Count * config.Endpoints.Count;
+            int planned = history ? config.Endpoints.Count * 4 : config.Endpoints.Count + config.Endpoints.Count * config.Endpoints.Count;
             Console.WriteLine($"Valid config: {config.Endpoints.Count} endpoints; {planned} planned invocations; budget {config.MaxRequests}.");
             if (!live) { Console.WriteLine("Offline validation only. Credentials were not read; no network calls."); return 0; }
             using var cancellation = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
             string output = Path.GetFullPath(config.OutputDirectory, Path.GetDirectoryName(path)!);
-            await new Runner(config, output).Run(cancellation.Token);
+            if (history) await new GeminiHistoryProbe(config, output).Run(cancellation.Token);
+            else await new Runner(config, output).Run(cancellation.Token);
             return 0;
         }
         catch (Exception error) {
@@ -246,12 +248,12 @@ sealed class Runner(MatrixConfig config, string outputRoot) {
             text.AppendLine();
         }
         text.AppendLine("\nPASS requires Completed, no new tool calls, exact random token recovered only from the tool result, real source ID proven on wire, and both outbound call/result IDs unchanged. Other outcomes are not evidence of ID incompatibility.\n");
-        text.AppendLine("Gemini native targets currently require GeminiReplayBlock and reject this deliberately synthetic history locally. Such cells are untested format compatibility, not endpoint rejections. HTTP/provider/transport failures need controlled follow-up; this runner does not classify natural-language errors.\n");
+        text.AppendLine("Synthetic Gemini tool history uses the documented import signature marker; original call IDs remain unchanged. Native signatures are tested separately with --gemini-history. HTTP/provider/transport failures need controlled follow-up; this runner does not classify natural-language errors.\n");
         text.AppendLine("Detailed statuses, wire ID fields, HTTP statuses, structured failure facts and usage: [attempts.jsonl](attempts.jsonl). Headers, keys, URLs, raw prompts, response text and reasoning are not written.\n");
         return text.ToString();
     }
 
-    static string? GitCommit() {
+    internal static string? GitCommit() {
         try {
             using var process = Process.Start(new ProcessStartInfo("git", "rev-parse HEAD") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true });
             string? output = process?.StandardOutput.ReadToEnd().Trim();

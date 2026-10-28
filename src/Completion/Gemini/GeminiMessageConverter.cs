@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Utils;
 using Atelia.Diagnostics;
@@ -50,8 +49,6 @@ internal static class GeminiMessageConverter {
             pendingToolCalls,
             targetInvocation
         );
-
-        EnsureNoPendingToolCalls(pendingToolCalls, "context ended");
 
         CompletionOutputContract outputContract =
             request.PromptPrefix.OutputContract;
@@ -153,9 +150,8 @@ internal static class GeminiMessageConverter {
         List<GeminiContent> contents,
         List<PendingToolCall> pendingToolCalls
     ) {
-        EnsureNoPendingToolCalls(pendingToolCalls, $"observation before tool results content={observation.Content}");
-
         if (string.IsNullOrWhiteSpace(observation.Content)) { return; }
+        pendingToolCalls.Clear();
 
         contents.Add(
             new GeminiContent {
@@ -174,31 +170,20 @@ internal static class GeminiMessageConverter {
     ) {
         var parts = new List<GeminiPart>();
 
-        if (pendingToolCalls.Count > 0) {
-            var resultsByCallId = CreateResultLookup(toolResults.Results);
-
-            foreach (var pendingToolCall in pendingToolCalls) {
-                if (resultsByCallId.Remove(pendingToolCall.ToolCallId, out var result)) {
-                    EnsureMatchingToolName(result, pendingToolCall);
-                    parts.Add(CreateFunctionResponsePart(result));
-                    continue;
-                }
-
-                throw new InvalidOperationException(
-                    $"Tool results are missing for pending Gemini functionCall id='{pendingToolCall.ToolCallId}'. ToolResultsMessage.Results must align 1:1 with the pending functionCall parts."
-                );
+        // Keep established call-order projection for an unambiguous association.
+        // Otherwise preserve supplied history and let the endpoint validate it.
+        IReadOnlyList<ToolResult> orderedResults = toolResults.Results;
+        if (pendingToolCalls.Count == toolResults.Results.Count
+            && pendingToolCalls.Select(c => c.ToolCallId).Distinct(StringComparer.Ordinal).Count() == pendingToolCalls.Count
+            && toolResults.Results.Select(r => r.ToolCallId).Distinct(StringComparer.Ordinal).Count() == toolResults.Results.Count) {
+            var lookup = toolResults.Results.ToDictionary(r => r.ToolCallId, StringComparer.Ordinal);
+            if (pendingToolCalls.All(c => lookup.TryGetValue(c.ToolCallId, out var result)
+                && string.Equals(c.ToolName, result.ToolName, StringComparison.Ordinal))) {
+                orderedResults = pendingToolCalls.Select(c => lookup[c.ToolCallId]).ToArray();
             }
-
-            if (resultsByCallId.Count > 0) {
-                var unexpectedCallId = resultsByCallId.Keys.First();
-                throw new InvalidOperationException(
-                    $"Tool result id='{unexpectedCallId}' does not match the pending Gemini functionCall parts."
-                );
-            }
-
-            pendingToolCalls.Clear();
         }
-        else if (toolResults.Results.Count > 0) { throw new InvalidOperationException("Tool results appeared without a preceding Gemini functionCall content."); }
+        foreach (var result in orderedResults) parts.Add(CreateFunctionResponsePart(result));
+        pendingToolCalls.Clear();
 
         AppendTrailingObservation(toolResults, parts);
 
@@ -218,16 +203,12 @@ internal static class GeminiMessageConverter {
         List<PendingToolCall> pendingToolCalls,
         CompletionDescriptor targetInvocation
     ) {
-        EnsureNoPendingToolCalls(pendingToolCalls, $"model action before tool results blockCount={action.Blocks.Count}");
+        pendingToolCalls.Clear();
 
         var replayBlock = action.Blocks.OfType<GeminiReplayBlock>().SingleOrDefault();
-        if (replayBlock is not null) {
-            if (!string.Equals(replayBlock.Origin.ProviderId, targetInvocation.ProviderId, StringComparison.Ordinal)
-                || !string.Equals(replayBlock.Origin.ApiSpecId, targetInvocation.ApiSpecId, StringComparison.Ordinal)) {
-                throw new InvalidOperationException(
-                    "Gemini replay block Origin must match the target provider and API spec."
-                );
-            }
+        if (replayBlock is not null
+            && string.Equals(replayBlock.Origin.ProviderId, targetInvocation.ProviderId, StringComparison.Ordinal)
+            && string.Equals(replayBlock.Origin.ApiSpecId, targetInvocation.ApiSpecId, StringComparison.Ordinal)) {
             ValidateReplayBlockConsistency(action, replayBlock);
             var replayContent = BuildContentFromReplayBlock(replayBlock, pendingToolCalls);
             contents.Add(replayContent);
@@ -243,7 +224,21 @@ internal static class GeminiMessageConverter {
                     parts.Add(new GeminiPart { Text = textBlock.Content });
                     break;
 
-                case ActionBlock.ToolCall:
+                case ActionBlock.ToolCall toolCallBlock:
+                    var toolCall = toolCallBlock.Call;
+                    parts.Add(new GeminiPart {
+                        FunctionCall = new GeminiFunctionCall {
+                            Name = toolCall.ToolName,
+                            Id = toolCall.ToolCallId,
+                            Args = BuildFunctionArgs(toolCall.RawArgumentsJson)
+                        },
+                        // Google's documented import path for tool history from other models.
+                        // Set it on the first call of each action, so appending a new turn
+                        // does not rewrite the already projected history prefix.
+                        // https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures
+                        ThoughtSignature = hasToolCalls ? null : "skip_thought_signature_validator"
+                    });
+                    pendingToolCalls.Add(new PendingToolCall(toolCall.ToolName, toolCall.ToolCallId));
                     hasToolCalls = true;
                     break;
 
@@ -252,15 +247,9 @@ internal static class GeminiMessageConverter {
             }
         }
 
-        if (hasToolCalls) {
-            throw new InvalidOperationException(
-                "Gemini tool replay requires GeminiReplayBlock so functionCall thoughtSignature can be preserved."
-            );
-        }
-
         if (parts.Count == 0) {
             throw new InvalidOperationException(
-                "Action message has no Gemini-replayable content. Provide text content or a GeminiReplayBlock."
+                "Action message has no Gemini-replayable content. Provide visible text or tool calls, or a GeminiReplayBlock matching the target provider and API spec."
             );
         }
 
@@ -294,10 +283,12 @@ internal static class GeminiMessageConverter {
                 part.FunctionCall = new GeminiFunctionCall {
                     Name = payloadPart.FunctionCall.Name,
                     Id = payloadPart.FunctionCall.ToolCallId,
-                    Args = BuildFunctionArgs(payloadPart.FunctionCall)
+                    Args = BuildFunctionArgs(payloadPart.FunctionCall.RawArgumentsJson)
                 };
 
-                pendingToolCalls.Add(new PendingToolCall(payloadPart.FunctionCall.Name, payloadPart.FunctionCall.ToolCallId));
+                if (payloadPart.FunctionCall.ToolCallId is { } callId) {
+                    pendingToolCalls.Add(new PendingToolCall(payloadPart.FunctionCall.Name, callId));
+                }
             }
 
             parts.Add(part);
@@ -327,13 +318,7 @@ internal static class GeminiMessageConverter {
 
         var payloadToolCalls = payload.Parts
             .Where(static part => part.FunctionCall is not null)
-            .Select(
-            static part => new RawToolCall(
-                part.FunctionCall!.Name,
-                part.FunctionCall.ToolCallId,
-                StreamParserToolUtility.NormalizeRawArgumentsJson(part.FunctionCall.RawArgumentsJson)
-            )
-        )
+            .Select(static part => part.FunctionCall!)
             .ToArray();
 
         if (payloadToolCalls.Length != visibleToolCalls.Count) {
@@ -346,7 +331,7 @@ internal static class GeminiMessageConverter {
             var payloadCall = payloadToolCalls[i];
             var visibleCall = visibleToolCalls[i];
 
-            if (!string.Equals(payloadCall.ToolName, visibleCall.ToolName, StringComparison.Ordinal)
+            if (!string.Equals(payloadCall.Name, visibleCall.ToolName, StringComparison.Ordinal)
                 || !string.Equals(payloadCall.ToolCallId, visibleCall.ToolCallId, StringComparison.Ordinal)
                 || !JsonTextsSemanticallyEqual(payloadCall.RawArgumentsJson, visibleCall.RawArgumentsJson)) {
                 throw new InvalidOperationException(
@@ -356,26 +341,14 @@ internal static class GeminiMessageConverter {
         }
     }
 
-    private static JsonElement BuildFunctionArgs(GeminiReplayPayloadCodec.GeminiReplayPayloadFunctionCall functionCall) {
-        var json = StreamParserToolUtility.NormalizeRawArgumentsJson(functionCall.RawArgumentsJson);
-
-        try {
-            using var document = JsonDocument.Parse(json);
-            if (document.RootElement.ValueKind == JsonValueKind.Object) { return document.RootElement.Clone(); }
-
-            DebugUtil.Warning(
-                CompletionDebugCategories.Provider,
-                $"[Gemini] Function replay requires object args; fallback to empty object toolName={functionCall.Name} toolCallId={functionCall.ToolCallId} rootKind={document.RootElement.ValueKind}"
-            );
+    private static JsonElement BuildFunctionArgs(string rawArgumentsJson) {
+        // Gemini functionCall.args is an object. Never silently replace invalid
+        // arguments with {}, which would describe a different tool invocation.
+        using var document = JsonDocument.Parse(rawArgumentsJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object) {
+            throw new InvalidOperationException("Gemini functionCall args must be a JSON object.");
         }
-        catch (JsonException ex) {
-            DebugUtil.Warning(
-                CompletionDebugCategories.Provider,
-                $"[Gemini] Function replay received invalid raw args JSON; fallback to empty object toolName={functionCall.Name} toolCallId={functionCall.ToolCallId} exceptionType={ex.GetType().FullName}"
-            );
-        }
-
-        return JsonSerializer.SerializeToElement(new JsonObject());
+        return document.RootElement.Clone();
     }
 
     private static GeminiPart CreateFunctionResponsePart(ToolResult result) {
@@ -400,35 +373,6 @@ internal static class GeminiMessageConverter {
         }
     }
 
-    private static void EnsureMatchingToolName(ToolResult result, PendingToolCall pendingToolCall) {
-        if (string.Equals(result.ToolName, pendingToolCall.ToolName, StringComparison.Ordinal)) { return; }
-
-        throw new InvalidOperationException(
-            $"Gemini tool result name mismatch for functionCall id='{pendingToolCall.ToolCallId}': expected '{pendingToolCall.ToolName}', got '{result.ToolName}'. ToolResultsMessage.Results must align by ToolCallId + ToolName."
-        );
-    }
-
-    private static Dictionary<string, ToolResult> CreateResultLookup(IReadOnlyList<ToolResult> results) {
-        var lookup = new Dictionary<string, ToolResult>(StringComparer.Ordinal);
-
-        foreach (var result in results) {
-            if (string.IsNullOrWhiteSpace(result.ToolCallId)) { throw new InvalidOperationException("Tool result is missing Gemini functionCall id."); }
-
-            if (!lookup.TryAdd(result.ToolCallId, result)) { throw new InvalidOperationException($"Duplicate Gemini tool result id='{result.ToolCallId}'."); }
-        }
-
-        return lookup;
-    }
-
-    private static void EnsureNoPendingToolCalls(IReadOnlyList<PendingToolCall> pendingToolCalls, string context) {
-        if (pendingToolCalls.Count == 0) { return; }
-
-        var firstPending = pendingToolCalls[0];
-        throw new InvalidOperationException(
-            $"Gemini pending functionCall id='{firstPending.ToolCallId}' was not followed by ToolResultsMessage before {context}."
-        );
-    }
-
     private static List<GeminiTool>? BuildToolDefinitions(ImmutableArray<ToolDefinition> tools) {
         if (tools.IsDefaultOrEmpty) { return null; }
 
@@ -438,7 +382,7 @@ internal static class GeminiMessageConverter {
                 new GeminiFunctionDeclaration {
                     Name = definition.Name,
                     Description = definition.Description,
-                    Parameters = ConvertJsonSchemaToGeminiSchema(JsonToolSchemaBuilder.BuildSchema(definition))
+                    ParametersJsonSchema = JsonToolSchemaBuilder.BuildSchema(definition)
                 }
             );
         }
@@ -449,76 +393,6 @@ internal static class GeminiMessageConverter {
             }
         };
     }
-
-    private static JsonElement ConvertJsonSchemaToGeminiSchema(JsonElement schema) {
-        var node = JsonNode.Parse(schema.GetRawText());
-        if (node is null) { return JsonSerializer.SerializeToElement(new JsonObject()); }
-
-        RewriteJsonSchemaNode(node);
-        return node.Deserialize<JsonElement>();
-    }
-
-    private static void RewriteJsonSchemaNode(JsonNode node) {
-        switch (node) {
-            case JsonObject obj:
-                obj.Remove("additionalProperties");
-                obj.Remove("examples");
-                obj.Remove("format");
-
-                if (obj["type"] is JsonArray union) {
-                    string[] members = [.. union
-                        .Select(static item => item?.GetValue<string>())
-                        .Where(static item => item is not null)!];
-                    if (members.Length != 2
-                        || !members.Contains("null", StringComparer.Ordinal)) {
-                        throw new InvalidOperationException(
-                            "Gemini tool schemas support only an exact non-null type plus null union."
-                        );
-                    }
-                    string nonNull = members.Single(static item =>
-                        !string.Equals(item, "null", StringComparison.Ordinal));
-                    obj["type"] = ToGeminiType(nonNull);
-                    obj["nullable"] = true;
-                    if (obj["enum"] is JsonArray values) {
-                        for (int index = values.Count - 1; index >= 0; index--) {
-                            if (values[index] is null) {
-                                values.RemoveAt(index);
-                            }
-                        }
-                    }
-                }
-                else if (obj["type"] is JsonValue typeValue && typeValue.TryGetValue<string>(out var typeName)) {
-                    obj["type"] = ToGeminiType(typeName);
-                }
-
-                foreach (var (_, child) in obj.ToList()) {
-                    if (child is not null) {
-                        RewriteJsonSchemaNode(child);
-                    }
-                }
-
-                break;
-
-            case JsonArray array:
-                foreach (var child in array) {
-                    if (child is not null) {
-                        RewriteJsonSchemaNode(child);
-                    }
-                }
-
-                break;
-        }
-    }
-
-    private static string ToGeminiType(string typeName) => typeName switch {
-        "object" => "OBJECT",
-        "string" => "STRING",
-        "boolean" => "BOOLEAN",
-        "integer" => "INTEGER",
-        "number" => "NUMBER",
-        "array" => "ARRAY",
-        _ => typeName
-    };
 
     private static bool JsonTextsSemanticallyEqual(string leftJson, string rightJson) {
         try {

@@ -10,7 +10,7 @@ namespace Atelia.Completion.Gemini.Tests;
 
 public sealed class GeminiToolSchemaProjectionTests {
     [Fact]
-    public void ConvertToApiRequest_ProjectsRecursiveToolSchemaIntoGeminiParameters() {
+    public void ConvertToApiRequest_PreservesRecursiveJsonSchemaInParametersJsonSchema() {
         if (!GeminiProductionTypesPresent()) { return; }
 
         var request = new CompletionRequest(
@@ -29,53 +29,56 @@ public sealed class GeminiToolSchemaProjectionTests {
         var declaration = Assert.Single(tool.GetProperty("functionDeclarations").EnumerateArray().ToArray());
 
         Assert.Equal("search_docs", declaration.GetProperty("name").GetString());
+        Assert.False(declaration.TryGetProperty("parameters", out _));
         AssertJsonSemanticallyEqual(
             """
             {
-              "type": "OBJECT",
+              "type": "object",
+              "additionalProperties": false,
               "properties": {
                 "query": {
-                  "type": "STRING",
+                  "type": "string",
                   "description": "Query text.",
+                  "examples": ["cache lookup"],
                   "minLength": 3,
                   "maxLength": 50,
                   "pattern": "^[a-z ]+$"
                 },
                 "filters": {
-                  "type": "OBJECT",
-                  "nullable": true,
+                  "type": ["object", "null"],
+                  "additionalProperties": false,
                   "description": "Structured filters.",
                   "properties": {
                     "mode": {
-                      "type": "STRING",
-                      "nullable": true,
+                      "type": ["string", "null"],
                       "description": "Search mode.",
-                      "enum": ["Exact", "Fuzzy"]
+                      "enum": ["Exact", "Fuzzy", null]
                     },
                     "clauses": {
-                      "type": "ARRAY",
-                      "nullable": true,
+                      "type": ["array", "null"],
                       "description": "Filter clauses.",
                       "items": {
-                        "type": "OBJECT",
+                        "type": "object",
+                        "additionalProperties": false,
                         "description": "Single filter clause.",
                         "properties": {
                           "field": {
-                            "type": "STRING",
+                            "type": "string",
                             "description": "Target field.",
                             "enum": ["title", "body"]
                           },
                           "boost": {
-                            "type": "NUMBER",
+                            "type": "number",
+                            "format": "float64",
                             "description": "Boost weight.",
                             "minimum": 0.1,
                             "maximum": 2
                           },
                           "terms": {
-                            "type": "ARRAY",
+                            "type": "array",
                             "description": "Terms to match.",
                             "items": {
-                              "type": "STRING",
+                              "type": "string",
                               "description": "Single term.",
                               "minLength": 2,
                               "maxLength": 20
@@ -92,7 +95,7 @@ public sealed class GeminiToolSchemaProjectionTests {
               "required": ["query", "filters"]
             }
             """,
-            declaration.GetProperty("parameters")
+            declaration.GetProperty("parametersJsonSchema")
         );
     }
 
@@ -107,6 +110,7 @@ public sealed class GeminiToolSchemaProjectionTests {
                         new ToolSchema.Value(
                             ToolParamType.String,
                             description: "Query text.",
+                            example: "cache lookup",
                             minLength: 3,
                             maxLength: 50,
                             pattern: "^[a-z ]+$"

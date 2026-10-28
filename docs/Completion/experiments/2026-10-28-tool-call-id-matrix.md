@@ -3,6 +3,9 @@
 日期：2026-10-28。生产代码基线：`9dcc9f3d69dfe87b085eca8cae2d81bc1736610c`。
 本次新增独立实验 runner，没有修改生产库、ActionMessage 或 ID 映射行为。
 
+后续进展：同日已修改 Gemini adapter 并完成 4×4 全矩阵，见
+[Gemini 历史兼容性报告](2026-10-28-gemini-history-compatibility.md)。下文保留修改前的实验记录。
+
 ## 结论与范围
 
 当前已测组合没有出现必须转换 tool-call ID 的反例，支持暂缓来源绑定和兼容映射层。

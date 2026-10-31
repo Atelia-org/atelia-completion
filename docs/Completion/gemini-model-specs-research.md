@@ -59,7 +59,7 @@ GeminiClientOptions 提供 ReasoningEffort 和 ModelSpecs，默认分别为 Prov
 
 | 业务意图 | 映射或投影 |
 | --- | --- |
-| ProviderDefault | 省略 thinkingConfig，保留该模型服务端默认 |
+| ProviderDefault | 省略 thinkingLevel，保留模型默认投入；独立的 RequestReasoningText 可请求 includeThoughts |
 | Disabled | EffectiveEffort=Low，wire=low |
 | Low | low |
 | Medium | medium |
@@ -77,7 +77,7 @@ Flash-Lite 以及 3.5/3.6 Flash 多出 minimal，需要明确框架与原生挡�
 
 ### 未知模型的透传边界
 
-ProviderDefault 在所有目录状态下都省略显式 thinking 控制，绝不调用 mapper；保留既有未知模型的 maximum 查询与生成路径。
+ProviderDefault 在所有目录状态下都省略显式 thinking level，绝不调用 mapper；保留既有未知模型的 maximum 查询与生成路径。2026-10-31 起，可读摘要由 [独立运行选项](reasoning-text-design.md) 默认请求，不再要求整个 thinkingConfig 省略。
 
 对于非默认 effort，首个切片要求选中规格提供 mapper。未命中或条目缺 mapper 时，在 GET 前明确报告不支持此配置，例如 NotSupportedException；不能悄悄丢弃意图，也不能把 XHigh/Max 或 Disabled 伪造为原生 thinkingLevel。Gemini 当前没有可以保留的既有 effort 默认映射，且 level/budget 不同，因此这不是撤掉已有透传能力。
 

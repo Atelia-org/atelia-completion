@@ -126,8 +126,9 @@ flowchart LR
 | ReasoningMapper | 纯语义 mapper | 从框架意图得到有效挡位和厂商名称 |
 | OutputTokenLimit | 该规格选定的正整数输出上限 | 内建填已核查的模型最大值，下游可填明确的兜底假设；仍不放入业务请求 |
 | ForcedToolChoiceSupported | 可空的明确模型事实 | false 无条件拒绝；true 允许当前已支持的 adaptive 组合；null 采用 adapter 的保守规则 |
+| AdaptiveThinkingEnabledByDefault | 可空的明确模型默认行为 | Anthropic 在 true 时可独立请求可读摘要，不为诊断强制开启原本关闭的思考 |
 
-不引入通用 Constraints 容器和 DefaultThinking 三态。首批 Opus 5.5 的 forced-tool 禁令是无条件的，直接声明 false 即可。`ProviderDefault` 仍只表示省略，并不表示关闭；以后出现确需依据服务默认状态校验的实际模型，再增加那个具体条件。
+不引入通用 Constraints 容器。首批 Opus 5.5 的 forced-tool 禁令是无条件的，直接声明 false 即可。`ProviderDefault` 仍表示省略投入档位，并不表示关闭。2026-10-31 的 [可读 reasoning API](reasoning-text-design.md) 增加了具体的默认 adaptive 事实，用于诊断显示投影，不扩大 forced-tool 拒绝条件。
 
 来源 URL、核查日期和适用模式保留在 C# 条目注释及 Markdown specs，不作为每条运行时规格的必填模块。
 
@@ -163,7 +164,7 @@ EffectiveEffort 表示归一后的语义意图，WireLevel 表示厂商字符串
 
 ### ProviderDefault 与 Disabled
 
-`ProviderDefault` 不参与排序，总是省略显式 reasoning 控制。它保留服务器默认，不映射成 Medium，也不根据本库记住的服务默认填一个显式 max/high。
+`ProviderDefault` 不参与排序，总是省略显式 reasoning effort / thinking level。它保留服务器默认投入，不映射成 Medium，也不根据本库记住的服务默认填一个显式 max/high。独立的 `RequestReasoningText` 可以添加摘要显示配置，不能据此推断整个 reasoning/thinking 对象必然省略。
 
 统一入口先处理 ProviderDefault，再调用可替换 mapper；自定义 mapper 也不能把这个意图变成显式参数。其可替换范围是其余六个显式意图的映射政策。
 

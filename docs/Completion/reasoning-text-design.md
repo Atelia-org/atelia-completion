@@ -63,7 +63,7 @@ Anthropic 的 thinking.type 不能只为显示偏好而省略。`CompletionModel
 
 验收覆盖默认/显式开启/关闭与 effort 的请求矩阵；Gemini 正文隔离、流式事件、签名、持久化、原生回放与失败清理；关闭偏好后服务端返回的可读内容；日志透传。离线 fixture 与真实模型分别报告。独立 NuGet 消费者以唯一开发版本验证 public API 和实际 nupkg。
 
-真实调用入口是 `experiments/ToolCallIdMatrix --reasoning-text <config>`。复用运行时凭据和宿主期限，只记录状态、计数、答案校验与协议字段白名单，不保存原始 reasoning 或认证信息。每端点最多四次调用，无自动重试。具体运行证据在完成验收后补充。
+真实调用入口是 `experiments/ToolCallIdMatrix --reasoning-text <config>`。复用运行时凭据和宿主期限，只记录状态、计数、答案校验与协议字段白名单，不保存原始 reasoning 或认证信息。每端点最多四次调用，无自动重试。[本次验收](experiments/2026-10-31-reasoning-text.md) 记录离线、四端点真实调用和独立包消费结果。
 
 ## 协议依据
 

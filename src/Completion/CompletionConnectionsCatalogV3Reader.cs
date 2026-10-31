@@ -12,7 +12,8 @@ internal static class CompletionConnectionsCatalogV3Reader {
     );
 
     internal static CompletionConnectionCatalogConfig Decode(
-        ReadOnlySpan<byte> bytes
+        ReadOnlySpan<byte> bytes,
+        bool resolveEnvironment = true
     ) {
         if (bytes.Length is < 1
             or > CompletionConnectionConfigLoader.MaximumInputUtf8Bytes) {
@@ -97,13 +98,16 @@ internal static class CompletionConnectionsCatalogV3Reader {
                     root,
                     connectionIds
                 );
-            return CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(
-                new CompletionConnectionCatalogConfig(
-                    Array.AsReadOnly(connections),
-                    selectableConnectionIds,
-                    bindings
-                )
+            var catalog = new CompletionConnectionCatalogConfig(
+                Array.AsReadOnly(connections),
+                selectableConnectionIds,
+                bindings
             );
+            // Exact-selection consumers still validate every entry and catalog reference,
+            // but must not resolve unused providers' environment-backed configuration.
+            return resolveEnvironment
+                ? CompletionConnectionConfigLoader.NormalizeAndValidateCatalog(catalog)
+                : Freeze(catalog);
         }
         catch (InvalidDataException) {
             throw;

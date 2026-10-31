@@ -199,3 +199,21 @@ Tools 独立引用 `Atelia.Completion.Tools`。从 `MethodToolWrapper` 或 `Arti
 Diagnostics 可单独引用，详见 [日志配置](../../src/Diagnostics/README.md)。Release 包中 Debug 级别调用已被 `[Conditional("DEBUG")]` 编译裁掉，不能通过环境变量恢复；需要库内部 Debug 诊断时使用源码 Debug 联调。
 
 源码离线测试入口是 `tests/Completion.Tests/Completion.Tests.csproj`。真实 provider 探针有显式 live 开关，须记录实际 provider/model/platform 和结果；默认未启用的测试与历史 `experiments/` 文件不代表本轮已经执行在线调用。HTTP 录制回放的边界见 [管线文档](http-transport-pipeline.md)，golden log 不是权威持久回执。
+
+## 7. 从连接目录只启用一条连接
+
+当前源码新增 `LoadSelectedConnectionFile(path, connectionId)` 与 `DecodeSelectedConnection(utf8Json, connectionId)`，尚未包含在上述 `0.1.0-preview.6` 包中。宿主一次只选择一条连接时，可以避免要求未选 provider 的环境变量和凭据也已配置：
+
+```csharp
+CompletionConnectionConfig selected = CompletionConnectionConfigLoader
+    .LoadSelectedConnectionFile("connections.json", "town-residents");
+await using var registry = new CompletionConnectionRegistry(
+    new CompletionConnectionCatalogConfig([selected]),
+    new DefaultCompletionClientFactory());
+ICompletionClient client = registry.GetClient(selected.Id);
+// 使用 selected.ModelId 构造请求；此处尚未发起任何模型调用。
+```
+
+文件仍是严格 V3 catalog：整个文档的版本、字段、重复 ID、每条连接的字段形状、大小界限，以及 selectable/bindings 引用都必须有效。仅所选连接解析 `baseAddressEnv` / `apiKeyEnv`；选择按大小写敏感的精确 ID 匹配，不使用默认连接或静默回退。未选连接的结构错误仍然拒绝，所选连接缺少必要环境变量仍然失败。读取不会创建客户端、调用 provider 或写回文件；对应的 factory（包括 Codex 凭据与 provider-specific 工厂）由宿主选择。
+
+原有 `LoadCatalogFile` / `DecodeCatalog` 继续解析整个目录的环境来源，适合确实需要准备全部连接的消费者。返回的配置可能包含解析后的秘密值，不应把它记录进日志或业务状态。

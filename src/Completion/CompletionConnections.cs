@@ -113,6 +113,28 @@ public static class CompletionConnectionConfigLoader {
         ReadOnlySpan<byte> utf8Json
     ) => CompletionConnectionsCatalogV3Reader.Decode(utf8Json);
 
+    /// <summary>Validates a complete strict V3 catalog and resolves only the exact selected connection.</summary>
+    /// <remarks>Every entry, duplicate, bound and selection/binding reference is structurally checked.
+    /// Only the selected entry resolves environment-backed values; unused providers need no configured
+    /// environment or credentials. Selection is ordinal with no fallback. This does not create clients.</remarks>
+    public static CompletionConnectionConfig DecodeSelectedConnection(
+        ReadOnlySpan<byte> utf8Json,
+        string connectionId
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
+        CompletionConnectionCatalogConfig catalog = CompletionConnectionsCatalogV3Reader.Decode(
+            utf8Json,
+            resolveEnvironment: false
+        );
+        CompletionConnectionConfig selected = catalog.Connections.SingleOrDefault(
+            connection => string.Equals(connection.Id, connectionId, StringComparison.Ordinal)
+        ) ?? throw new ArgumentException(
+            $"The selected connection '{connectionId}' does not exist in the Completion catalog.",
+            nameof(connectionId)
+        );
+        return NormalizeAndValidateCatalog(new([selected])).Connections.Single();
+    }
+
     /// <summary>Reads a bounded ordinary file and delegates to <see cref="Decode"/>.</summary>
     public static CompletionConnectionsFileConfig LoadFile(string path) {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -145,7 +167,20 @@ public static class CompletionConnectionConfigLoader {
     /// <summary>Reads a bounded ordinary file and delegates to <see cref="DecodeCatalog"/>.</summary>
     public static CompletionConnectionCatalogConfig LoadCatalogFile(
         string path
+    ) => DecodeCatalog(ReadCatalogFileBytes(path));
+
+    /// <summary>Reads a bounded V3 catalog file and resolves only the exact selected connection.</summary>
+    /// <remarks>Uses the same strict document validation as <see cref="DecodeSelectedConnection"/>.
+    /// Existing <see cref="LoadCatalogFile"/> continues to resolve every connection.</remarks>
+    public static CompletionConnectionConfig LoadSelectedConnectionFile(
+        string path,
+        string connectionId
     ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
+        return DecodeSelectedConnection(ReadCatalogFileBytes(path), connectionId);
+    }
+
+    private static byte[] ReadCatalogFileBytes(string path) {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         string resolvedPath = Path.GetFullPath(path);
@@ -170,7 +205,7 @@ public static class CompletionConnectionConfigLoader {
                 "Completion catalog file changed during its bounded read."
             );
         }
-        return DecodeCatalog(bytes);
+        return bytes;
     }
 
     /// <summary>

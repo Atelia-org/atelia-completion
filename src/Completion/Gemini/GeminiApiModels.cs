@@ -30,7 +30,10 @@ internal sealed class GeminiGenerationConfig {
 
 internal sealed class GeminiThinkingConfig {
     [JsonPropertyName("thinkingLevel")]
-    public required string ThinkingLevel { get; set; }
+    public string? ThinkingLevel { get; set; }
+
+    [JsonPropertyName("includeThoughts")]
+    public bool? IncludeThoughts { get; set; }
 }
 
 internal sealed class GeminiContent {
@@ -42,6 +45,9 @@ internal sealed class GeminiContent {
 }
 
 internal sealed class GeminiPart {
+    [JsonPropertyName("thought")]
+    public bool? Thought { get; set; }
+
     [JsonPropertyName("text")]
     public string? Text { get; set; }
 

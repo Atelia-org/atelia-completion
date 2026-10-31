@@ -13,6 +13,14 @@ public sealed record CompletionModelSpec {
     public ICompletionReasoningEffortMapper? ReasoningMapper { get; init; }
 
     /// <summary>
+    /// Whether the model already uses adaptive thinking when its thinking control
+    /// is omitted. Anthropic uses true to request readable summaries without
+    /// enabling thinking on a model where it would otherwise be off. Null leaves
+    /// the default unknown; it is not inferred from the effort mapper.
+    /// </summary>
+    public bool? AdaptiveThinkingEnabledByDefault { get; init; }
+
+    /// <summary>
     /// Positive output limit selected by this specification. Built-ins describe model
     /// maxima; hosts may supply an explicit fallback assumption for unknown models.
     /// </summary>

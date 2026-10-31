@@ -119,7 +119,7 @@ public sealed class GeminiModelSpecsLiveTests(ITestOutputHelper output) {
                 JsonElement config = doc.RootElement.GetProperty("generationConfig");
                 Maximum = config.GetProperty("maxOutputTokens").GetInt32();
                 Level = config.GetProperty("thinkingConfig").GetProperty("thinkingLevel").GetString();
-                Assert.False(config.GetProperty("thinkingConfig").TryGetProperty("includeThoughts", out _));
+                Assert.True(config.GetProperty("thinkingConfig").GetProperty("includeThoughts").GetBoolean());
                 JsonElement[] parts = doc.RootElement.GetProperty("contents").EnumerateArray()
                     .SelectMany(c => c.GetProperty("parts").EnumerateArray()).ToArray();
                 ReplayedSignatures = parts.Where(p => p.TryGetProperty("thoughtSignature", out _))

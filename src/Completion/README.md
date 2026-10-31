@@ -142,5 +142,8 @@ Responses 和 Codex Responses 支持 `ToolDefinition.FromText`：无约束文本
 为 `tool-input.unsupported-text`。这项能力已覆盖离线 fixture，未作为实际模型在线验收声明。
 使用入口见 [TextToolWrapper](../Completion.Tools/README.md#11-原生文本工具)。
 
-`LoggingCompletionClient` 的 call-log 格式升级为 v11：工具声明记录 `inputKind` 和可选的
-`textFormat`，文本工具的 `inputSchema` 为空；文本历史使用 `text-tool-call` block kind。
+当前源码的 `LoggingCompletionClient` call-log 为 v12：invocationOptions 记录默认开启的
+`requestReasoningText`，结果块中的 `plainTextForDebug` 可以是上游明文或摘要。
+工具声明记录 `inputKind` 和可选 `textFormat`，文本工具的 `inputSchema` 为空；文本历史使用
+`text-tool-call` block kind。可读 reasoning 偏好独立于投入档位，不保证非空，也不自动重试不支持
+摘要的服务；完整映射见 [设计合同](../../docs/Completion/reasoning-text-design.md)。

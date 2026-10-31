@@ -11,6 +11,7 @@ internal sealed class GeminiStreamParser {
     private readonly List<GeminiReplayPayloadCodec.GeminiReplayPayloadPart> _replayParts = new();
     private bool _terminalEventObserved;
     private bool _postTerminalUsageAllowed;
+    private bool _observingThought;
 
     public bool TerminalEventObserved => _terminalEventObserved;
 
@@ -185,6 +186,7 @@ internal sealed class GeminiStreamParser {
 
     public void DiscardIncompleteStreamingState() {
         _replayParts.Clear();
+        _observingThought = false;
     }
 
     private void HandleCandidate(JsonObject candidate, CompletionAggregator aggregator) {
@@ -246,6 +248,7 @@ internal sealed class GeminiStreamParser {
 
     private void HandlePart(JsonObject part, CompletionAggregator aggregator) {
         var thoughtSignature = GetOptionalString(part, "thoughtSignature", "content part");
+        var thought = GetOptionalBoolean(part, "thought", "content part");
         var hasFunctionCall = part.TryGetPropertyValue("functionCall", out var functionCallNode)
             && functionCallNode is not null;
         var hasText = part.TryGetPropertyValue("text", out var textNode)
@@ -283,6 +286,7 @@ internal sealed class GeminiStreamParser {
                     )
                 : new JsonObject();
             var rawArgumentsJson = arguments.ToJsonString();
+            EndThoughtObservation(aggregator);
             aggregator.AppendToolCall(
                 StreamParserToolUtility.BuildToolCallWithoutSchema(toolName, toolCallId, rawArgumentsJson)
             );
@@ -295,7 +299,8 @@ internal sealed class GeminiStreamParser {
                         toolName,
                         toolCallId,
                         rawArgumentsJson
-                    )
+                    ),
+                    Thought: thought
                 )
             );
 
@@ -309,7 +314,12 @@ internal sealed class GeminiStreamParser {
                     "Gemini content part field 'text' must be a string."
                 );
             }
-            if (!string.IsNullOrEmpty(text)) {
+            if (thought == true) {
+                BeginThoughtObservation(aggregator);
+                aggregator.AppendReasoningDelta(text);
+            }
+            else {
+                EndThoughtObservation(aggregator);
                 aggregator.AppendContent(text);
             }
 
@@ -317,19 +327,23 @@ internal sealed class GeminiStreamParser {
                 new GeminiReplayPayloadCodec.GeminiReplayPayloadPart(
                     Text: text,
                     ThoughtSignature: string.IsNullOrWhiteSpace(thoughtSignature) ? null : thoughtSignature,
-                    FunctionCall: null
+                    FunctionCall: null,
+                    Thought: thought
                 )
             );
 
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(thoughtSignature)) {
+        if (!string.IsNullOrWhiteSpace(thoughtSignature) || thought.HasValue) {
+            if (thought == true) { BeginThoughtObservation(aggregator); }
+            else { EndThoughtObservation(aggregator); }
             _replayParts.Add(
                 new GeminiReplayPayloadCodec.GeminiReplayPayloadPart(
-                    Text: string.Empty,
+                    Text: null,
                     ThoughtSignature: thoughtSignature,
-                    FunctionCall: null
+                    FunctionCall: null,
+                    Thought: thought
                 )
             );
         }
@@ -391,6 +405,7 @@ internal sealed class GeminiStreamParser {
     }
 
     private void EmitReplayBlockIfNeeded(CompletionAggregator aggregator) {
+        EndThoughtObservation(aggregator);
         if (_replayParts.Count == 0) { return; }
 
         var payload = GeminiReplayPayloadCodec.Encode("model", _replayParts);
@@ -399,11 +414,23 @@ internal sealed class GeminiStreamParser {
             new GeminiReplayBlock(
                 payload,
                 aggregator.Invocation,
-                PlainText: null
+                PlainText: GeminiReplayPayloadCodec.GetPlainText(_replayParts)
             )
         );
 
         _replayParts.Clear();
+    }
+
+    private void BeginThoughtObservation(CompletionAggregator aggregator) {
+        if (_observingThought) { return; }
+        aggregator.BeginThinking();
+        _observingThought = true;
+    }
+
+    private void EndThoughtObservation(CompletionAggregator aggregator) {
+        if (!_observingThought) { return; }
+        aggregator.EndThinkingObservation();
+        _observingThought = false;
     }
 
     private static void RecordTermination(string finishReason, CompletionAggregator aggregator) {
@@ -478,6 +505,14 @@ internal sealed class GeminiStreamParser {
         }
         throw new InvalidDataException(
             $"Gemini {context} field '{propertyName}' must be a non-negative integer or null."
+        );
+    }
+
+    private static bool? GetOptionalBoolean(JsonObject obj, string propertyName, string context) {
+        if (!obj.TryGetPropertyValue(propertyName, out var node)) { return null; }
+        if (node is JsonValue value && value.TryGetValue<bool>(out bool result)) { return result; }
+        throw new InvalidDataException(
+            $"Gemini {context} field '{propertyName}' must be a boolean."
         );
     }
 }

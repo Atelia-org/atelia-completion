@@ -9,6 +9,60 @@ using Xunit;
 namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIChatClientTests {
+    [Theory]
+    [InlineData(true, OpenAIChatReasoningMode.Ignore, true)]
+    [InlineData(false, OpenAIChatReasoningMode.Ignore, false)]
+    [InlineData(true, OpenAIChatReasoningMode.CaptureOnly, true)]
+    [InlineData(false, OpenAIChatReasoningMode.CaptureOnly, true)]
+    [InlineData(true, OpenAIChatReasoningMode.ReplayCompatible, true)]
+    [InlineData(false, OpenAIChatReasoningMode.ReplayCompatible, true)]
+    public async Task ReasoningTextPreference_CapturesTextWithoutExpandingReplayPermission(
+        bool requestText, OpenAIChatReasoningMode mode, bool expectCaptured
+    ) {
+        const string stream = """
+            data: {"choices":[{"index":0,"delta":{"reasoning_content":"Visible reasoning."},"finish_reason":null}]}
+
+            data: {"choices":[{"index":0,"delta":{"content":"Answer."},"finish_reason":"stop"}]}
+
+            data: [DONE]
+
+            """;
+        var handler = new SequenceHttpMessageHandler(EventStreamResponse(stream), EventStreamResponse(stream));
+        using var httpClient = CreateHttpClient(handler);
+        var dialect = OpenAIChatDialects.SgLangCompatible with { ReasoningMode = mode };
+        var client = new OpenAIChatClient(null, httpClient, dialect);
+        var observer = new CompletionStreamObserver();
+        var deltas = new List<string>();
+        observer.ReceivedReasoningDelta += deltas.Add;
+        var invocationOptions = new CompletionInvocationOptions { RequestReasoningText = requestText };
+
+        CompletionResult first = await client.StreamCompletionAsync(CreateRequest(), invocationOptions, observer);
+
+        Assert.Equal("Answer.", first.Message.GetFlattenedText());
+        Assert.Equal(expectCaptured ? ["Visible reasoning."] : Array.Empty<string>(), deltas);
+        if (expectCaptured) {
+            var reasoning = Assert.Single(first.Message.Blocks.OfType<OpenAIChatReasoningBlock>());
+            Assert.Equal("Visible reasoning.", reasoning.PlainText);
+            Assert.Equal(first.Invocation, reasoning.Origin);
+        }
+        else { Assert.Empty(first.Message.Blocks.OfType<OpenAIChatReasoningBlock>()); }
+
+        var followup = new CompletionRequest(first.Invocation.Model,
+            new CompletionPromptPrefix("system", CompletionOutputContract.ProviderDefault([]),
+                [new ObservationMessage("hello"), first.Message, new ObservationMessage("continue")]), []);
+        _ = await client.StreamCompletionAsync(followup, invocationOptions, null);
+
+        using var body = JsonDocument.Parse(handler.RequestBodies[1]);
+        var assistant = body.RootElement.GetProperty("messages").EnumerateArray()
+            .Single(message => message.GetProperty("role").GetString() == "assistant");
+        if (mode is OpenAIChatReasoningMode.ReplayCompatible) {
+            Assert.Equal("Visible reasoning.", assistant.GetProperty("reasoning_content").GetString());
+        }
+        else { Assert.False(assistant.TryGetProperty("reasoning_content", out _)); }
+        Assert.False(body.RootElement.TryGetProperty("reasoning_effort", out _));
+        Assert.False(body.RootElement.TryGetProperty("thinking", out _));
+    }
+
     [Fact]
     public void ClientOptionsDoNotExposeArbitraryJsonBodyInjection() {
         Assert.DoesNotContain(

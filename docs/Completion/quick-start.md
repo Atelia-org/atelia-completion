@@ -115,6 +115,10 @@ Codex 文件凭据支持 Windows/Linux。客户端借用 access-token snapshot�
 
 请求合同没有调用者自设 output-token cap；需要显式数值的 provider 使用模型能力规则。`CompletionInvocationOptions.PromptCacheReuseHint` 是 best-effort 的复用提示，不是禁止存储或隐私保证，也不属于请求逻辑身份。
 
+当前源码（尚未发布到本文的 `0.1.0-preview.6`）默认开启 `CompletionInvocationOptions.RequestReasoningText`，尽力请求明文 reasoning 或服务端摘要。三参数调用也默认开启，与 reasoning effort 独立。显式关闭可传 `new CompletionInvocationOptions { RequestReasoningText = false }`；关闭只停止额外请求，保留 provider/dialect 原有处理和原生回放负载。
+
+流式日志订阅 `observer.ReceivedReasoningDelta`；最终快照从 `result.Message.Blocks.OfType<ActionBlock.ReasoningBlock>()` 读取 `PlainText` 与 `Origin`。`PlainText` 可能是摘要，无可读内容时为 null；`GetFlattenedText()` 仅含正文。`LoggingCompletionClient` 可记录调用及块的可读视图。协议差异和验证边界见 [可读 reasoning 设计](reasoning-text-design.md)。
+
 ## 5. 分离业务意图与模型规格
 
 这些模型规格 API 自 `0.1.0-preview.4` 起随包发布。已接入 OpenAI Chat（含 DeepSeek wrapper）、Anthropic Messages 和 Gemini Generate Content；Responses、Codex 保持原行为。
@@ -169,9 +173,9 @@ var gemini = new GeminiClient(apiKey, httpClient,
     });
 ```
 
-七款已核查文本模型的短 ID 与 `models/{id}` 均内建 65,536 输出限值及 Low/Medium/High 映射；本地限值跳过 Models GET，缺值才查询。Disabled→Low、XHigh/Max→High；ProviderDefault 省略 thinkingConfig，不改模型自己的默认值。Lite 默认 minimal，所以 Disabled→Low 可能增加投入。宿主可提供原生 minimal 的 mapper，但结果须使用启用语义。
+七款已核查文本模型的短 ID 与 `models/{id}` 均内建 65,536 输出限值及 Low/Medium/High 映射；本地限值跳过 Models GET，缺值才查询。Disabled→Low、XHigh/Max→High；ProviderDefault 省略 thinkingLevel，不改模型自己的默认投入，独立的 RequestReasoningText 仍可请求摘要。Lite 默认 minimal，所以 Disabled→Low 可能增加投入。宿主可提供原生 minimal 的 mapper，但结果须使用启用语义。
 
-未知模型、Empty 或所选条目缺 mapper 时，ProviderDefault 保留查询与生成路径；非默认 effort 在 HTTP 前抛 NotSupportedException。首片仅投影 thinkingLevel，不提供 2.5 数值预算、摘要输出、Vertex 或 Interactions。模型范围、扩展边界和在线验收见 [Gemini 接入记录](gemini-model-specs-research.md#实施与验收记录)。
+未知模型、Empty 或所选条目缺 mapper 时，ProviderDefault 保留查询与生成路径；非默认 effort 在 HTTP 前抛 NotSupportedException。档位仅投影 thinkingLevel，不提供 2.5 数值预算、Vertex 或 Interactions。当前源码独立默认请求摘要，将 thought 文本与正文分离；模型范围和既有在线验收见 [Gemini 接入记录](gemini-model-specs-research.md#实施与验收记录)。
 
 连接文件仍保持单个 ModelId 与原 schema。kind=gemini 已可由 factory 创建；目录函数仅在构造 Chat/Anthropic/Gemini 客户端时调用一次：
 

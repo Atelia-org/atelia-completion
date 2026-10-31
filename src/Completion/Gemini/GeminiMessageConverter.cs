@@ -276,7 +276,8 @@ internal static class GeminiMessageConverter {
         foreach (var payloadPart in payload.Parts) {
             var part = new GeminiPart {
                 Text = payloadPart.Text,
-                ThoughtSignature = payloadPart.ThoughtSignature
+                ThoughtSignature = payloadPart.ThoughtSignature,
+                Thought = payloadPart.Thought
             };
 
             if (payloadPart.FunctionCall is not null) {
@@ -304,7 +305,8 @@ internal static class GeminiMessageConverter {
 
     private static void ValidateReplayBlockConsistency(ActionMessage action, GeminiReplayBlock replayBlock) {
         var payload = GeminiReplayPayloadCodec.Decode(replayBlock.OpaquePayload);
-        var payloadText = string.Concat(payload.Parts.Select(static part => part.Text ?? string.Empty));
+        var payloadText = string.Concat(payload.Parts.Where(static part => part.Thought != true)
+            .Select(static part => part.Text ?? string.Empty));
         var visibleText = action.GetFlattenedText();
         var visibleToolCalls = action.ToolCalls;
 

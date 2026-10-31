@@ -549,8 +549,10 @@ public sealed class AnthropicClientTests {
         Assert.Equal("tool_use", result.Termination.ProviderReason);
     }
 
-    [Fact]
-    public async Task StreamCompletionAsync_CleanEofFallbackPreservesSignedThinkingLifecycle() {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StreamCompletionAsync_CleanEofFallbackPreservesSignedThinkingLifecycle(bool requestText) {
         var handler = new SequenceHttpMessageHandler(
             EventStreamResponse(
                 """
@@ -581,10 +583,13 @@ public sealed class AnthropicClientTests {
         var observer = new CompletionStreamObserver();
         var thinkingBeginCount = 0;
         var thinkingEndCount = 0;
+        var reasoningDeltas = new List<string>();
         observer.ReceivedThinkingBegin += () => thinkingBeginCount++;
         observer.ReceivedThinkingEnd += () => thinkingEndCount++;
+        observer.ReceivedReasoningDelta += reasoningDeltas.Add;
 
-        var result = await client.StreamCompletionAsync(CreateRequest(), observer, CancellationToken.None);
+        var result = await client.StreamCompletionAsync(CreateRequest(),
+            new CompletionInvocationOptions { RequestReasoningText = requestText }, observer, CancellationToken.None);
 
         var thinking = Assert.IsType<AnthropicReasoningBlock>(Assert.Single(result.Message.Blocks));
         var replay = Assert.IsType<AnthropicThinkingBlock>(
@@ -593,6 +598,7 @@ public sealed class AnthropicClientTests {
         Assert.Equal("reason", thinking.PlainText);
         Assert.Equal("reason", replay.Thinking);
         Assert.Equal("sig-123", replay.Signature);
+        Assert.Equal(["reason"], reasoningDeltas);
         Assert.Equal(1, thinkingBeginCount);
         Assert.Equal(1, thinkingEndCount);
         Assert.Equal(CompletionTerminationKind.Completed, result.Termination.Kind);

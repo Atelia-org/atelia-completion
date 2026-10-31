@@ -9,6 +9,56 @@ using Xunit;
 namespace Atelia.Completion.OpenAI.Tests;
 
 public sealed class OpenAIResponsesClientTests {
+    [Theory]
+    [InlineData(true, CompletionReasoningEffort.ProviderDefault, null, "auto")]
+    [InlineData(false, CompletionReasoningEffort.ProviderDefault, null, null)]
+    [InlineData(true, CompletionReasoningEffort.Disabled, "none", null)]
+    [InlineData(false, CompletionReasoningEffort.Disabled, "none", null)]
+    [InlineData(true, CompletionReasoningEffort.High, "high", "auto")]
+    [InlineData(false, CompletionReasoningEffort.High, "high", null)]
+    public async Task ReasoningTextPreference_DoesNotChangeEffortOrDiscardReceivedSummary(
+        bool requestText, CompletionReasoningEffort effort, string? expectedEffort, string? expectedSummary
+    ) {
+        var handler = new SequenceHttpMessageHandler(EventStreamResponse(
+            """
+            data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning","summary":[]}}
+
+            data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"Visible summary."}
+
+            data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Visible summary."}],"encrypted_content":"opaque"}}
+
+            data: {"type":"response.completed"}
+
+            """ + "\n"));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new OpenAIResponsesClient(null, httpClient,
+            new OpenAIResponsesClientOptions { ReasoningEffort = effort });
+        var observer = new CompletionStreamObserver();
+        var deltas = new List<string>();
+        observer.ReceivedReasoningDelta += deltas.Add;
+
+        CompletionResult result = await client.StreamCompletionAsync(CreateRequest(),
+            new CompletionInvocationOptions { RequestReasoningText = requestText }, observer);
+
+        using var body = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        if (expectedEffort is null && expectedSummary is null) {
+            Assert.False(body.RootElement.TryGetProperty("reasoning", out _));
+        }
+        else {
+            var config = body.RootElement.GetProperty("reasoning");
+            if (expectedEffort is null) { Assert.False(config.TryGetProperty("effort", out _)); }
+            else { Assert.Equal(expectedEffort, config.GetProperty("effort").GetString()); }
+            if (expectedSummary is null) { Assert.False(config.TryGetProperty("summary", out _)); }
+            else { Assert.Equal(expectedSummary, config.GetProperty("summary").GetString()); }
+        }
+        Assert.Equal(["Visible summary."], deltas);
+        var reasoning = Assert.IsType<OpenAIResponsesReasoningBlock>(Assert.Single(result.Message.Blocks));
+        Assert.Equal("Visible summary.", reasoning.PlainText);
+        Assert.Equal(result.Invocation, reasoning.Origin);
+        using var native = JsonDocument.Parse(reasoning.RawItemJson);
+        Assert.Equal("opaque", native.RootElement.GetProperty("encrypted_content").GetString());
+    }
+
     [Fact]
     public async Task StreamCompletionAsync_SendsResponsesRequestAndParsesStreamingBlocks() {
         var handler = new SequenceHttpMessageHandler(
@@ -83,6 +133,8 @@ public sealed class OpenAIResponsesClientTests {
         Assert.False(root.GetProperty("store").GetBoolean());
         Assert.True(root.GetProperty("parallel_tool_calls").GetBoolean());
         Assert.Equal("reasoning.encrypted_content", root.GetProperty("include")[0].GetString());
+        Assert.Equal("auto", root.GetProperty("reasoning").GetProperty("summary").GetString());
+        Assert.False(root.GetProperty("reasoning").TryGetProperty("effort", out _));
 
         var input = root.GetProperty("input");
         var userMessage = Assert.Single(input.EnumerateArray());

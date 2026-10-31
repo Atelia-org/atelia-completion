@@ -87,8 +87,8 @@ public sealed class OpenAIResponsesClient : ICompletionClient {
     }
 
     /// <summary>
-    /// The current OpenAI Responses integration has no provider-neutral mapping
-    /// for these hints, so validated values are accepted as an explicit no-op.
+    /// Requests readable reasoning independently of effort. Validated prompt
+    /// cache reuse hints are currently accepted as an explicit no-op.
     /// </summary>
     public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,

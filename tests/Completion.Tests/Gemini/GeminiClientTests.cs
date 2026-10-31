@@ -280,6 +280,106 @@ public sealed class GeminiClientTests {
     }
 
     [Fact]
+    public async Task ReasoningObserverEarlyStop_ClosesThinkingAndDiscardsUnfinishedReplay() {
+        using var handler = new SequenceHttpMessageHandler(EventStreamResponse(ReasoningFrame));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+        int begins = 0, ends = 0;
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedThinkingBegin += () => begins++;
+        observer.ReceivedThinkingEnd += () => ends++;
+        observer.ReceivedReasoningDelta += _ => observer.ShouldStop = true;
+
+        CompletionResult result = await client.StreamCompletionAsync(CreateRequest(), observer);
+
+        Assert.Equal(CompletionTerminationKind.Incomplete, result.Termination.Kind);
+        Assert.Empty(result.Message.Blocks.OfType<ActionBlock.ReasoningBlock>());
+        Assert.Equal("", result.Message.GetFlattenedText());
+        Assert.Equal(1, begins);
+        Assert.Equal(1, ends);
+    }
+
+    [Fact]
+    public async Task EofDuringReasoning_ClosesThinkingAndRemainsUncertain() {
+        using var handler = new SequenceHttpMessageHandler(EventStreamResponse(ReasoningFrame));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+        int ends = 0;
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedThinkingEnd += () => ends++;
+
+        await Assert.ThrowsAsync<CompletionStreamInterruptedException>(() =>
+            client.StreamCompletionAsync(CreateRequest(), observer));
+        Assert.Equal(1, ends);
+    }
+
+    [Fact]
+    public async Task ThinkingEndObserverFailure_IsPreservedWithoutDuplicateEndNotification() {
+        using var handler = new SequenceHttpMessageHandler(EventStreamResponse(ReasoningFrame
+            + "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"answer\"}]},\"finishReason\":\"STOP\"}]}\n\n"));
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+        var expected = new InvalidOperationException("observer end failure");
+        int ends = 0;
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedThinkingEnd += () => { ends++; throw expected; };
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.StreamCompletionAsync(CreateRequest(), observer));
+
+        Assert.Same(expected, actual);
+        Assert.Equal(1, ends);
+    }
+
+    [Fact]
+    public async Task ReadFailureDuringReasoning_PreservesFailureWhenObserverCleanupThrows() {
+        var expected = new IOException("scripted reasoning read failure");
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StreamContent(new ThrowAfterPayloadStream(Encoding.UTF8.GetBytes(ReasoningFrame), expected))
+        };
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+        using var handler = new SequenceHttpMessageHandler(response);
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+        int ends = 0;
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedThinkingEnd += () => { ends++; throw new InvalidOperationException("cleanup failure"); };
+
+        var actual = await Assert.ThrowsAsync<CompletionFailureException>(() =>
+            client.StreamCompletionAsync(CreateRequest(), observer));
+
+        Assert.Same(expected, actual.InnerException);
+        Assert.Equal(1, ends);
+    }
+
+    [Fact]
+    public async Task CancellationDuringReasoning_ClosesThinkingAndPreservesCallerToken() {
+        var stream = new CancellationWaitingStream(Encoding.UTF8.GetBytes(ReasoningFrame));
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(stream) };
+        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream");
+        using var handler = new SequenceHttpMessageHandler(response);
+        using var httpClient = CreateHttpClient(handler);
+        var client = new GeminiClient(null, httpClient);
+        using var cancellation = new CancellationTokenSource();
+        int begins = 0, ends = 0;
+        var observer = new CompletionStreamObserver();
+        observer.ReceivedThinkingBegin += () => begins++;
+        observer.ReceivedThinkingEnd += () => ends++;
+
+        Task<CompletionResult> call = client.StreamCompletionAsync(CreateRequest(), observer, cancellation.Token);
+        await stream.ReadStarted;
+        cancellation.Cancel();
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => call);
+
+        Assert.Equal(cancellation.Token, exception.CancellationToken);
+        Assert.Equal(1, begins);
+        Assert.Equal(1, ends);
+    }
+
+    private const string ReasoningFrame =
+        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"summary\",\"thought\":true}]}}]}\n\n";
+
+    [Fact]
     public async Task StreamCompletionAsync_ReadExceptionPropagatesWithoutBeingReclassified() {
         var expected = new IOException("scripted read failure");
         var response = new HttpResponseMessage(HttpStatusCode.OK) {
@@ -538,7 +638,9 @@ public sealed class GeminiClientTests {
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
-    private sealed class CancellationWaitingStream : Stream {
+    private sealed class CancellationWaitingStream(byte[]? initialPayload = null) : Stream {
+        private readonly byte[] _payload = initialPayload ?? [];
+        private int _position;
         private readonly TaskCompletionSource _readStarted = new(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -557,6 +659,13 @@ public sealed class GeminiClientTests {
             Memory<byte> buffer,
             CancellationToken cancellationToken = default
         ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_position < _payload.Length) {
+                int count = Math.Min(buffer.Length, _payload.Length - _position);
+                _payload.AsMemory(_position, count).CopyTo(buffer);
+                _position += count;
+                return count;
+            }
             _readStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return 0;

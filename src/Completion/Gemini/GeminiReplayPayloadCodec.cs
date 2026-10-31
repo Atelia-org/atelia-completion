@@ -12,7 +12,8 @@ internal static class GeminiReplayPayloadCodec {
     internal sealed record GeminiReplayPayloadPart(
         string? Text,
         string? ThoughtSignature,
-        GeminiReplayPayloadFunctionCall? FunctionCall
+        GeminiReplayPayloadFunctionCall? FunctionCall,
+        bool? Thought = null
     );
 
     internal sealed record GeminiReplayPayloadFunctionCall(
@@ -31,6 +32,10 @@ internal static class GeminiReplayPayloadCodec {
                 parts.Select(
                     static part => {
                         var partObject = new JsonObject();
+
+                        if (part.Thought is { } thought) {
+                            partObject["thought"] = thought;
+                        }
 
                         if (part.Text is not null) {
                             partObject["text"] = part.Text;
@@ -96,6 +101,14 @@ internal static class GeminiReplayPayloadCodec {
                     thoughtSignature = thoughtSignatureElement.GetString();
                 }
 
+                bool? thought = null;
+                if (partElement.TryGetProperty("thought", out var thoughtElement)) {
+                    if (thoughtElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) {
+                        throw new InvalidOperationException("Replay payload property 'thought' must be a boolean.");
+                    }
+                    thought = thoughtElement.GetBoolean();
+                }
+
                 GeminiReplayPayloadFunctionCall? functionCall = null;
                 if (partElement.TryGetProperty("functionCall", out var functionCallElement)) {
                     if (functionCallElement.ValueKind is not JsonValueKind.Object) { throw new InvalidOperationException("Replay payload property 'functionCall' must be an object."); }
@@ -120,7 +133,7 @@ internal static class GeminiReplayPayloadCodec {
                     functionCall = new GeminiReplayPayloadFunctionCall(name, toolCallId, rawArgumentsJson);
                 }
 
-                parts.Add(new GeminiReplayPayloadPart(text, thoughtSignature, functionCall));
+                parts.Add(new GeminiReplayPayloadPart(text, thoughtSignature, functionCall, thought));
             }
 
             return new GeminiReplayPayload(roleElement.GetString()!, parts);
@@ -129,6 +142,21 @@ internal static class GeminiReplayPayloadCodec {
             throw new InvalidOperationException(
                 $"Failed to deserialize Gemini replay payload for replay: {ex.Message}",
                 ex
+            );
+        }
+    }
+
+    internal static string? GetPlainText(IReadOnlyList<GeminiReplayPayloadPart> parts) {
+        string text = string.Concat(parts.Where(static part => part.Thought == true)
+            .Select(static part => part.Text));
+        return text.Length == 0 ? null : text;
+    }
+
+    internal static void ValidatePlainText(ReadOnlyMemory<byte> payload, string? plainText) {
+        string? expected = GetPlainText(Decode(payload).Parts);
+        if (!string.Equals(expected, plainText, StringComparison.Ordinal)) {
+            throw new InvalidOperationException(
+                "Gemini reasoning PlainText does not match the thought text in its authoritative replay payload."
             );
         }
     }

@@ -4,6 +4,24 @@ using Xunit;
 namespace Atelia.Completion.Tests.Abstractions;
 
 public sealed class CompletionInvocationOptionsTests {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DefaultInterfaceMethod_ReasoningTextPreferenceIsBestEffort(bool requestText) {
+        ICompletionClient client = new LegacyCompletionClient();
+
+        CompletionResult result = await client.StreamCompletionAsync(
+            CreateRequest(),
+            new CompletionInvocationOptions { RequestReasoningText = requestText },
+            observer: null
+        );
+
+        Assert.True(CompletionInvocationOptions.Default.RequestReasoningText);
+        Assert.True(new CompletionInvocationOptions().RequestReasoningText);
+        Assert.Equal("done", result.Message.GetFlattenedText());
+        Assert.Equal(1, ((LegacyCompletionClient)client).CallCount);
+    }
+
     [Fact]
     public async Task DefaultInterfaceMethod_ConnectionDefaultFallsBackToLegacyOverload() {
         ICompletionClient client = new LegacyCompletionClient();

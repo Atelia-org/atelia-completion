@@ -80,6 +80,8 @@ public sealed class OpenAICodexResponsesClientTests {
         Assert.Equal("gpt-test", root.GetProperty("model").GetString());
         Assert.True(root.GetProperty("stream").GetBoolean());
         Assert.False(root.GetProperty("store").GetBoolean());
+        Assert.Equal("auto", root.GetProperty("reasoning").GetProperty("summary").GetString());
+        Assert.False(root.GetProperty("reasoning").TryGetProperty("effort", out _));
         Assert.Equal(
             "reasoning.encrypted_content",
             root.GetProperty("include")[0].GetString()
@@ -1154,13 +1156,20 @@ public sealed class OpenAICodexResponsesClientTests {
     }
 
     [Theory]
-    [InlineData(CompletionReasoningEffort.Disabled, "none", null)]
-    [InlineData(CompletionReasoningEffort.Low, "low", "auto")]
-    [InlineData(CompletionReasoningEffort.XHigh, "xhigh", "auto")]
-    [InlineData(CompletionReasoningEffort.Max, "max", "auto")]
+    [InlineData(true, CompletionReasoningEffort.ProviderDefault, null, "auto")]
+    [InlineData(false, CompletionReasoningEffort.ProviderDefault, null, null)]
+    [InlineData(true, CompletionReasoningEffort.Disabled, "none", null)]
+    [InlineData(false, CompletionReasoningEffort.Disabled, "none", null)]
+    [InlineData(true, CompletionReasoningEffort.Low, "low", "auto")]
+    [InlineData(false, CompletionReasoningEffort.Low, "low", null)]
+    [InlineData(true, CompletionReasoningEffort.XHigh, "xhigh", "auto")]
+    [InlineData(false, CompletionReasoningEffort.XHigh, "xhigh", null)]
+    [InlineData(true, CompletionReasoningEffort.Max, "max", "auto")]
+    [InlineData(false, CompletionReasoningEffort.Max, "max", null)]
     public async Task StreamCompletionAsync_UsesCodexReasoningMappingEntry(
+        bool requestText,
         CompletionReasoningEffort effort,
-        string expectedEffort,
+        string? expectedEffort,
         string? expectedSummary
     ) {
         CodexSubscriptionCredential credential = Credential("token", "account", 1);
@@ -1175,6 +1184,7 @@ public sealed class OpenAICodexResponsesClientTests {
 
         _ = await client.StreamCompletionAsync(
             Request(),
+            new CompletionInvocationOptions { RequestReasoningText = requestText },
             observer: null,
             CancellationToken.None
         );
@@ -1182,8 +1192,13 @@ public sealed class OpenAICodexResponsesClientTests {
         using JsonDocument body = JsonDocument.Parse(
             Assert.Single(handler.Requests).Body
         );
+        if (expectedEffort is null && expectedSummary is null) {
+            Assert.False(body.RootElement.TryGetProperty("reasoning", out _));
+            return;
+        }
         JsonElement reasoning = body.RootElement.GetProperty("reasoning");
-        Assert.Equal(expectedEffort, reasoning.GetProperty("effort").GetString());
+        if (expectedEffort is null) { Assert.False(reasoning.TryGetProperty("effort", out _)); }
+        else { Assert.Equal(expectedEffort, reasoning.GetProperty("effort").GetString()); }
         if (expectedSummary is null) {
             Assert.False(reasoning.TryGetProperty("summary", out _));
         }

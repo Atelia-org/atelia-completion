@@ -337,12 +337,13 @@ public sealed class GeminiModelSpecsTests {
     private static void AssertConfig(JsonElement root, int maximum, string? level) {
         JsonElement config = root.GetProperty("generationConfig");
         Assert.Equal(maximum, config.GetProperty("maxOutputTokens").GetInt32());
-        Assert.Equal(level is not null, config.TryGetProperty("thinkingConfig", out JsonElement thinking));
+        JsonElement thinking = config.GetProperty("thinkingConfig");
+        Assert.True(thinking.GetProperty("includeThoughts").GetBoolean());
+        Assert.Equal(level is not null, thinking.TryGetProperty("thinkingLevel", out _));
         if (level is not null) {
             Assert.Equal(level, thinking.GetProperty("thinkingLevel").GetString());
-            Assert.False(thinking.TryGetProperty("includeThoughts", out _));
-            Assert.False(thinking.TryGetProperty("thinkingBudget", out _));
         }
+        Assert.False(thinking.TryGetProperty("thinkingBudget", out _));
     }
 
     private sealed class CountingMapper(ReasoningEffortMapping result) : ICompletionReasoningEffortMapper {

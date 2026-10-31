@@ -262,6 +262,7 @@ public sealed class OpenAIResponsesMessageConverterTests {
     }
 
     [Theory]
+    [InlineData(CompletionReasoningEffort.ProviderDefault, null, "auto")]
     [InlineData(CompletionReasoningEffort.Disabled, "none", null)]
     [InlineData(CompletionReasoningEffort.Low, "low", "auto")]
     [InlineData(CompletionReasoningEffort.Medium, "medium", "auto")]
@@ -270,7 +271,7 @@ public sealed class OpenAIResponsesMessageConverterTests {
     [InlineData(CompletionReasoningEffort.Max, "max", "auto")]
     public void ConvertToApiRequest_MapsReasoningEffortAndRequestsReadableSummary(
         CompletionReasoningEffort effort,
-        string expectedEffort,
+        string? expectedEffort,
         string? expectedSummary
     ) {
         var request = new CompletionRequest(
@@ -294,7 +295,7 @@ public sealed class OpenAIResponsesMessageConverterTests {
     }
 
     [Fact]
-    public void ConvertToApiRequest_ProviderDefaultOmitsReasoningControl() {
+    public void ConvertToApiRequest_ProviderDefaultWithoutRequestedTextOmitsReasoningControl() {
         var request = new CompletionRequest(
             "gpt-5",
             new CompletionPromptPrefix(
@@ -305,7 +306,8 @@ public sealed class OpenAIResponsesMessageConverterTests {
             tailMessages: []
         );
 
-        Assert.Null(OpenAIResponsesMessageConverter.ConvertToApiRequest(request).Reasoning);
+        Assert.Null(OpenAIResponsesMessageConverter.ConvertToApiRequest(
+            request, requestReasoningText: false).Reasoning);
     }
 
     [Fact]

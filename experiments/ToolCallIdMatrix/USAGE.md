@@ -47,3 +47,15 @@ dotnet run --project experiments/ToolCallIdMatrix -c Release -- --gemini-history
 显式在线模式，配置必须恰有一个 `kind=gemini` 目标。每来源最多 4 次调用：生成工具调用、交给 Gemini 在当前 tool-loop 读结果、原来源完成这一轮、加入新 user 消息后交给 Gemini 续接。沿用实际生成的 ActionMessage，包括 native blocks；目标 adapter 决定原生回放或可见投影。4N 预算，顺序调用，不重试。来源未成功生成单个预期工具或未正确完成时，其依赖步骤跳过，实际调用数写入 summary。
 
 `history.jsonl` 仅记录 ID、HTTP/termination、精确答案与配对核验、原生签名计数及逐字相等布尔值、导入标记计数。真实签名仅在内存比较，不写回执。新回合的答案也存在于上一轮模型正文，所以 next-turn 证明会话续接，不能独立证明模型从工具结果取值。原始 ID 格式的隔离验证仍以矩阵模式为准。
+
+## Reasoning 可读文本实验
+
+```powershell
+dotnet run --project experiments/ToolCallIdMatrix -c Release -- --reasoning-text experiments/ToolCallIdMatrix/config.local.json
+```
+
+此模式独立于 ID 矩阵，覆盖配置中的各端点；每端点最多 4 次 completion：`ProviderDefault` effort 加三参数默认调用、同 effort 加 `RequestReasoningText=false`、`Low` effort 加 true、使用 Low 的成功 Message（否则使用默认调用的成功 Message）原样回灌再调用一次。它有意覆盖配置原有的 effort，验证本次 API 的默认行为与 effort 独立性；模型不支持 Low 时如实记录失败。每次宿主期限沿用 `requestTimeoutSeconds`，顺序调用、不自行重试，受 `maxRequests` 限制，4 个端点最多 16 次逻辑调用。
+
+题目为模 17/19/23 的最小正整数 CRT 算术题，预期答案在本地穷举一个完整剩余类区间计算。每次运行创建唯一 `*-reasoning-text-*` 目录，包含 `reasoning-text.json` 和 `report.md`：记录 endpoint/model、effort、开关、默认/显式重载、termination/failure 分类、精确答案匹配、PlainText/delta 字符数与相等性、thinking begin/end、原样 Message 回放结果，以及实际请求的 summary/effort/includeThoughts/thinkingLevel/display/type 白名单。未知控制值只记录 `unexpected-value`。只读回执不含原始 reasoning/正文、原生 replay、HTTP 全文、异常 message、地址、凭据或账户信息。
+
+`Completed` 与获得可读 reasoning 分开报告；`absent` 是本次没有可读文本，不直接判定适配器出错。`plain-text-only` 表示仅最终结果提供文本；`matching-delta-and-plain-text` 证明本次流式文本和最终视图相同。false 不代表删除已经返回的明文。回放使用实际 Message，仍只证明此模型此样本可续接，不能独立证明服务端采用了哪种隐藏状态。此入口使用既有 Codex capture 反射缝，不增加库 public API。

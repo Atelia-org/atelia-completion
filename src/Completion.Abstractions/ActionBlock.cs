@@ -38,8 +38,9 @@ public abstract record ActionBlock {
     /// 无需将异构格式强行归一化为单一 <c>OpaquePayload</c>。
     /// </para>
     /// <para>
-    /// <see cref="PlainText"/> 是统一的明文视图，供 UI 展示 / 日志 / 审计使用，<b>不参与回灌</b>；
-    /// 当 provider 只给出加密或其他不可读负载时为 <see langword="null"/>。
+    /// <see cref="PlainText"/> 是统一的可读视图：上游明文或 provider 提供的 reasoning 摘要，
+    /// 供 UI 展示 / 日志 / 审计使用，<b>不参与回灌</b>，不保证是完整 reasoning；
+    /// 当 provider 未给出可读内容时为 <see langword="null"/>，不据此推断是否进行了思考。
     /// provider-native payload 始终是 replay authority；当明文可从 payload 确定性派生时，
     /// provider codec 必须验证该视图与 payload 一致。
     /// </para>

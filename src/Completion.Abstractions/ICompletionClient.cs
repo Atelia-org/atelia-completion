@@ -56,6 +56,9 @@ public interface ICompletionClient {
     /// 默认接口实现只接受 <see cref="PromptCacheReuseHint.ConnectionDefault"/>，并回落到
     /// 三参数方法，以保持已有实现的行为。实现类必须显式声明自己如何处理其他 hint；未实现时
     /// fail fast，避免静默丢失调用方意图。
+    /// <see cref="CompletionInvocationOptions.RequestReasoningText"/> 是 best-effort
+    /// 诊断偏好；未重写此方法的实现沿用三参数方法自身的行为，不承诺主动申请摘要。
+    /// 内建客户端的三参数方法使用 <see cref="CompletionInvocationOptions.Default"/>。
     /// </remarks>
     Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,
@@ -123,15 +126,15 @@ public sealed class CompletionStreamObserver {
         ReceivedTextDelta?.Invoke(delta);
     }
 
-    // ── 推理增量（仅明文）──
+    // ── 可读推理增量（明文或 provider 摘要）──
 
     /// <summary>
-    /// 收到一段明文推理（reasoning）文本增量时触发。
+    /// 收到一段可读推理文本或 provider reasoning 摘要增量时触发。
     /// </summary>
     /// <remarks>
-    /// <b>仅适用于明文 reasoning 场景</b>（如 Anthropic 的 thinking 块在请求中启用明文输出时）。
-    /// 当 thinking 内容为加密/签名后的不透明负载时，<b>不会</b>触发此事件——
-    /// 此时应依赖 <see cref="OnThinkingBegin"/> / <see cref="OnThinkingEnd"/> 获取基本状态提示。
+    /// 原生密文或签名本身不会触发此事件；与不透明负载一起返回的可读摘要仍会触发。
+    /// 事件内容不保证是完整 reasoning。仅在最终块中提供的文本从
+    /// <see cref="ActionBlock.ReasoningBlock.PlainText"/> 读取。
     /// </remarks>
     public event Action<string>? ReceivedReasoningDelta;
 

@@ -110,6 +110,41 @@ public sealed class ActionMessageSerializationTests {
         Assert.Equal([4, 5, 6], block.OpaquePayload.ToArray());
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("forged")]
+    public void GeminiReasoningCodec_RejectsInconsistentPlainTextOnEncodeAndDecode(string? plainText) {
+        var registry = ReasoningBlockCodecRegistry.CreateDefault();
+        ReasoningBlockCodecs.RegisterAll(registry);
+        byte[] payload = Encoding.UTF8.GetBytes("""
+            {"role":"model","parts":[{"thought":true,"text":"summary"},{"thought":false,"text":"answer"}]}
+            """);
+
+        var block = new GeminiReplayBlock(payload, Invocation, plainText);
+        var encode = Assert.Throws<InvalidOperationException>(() => registry.Encode(block));
+        Assert.Contains("PlainText", encode.Message, StringComparison.Ordinal);
+
+        var serialized = SerializedReasoningBlock.Create("atelia.gemini.replay.v1", Invocation, payload, plainText);
+        var decode = Assert.Throws<InvalidOperationException>(() => registry.Decode(serialized));
+        Assert.Contains("PlainText", decode.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("\"true\"")]
+    [InlineData("1")]
+    public void GeminiReasoningCodec_RejectsMalformedThoughtMarker(string thought) {
+        var registry = ReasoningBlockCodecRegistry.CreateDefault();
+        ReasoningBlockCodecs.RegisterAll(registry);
+        byte[] payload = Encoding.UTF8.GetBytes($$"""
+            {"role":"model","parts":[{"thought":{{thought}},"text":"private"}]}
+            """);
+        var serialized = SerializedReasoningBlock.Create("atelia.gemini.replay.v1", Invocation, payload, null);
+
+        Assert.Throws<InvalidOperationException>(() => registry.Decode(serialized));
+    }
+
     [Fact]
     public void UnknownReasoningCodec_RoundTripsExactlyThroughOpaqueCarrier() {
         byte[] callerOwnedPayload = [0, 1, 2, 254, 255];

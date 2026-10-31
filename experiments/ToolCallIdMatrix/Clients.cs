@@ -13,10 +13,11 @@ sealed class ClientLease(ICompletionClient client, HttpClient? http, EvidenceSin
     public CountingHandler Counter { get; } = counter;
     public void Dispose() { (Client as IDisposable)?.Dispose(); http?.Dispose(); }
 
-    public static async Task<ClientLease> Create(Endpoint endpoint, CancellationToken token) {
+    public static async Task<ClientLease> Create(Endpoint endpoint, CancellationToken token, ICompletionHttpExchangeSink? additionalSink = null) {
         var sink = new EvidenceSink();
         var counter = new CountingHandler(new HttpClientHandler { AllowAutoRedirect = false });
         var builder = new CompletionHttpClientBuilder().UsePrimaryHandler(counter).AddExchangeSink(sink);
+        if (additionalSink is not null) builder.AddExchangeSink(additionalSink);
         HttpClient? http = null;
         try {
             if (endpoint.IsCodex) {

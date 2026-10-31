@@ -10,21 +10,23 @@ static class Program {
     public static async Task<int> Main(string[] args) {
         try {
             if (args.SequenceEqual(["--self-test"])) { await SelfTest.Run(); return 0; }
-            if (args.Length is < 1 or > 2 || args.Length == 2 && args[0] is not ("--validate" or "--live" or "--gemini-history")) {
-                Console.WriteLine("Usage: ToolCallIdMatrix [--validate|--live|--gemini-history] config.json | --self-test");
+            if (args.Length is < 1 or > 2 || args.Length == 2 && args[0] is not ("--validate" or "--live" or "--gemini-history" or "--reasoning-text")) {
+                Console.WriteLine("Usage: ToolCallIdMatrix [--validate|--live|--gemini-history|--reasoning-text] config.json | --self-test");
                 return 2;
             }
             bool history = args.Length == 2 && args[0] == "--gemini-history";
-            bool live = history || args.Length == 2 && args[0] == "--live";
+            bool reasoningText = args.Length == 2 && args[0] == "--reasoning-text";
+            bool live = history || reasoningText || args.Length == 2 && args[0] == "--live";
             string path = Path.GetFullPath(args[^1]);
             var config = MatrixConfig.Parse(await File.ReadAllTextAsync(path));
-            int planned = history ? config.Endpoints.Count * 4 : config.Endpoints.Count + config.Endpoints.Count * config.Endpoints.Count;
+            int planned = history || reasoningText ? config.Endpoints.Count * 4 : config.Endpoints.Count + config.Endpoints.Count * config.Endpoints.Count;
             Console.WriteLine($"Valid config: {config.Endpoints.Count} endpoints; {planned} planned invocations; budget {config.MaxRequests}.");
             if (!live) { Console.WriteLine("Offline validation only. Credentials were not read; no network calls."); return 0; }
             using var cancellation = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
             string output = Path.GetFullPath(config.OutputDirectory, Path.GetDirectoryName(path)!);
-            if (history) await new GeminiHistoryProbe(config, output).Run(cancellation.Token);
+            if (reasoningText) await new ReasoningTextProbe(config, output).Run(cancellation.Token);
+            else if (history) await new GeminiHistoryProbe(config, output).Run(cancellation.Token);
             else await new Runner(config, output).Run(cancellation.Token);
             return 0;
         }

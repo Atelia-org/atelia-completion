@@ -25,6 +25,8 @@ dotnet add package Atelia.Completion --version 0.1.0-preview.6
 
 ## 源码开发与候选包
 
+当前源码新增默认开启的 `CompletionInvocationOptions.RequestReasoningText`：应用层可统一请求明文 reasoning 或服务端摘要，并通过 `PlainText` / observer 记录日志。尚未包含在上述 `0.1.0-preview.6` 中；协议映射与边界见 [可读 reasoning 设计](docs/Completion/reasoning-text-design.md)。
+
 在本仓根目录执行，使用 `global.json` 指定的 SDK：
 
 ```powershell

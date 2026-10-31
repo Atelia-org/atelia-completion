@@ -15,7 +15,8 @@ internal static class OpenAIResponsesMessageConverter {
         CompletionDescriptor? targetInvocation = null,
         string expectedApiSpecId = PublicOpenAIResponsesProfile.ApiSpecId,
         OpenAIResponsesReasoningMapper? mapReasoningEffort = null,
-        bool supportsNativeRequiredNamedToolChoice = true
+        bool supportsNativeRequiredNamedToolChoice = true,
+        bool requestReasoningText = true
     ) {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedApiSpecId);
@@ -53,6 +54,11 @@ internal static class OpenAIResponsesMessageConverter {
 
         CompletionOutputContract outputContract =
             request.PromptPrefix.OutputContract;
+        OpenAIResponsesReasoningConfig? reasoning = mapReasoningEffort(options.ReasoningEffort);
+        if (requestReasoningText && options.ReasoningEffort is not CompletionReasoningEffort.Disabled) {
+            reasoning ??= new();
+            reasoning.Summary = "auto";
+        }
         var apiRequest = new OpenAIResponsesApiRequest {
             Model = request.ModelId,
             Instructions = string.IsNullOrWhiteSpace(request.PromptPrefix.SystemPrompt)
@@ -68,7 +74,7 @@ internal static class OpenAIResponsesMessageConverter {
             Store = options.Store,
             Include = options.IncludeEncryptedReasoning ? [EncryptedReasoningInclude] : null,
             ParallelToolCalls = outputContract.AllowParallelToolCalls ?? true,
-            Reasoning = mapReasoningEffort(options.ReasoningEffort)
+            Reasoning = reasoning
         };
 
         int contextMessageCount = checked(

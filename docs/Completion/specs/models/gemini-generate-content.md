@@ -89,7 +89,7 @@ Lite 返回 323；3.8 首轮报告 product=323，次轮携带原签名、匹配 
 
 ## 回放与未解决的协议核验
 
-thought:true 的文本摘要应与正文分离。当前 parser 尚未提供该分离，effort 接入继续省略 includeThoughts；思考签名和 Origin 属于回放合同，不是档位配置。[thought summaries](https://ai.google.dev/gemini-api/docs/generate-content/thinking#thought-summaries)、[thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)
+当前源码已将 thought:true 的文本摘要与正文分离，并通过 `CompletionInvocationOptions.RequestReasoningText` 默认请求 includeThoughts；false 省略该请求。此能力独立于 effort，默认档位不指定 thinkingLevel。思考签名、thought 标记和 Origin 随原生负载回放；统一合同见 [可读 reasoning 设计](../../reasoning-text-design.md)。[thought summaries](https://ai.google.dev/gemini-api/docs/generate-content/thinking#thought-summaries)、[thought signatures](https://ai.google.dev/gemini-api/docs/generate-content/thought-signatures)
 
 3.8 迁移指南提出末轮 user 非空、禁止 model prefill，并把 FunctionResponse 关联标识称作 call_id；本轮重读 REST reference 仍定义 id/name/response。当前 converter 使用 id/name，与 reference 一致，且以上有效工具续轮在线接受此形式；没有据指南措辞改 wire 字段。非法轮次的远端拒绝与 call_id 的全部适用语境仍未解决，不能从成功续轮推定。[3.8 migration checklist](https://ai.google.dev/gemini-api/docs/generate-content/latest-model)、[FunctionResponse reference](https://ai.google.dev/api/generate-content#FunctionResponse)
 

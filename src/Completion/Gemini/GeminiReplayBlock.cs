@@ -6,6 +6,7 @@ namespace Atelia.Completion.Gemini;
 /// Gemini provider 专用的 replay 块。
 /// 承载一次 Gemini model turn 的 provider-native content parts 快照，
 /// 以便在下一轮请求中回灌 <c>thoughtSignature</c> 与 <c>functionCall</c> 等 Gemini 特有信息。
+/// <c>PlainText</c> 是其中 <c>thought:true</c> 文本的摘要视图，不包含正文；无可读摘要时为 null。
 /// </summary>
 public sealed record GeminiReplayBlock
     : ActionBlock.ReasoningBlock {

@@ -70,6 +70,26 @@ static class SelfTest {
         string sanitized = JsonSerializer.Serialize(sink.Exchanges, MatrixConfig.Json);
         Check(!sanitized.Contains("fixture-token") && !sanitized.Contains("fixture-account") && !sanitized.Contains("native_reasoning_secret"),
             "capture allowlist omits credential/account/reasoning");
+        var reasoningSink = new ReasoningTextRequestSink();
+        reasoningSink.OnExchange(new("POST", "https://private-address.invalid/", """
+            {"reasoning":{"summary":"auto","effort":"low","encrypted_content":"native_reasoning_secret"},
+             "thinking":{"display":"omitted","type":"adaptive"},
+             "generationConfig":{"thinkingConfig":{"includeThoughts":true,"thinkingLevel":"high"}},
+             "messages":[{"content":"prompt_secret"}],"apiKey":"fixture-token"}
+            """, 200, "response_secret", "error_secret"));
+        var controls = reasoningSink.Exchanges.Single();
+        Check(controls.Summary == "auto" && controls.Effort == "low" && controls.IncludeThoughts == true &&
+            controls.ThinkingLevel == "high" && controls.ThinkingDisplay == "omitted" && controls.ThinkingType == "adaptive",
+            "reasoning probe extracts request controls");
+        string reasoningReceipt = JsonSerializer.Serialize(reasoningSink.Exchanges, MatrixConfig.Json);
+        Check(!reasoningReceipt.Contains("secret") && !reasoningReceipt.Contains("fixture-token") && !reasoningReceipt.Contains("private-address"),
+            "reasoning probe receipt omits raw exchange and secret fields");
+        reasoningSink.Reset();
+        reasoningSink.OnExchange(new("POST", null, """{"reasoning":{"summary":"prompt_secret"}}""", 200, null, null));
+        Check(reasoningSink.Exchanges.Single().Summary == "unexpected-value" &&
+            !JsonSerializer.Serialize(reasoningSink.Exchanges).Contains("prompt_secret"), "unknown request control value is not persisted");
+        reasoningSink.Reset();
+        Check(reasoningSink.Exchanges.Count == 0 && reasoningSink.ParseFailures == 0, "reasoning evidence reset isolates calls");
         Console.WriteLine($"Self-test passed: {checks} checks; only in-memory fixtures, no credentials or network.");
     }
 

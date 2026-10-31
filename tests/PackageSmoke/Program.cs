@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Gemini;
 using Atelia.Completion.OpenAI;
 using Atelia.Completion.Tools;
 using Atelia.Completion.Transport;
@@ -27,6 +28,64 @@ foreach (var (finish, expected) in new[] {
         && result.Usage.CacheCreationInputTokens is null && result.Usage.CacheReadInputTokens is null,
         "Unknown usage was invented.");
     CheckWire(handler);
+}
+
+foreach (bool requestText in new[] { true, false }) {
+    const string responseStream = """
+        data: {"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","summary":[{"type":"summary_text","text":"Check the calculation."}],"encrypted_content":"fixture-opaque"}}
+
+        data: {"type":"response.output_text.delta","delta":"42"}
+
+        data: {"type":"response.completed"}
+
+        """;
+    using var handler = new ControlledHandler(responseStream + "\n");
+    using var http = CreateHttp(handler);
+    var client = new OpenAIResponsesClient(null, http);
+    var result = requestText
+        ? await client.StreamCompletionAsync(request, null)
+        : await client.StreamCompletionAsync(request,
+            new CompletionInvocationOptions { RequestReasoningText = false }, null);
+    using var wire = JsonDocument.Parse(handler.Body!);
+    Require(wire.RootElement.TryGetProperty("reasoning", out var reasoning) == requestText,
+        "Default effort did not honor the independent reasoning text preference.");
+    if (requestText) {
+        Require(reasoning.GetProperty("summary").GetString() == "auto"
+            && !reasoning.TryGetProperty("effort", out _), "Summary request changed default effort.");
+    }
+    Require(result.Message.GetFlattenedText() == "42", "Summary leaked into response text.");
+    var readable = result.Message.Blocks.OfType<ActionBlock.ReasoningBlock>().Single();
+    Require(readable.PlainText == "Check the calculation.", "Provider summary was lost.");
+    var restored = ActionMessageSerialization.Deserialize(ActionMessageSerialization.Serialize(result.Message));
+    Require(restored.Blocks.OfType<ActionBlock.ReasoningBlock>().Single().PlainText == readable.PlainText,
+        "Reasoning text was lost during package serialization.");
+}
+
+foreach (bool requestText in new[] { true, false }) {
+    const string geminiStream = """
+        data: {"candidates":[{"content":{"role":"model","parts":[{"thought":true,"text":"Check the calculation.","thoughtSignature":"fixture-signature"},{"text":"42"}]},"finishReason":"STOP"}]}
+
+        """;
+    using var handler = new ControlledHandler(geminiStream + "\n");
+    using var http = CreateHttp(handler);
+    var client = new GeminiClient(null, http);
+    var geminiRequest = new CompletionRequest("gemini-3.8-flash", request.PromptPrefix, request.TailMessages);
+    var observer = new CompletionStreamObserver();
+    var deltas = new StringBuilder();
+    observer.ReceivedReasoningDelta += delta => deltas.Append(delta);
+    var result = await client.StreamCompletionAsync(geminiRequest,
+        new CompletionInvocationOptions { RequestReasoningText = requestText }, observer);
+    using var wire = JsonDocument.Parse(handler.Body!);
+    var config = wire.RootElement.GetProperty("generationConfig");
+    Require(config.TryGetProperty("thinkingConfig", out var thinking) == requestText,
+        "Gemini reasoning text preference was lost.");
+    if (requestText) {
+        Require(thinking.GetProperty("includeThoughts").GetBoolean()
+            && !thinking.TryGetProperty("thinkingLevel", out _), "Gemini summary changed default effort.");
+    }
+    Require(result.Message.GetFlattenedText() == "42", "Gemini summary leaked into text.");
+    Require(result.Message.Blocks.OfType<ActionBlock.ReasoningBlock>().Single().PlainText == deltas.ToString()
+        && deltas.ToString() == "Check the calculation.", "Gemini readable reasoning was lost.");
 }
 
 using (var handler = new ControlledHandler("data: {\"error\":{\"message\":\"fixture failure\",\"type\":\"server_error\"}}\n\n"))
@@ -118,7 +177,7 @@ using (var http = CreateHttp(handler)) {
     using var wire = JsonDocument.Parse(handler.Body!);
     Require(wire.RootElement.GetProperty("tools")[0].GetProperty("type").GetString() == "custom", "Custom tool declaration lost.");
 }
-Console.WriteLine("Package smoke passed: Chat wire/status/failure facts/Retry-After/unknown usage/EOF/cancellation and JSON/text tool declaration/binding/execution/persistence/Responses.");
+Console.WriteLine("Package smoke passed: independent reasoning text defaults/opt-out/summary isolation/serialization, Chat wire/status/failure facts/Retry-After/unknown usage/EOF/cancellation and JSON/text tools.");
 
 static HttpClient CreateHttp(HttpMessageHandler handler) => new(handler) {
     BaseAddress = new Uri("https://package-smoke.invalid/"), Timeout = Timeout.InfiniteTimeSpan

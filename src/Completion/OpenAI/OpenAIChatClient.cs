@@ -123,7 +123,9 @@ public sealed class OpenAIChatClient : ICompletionClient {
         );
         var parser = new OpenAIChatStreamParser(
             _dialect.WhitespaceContentMode,
-            _dialect.ReasoningMode,
+            invocationOptions.RequestReasoningText && _dialect.ReasoningMode is OpenAIChatReasoningMode.Ignore
+                ? OpenAIChatReasoningMode.CaptureOnly
+                : _dialect.ReasoningMode,
             _dialect.UsageShape
         );
         var stoppedEarly = false;

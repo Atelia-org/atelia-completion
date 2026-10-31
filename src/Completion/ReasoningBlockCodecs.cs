@@ -65,6 +65,7 @@ public static class ReasoningBlockCodecs {
 
         public SerializedReasoningBlock Encode(ActionBlock.ReasoningBlock block) {
             if (block is not GeminiReplayBlock geminiBlock) { throw new ArgumentException("Codec can only encode GeminiReplayBlock.", nameof(block)); }
+            GeminiReplayPayloadCodec.ValidatePlainText(geminiBlock.OpaquePayload, geminiBlock.PlainText);
 
             return SerializedReasoningBlock.Create(
                 CodecId,
@@ -74,12 +75,14 @@ public static class ReasoningBlockCodecs {
             );
         }
 
-        public ActionBlock.ReasoningBlock Decode(SerializedReasoningBlock serialized)
-            => new GeminiReplayBlock(
+        public ActionBlock.ReasoningBlock Decode(SerializedReasoningBlock serialized) {
+            GeminiReplayPayloadCodec.ValidatePlainText(serialized.Payload, serialized.PlainText);
+            return new GeminiReplayBlock(
                 serialized.Payload.ToArray(),
                 serialized.ToOrigin(),
                 serialized.PlainText
             );
+        }
     }
 
     private sealed class OpenAIChatReasoningBlockCodec : IReasoningBlockCodec {

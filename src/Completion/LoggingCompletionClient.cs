@@ -231,7 +231,7 @@ public sealed class LoggingCompletionClient : ICompletionClient {
 
         try {
             var log = new CompletionCallLogEntry(
-                Schema: "atelia.completion.call-log.v11",
+                Schema: "atelia.completion.call-log.v12",
                 CallId: reservation.CallId,
                 TimestampUtc: startedAt,
                 ElapsedMs: (long)elapsed.TotalMilliseconds,
@@ -400,7 +400,8 @@ public sealed record CompletionCallLogEntry(
 );
 
 public sealed record CompletionCallLogInvocationOptions(
-    PromptCacheReuseHint PromptCacheReuseHint
+    PromptCacheReuseHint PromptCacheReuseHint,
+    bool RequestReasoningText
 ) {
     public static CompletionCallLogInvocationOptions From(
         CompletionInvocationOptions invocationOptions
@@ -408,7 +409,8 @@ public sealed record CompletionCallLogInvocationOptions(
         ArgumentNullException.ThrowIfNull(invocationOptions);
         invocationOptions.Validate();
         return new CompletionCallLogInvocationOptions(
-            invocationOptions.PromptCacheReuseHint
+            invocationOptions.PromptCacheReuseHint,
+            invocationOptions.RequestReasoningText
         );
     }
 }

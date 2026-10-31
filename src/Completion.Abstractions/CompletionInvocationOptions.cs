@@ -34,6 +34,21 @@ public sealed record CompletionInvocationOptions {
     public PromptCacheReuseHint PromptCacheReuseHint { get; init; }
         = PromptCacheReuseHint.ConnectionDefault;
 
+    /// <summary>
+    /// Best-effort request for readable reasoning text or a provider-generated
+    /// summary. Enabled by default and independent of reasoning effort.
+    /// </summary>
+    /// <remarks>
+    /// Does not enable thinking on a model that would otherwise not think and
+    /// does not guarantee a non-empty response. Readable content is exposed by
+    /// <see cref="ActionBlock.ReasoningBlock.PlainText"/> and
+    /// <see cref="CompletionStreamObserver.ReceivedReasoningDelta"/> when available.
+    /// False omits the extra text request; it does not redact received content,
+    /// suppress observer events, or remove authoritative replay payloads.
+    /// Unsupported surfaces may treat this preference as a no-op.
+    /// </remarks>
+    public bool RequestReasoningText { get; init; } = true;
+
     /// <summary>Rejects enum values unknown to this version of the contract.</summary>
     public void Validate() {
         if (!Enum.IsDefined(PromptCacheReuseHint)) {

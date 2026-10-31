@@ -112,12 +112,17 @@ public sealed class CompletionAggregator {
             );
         }
 
-        if (_thinkingInProgress) {
-            _observer?.OnThinkingEnd();
-            _thinkingInProgress = false;
-        }
-
+        EndThinkingObservation();
         _blocks.Add(block);
+    }
+
+    // Some protocols store one replay block for an entire turn while exposing
+    // several readable thinking segments before text/tool parts.
+    internal void EndThinkingObservation() {
+        if (_thinkingInProgress) {
+            _thinkingInProgress = false;
+            _observer?.OnThinkingEnd();
+        }
     }
 
     /// <summary>

@@ -21,12 +21,15 @@ internal static class AnthropicMessageConverter {
         bool enablePromptCaching = false,
         CompletionReasoningEffort reasoningEffort = CompletionReasoningEffort.ProviderDefault,
         AnthropicPromptCacheTtl promptCacheTtl = AnthropicPromptCacheTtl.ProviderDefault,
-        CompletionDescriptor? targetInvocation = null
+        CompletionDescriptor? targetInvocation = null,
+        bool requestReasoningText = true,
+        bool? adaptiveThinkingEnabledByDefault = null
     ) => ConvertWithMappedReasoning(
         request, modelMaximumTokens, enablePromptCaching,
         ModelSpecReasoning.Resolve(reasoningEffort, null),
         promptCacheTtl, targetInvocation,
-        hasReasoningMapper: false, forcedToolChoiceSupported: null
+        hasReasoningMapper: false, forcedToolChoiceSupported: null,
+        requestReasoningText, adaptiveThinkingEnabledByDefault
     );
 
     internal static AnthropicApiRequest ConvertWithMappedReasoning(
@@ -37,7 +40,9 @@ internal static class AnthropicMessageConverter {
         AnthropicPromptCacheTtl promptCacheTtl,
         CompletionDescriptor? targetInvocation,
         bool hasReasoningMapper,
-        bool? forcedToolChoiceSupported
+        bool? forcedToolChoiceSupported,
+        bool requestReasoningText = true,
+        bool? adaptiveThinkingEnabledByDefault = null
     ) {
         CompletionToolInputValidation.RequireJsonTools(request);
         if (modelMaximumTokens <= 0) {
@@ -106,7 +111,7 @@ internal static class AnthropicMessageConverter {
             ToolChoice = BuildToolChoice(outputContract)
         };
 
-        ApplyReasoningConfig(apiRequest, reasoning);
+        ApplyReasoningConfig(apiRequest, reasoning, requestReasoningText, adaptiveThinkingEnabledByDefault);
 
         if (enablePromptCaching) {
             ApplyPromptCaching(
@@ -241,9 +246,19 @@ internal static class AnthropicMessageConverter {
     /// </summary>
     private static void ApplyReasoningConfig(
         AnthropicApiRequest apiRequest,
-        ReasoningEffortMapping? reasoning
+        ReasoningEffortMapping? reasoning,
+        bool requestReasoningText,
+        bool? adaptiveThinkingEnabledByDefault
     ) {
-        if (reasoning is not { } mapping) { return; }
+        if (reasoning is not { } mapping) {
+            if (requestReasoningText && adaptiveThinkingEnabledByDefault is true) {
+                apiRequest.Thinking = new AnthropicThinkingConfig {
+                    Type = "adaptive",
+                    Display = "summarized"
+                };
+            }
+            return;
+        }
         CompletionReasoningEffort reasoningEffort = mapping.EffectiveEffort;
         if (reasoningEffort is CompletionReasoningEffort.Disabled) {
             apiRequest.Thinking = new AnthropicThinkingConfig { Type = "disabled" };
@@ -252,7 +267,7 @@ internal static class AnthropicMessageConverter {
 
         apiRequest.Thinking = new AnthropicThinkingConfig {
             Type = "adaptive",
-            Display = "summarized"
+            Display = requestReasoningText ? "summarized" : null
         };
         apiRequest.OutputConfig = new AnthropicOutputConfig {
             Effort = mapping.WireLevel ?? (reasoningEffort switch {

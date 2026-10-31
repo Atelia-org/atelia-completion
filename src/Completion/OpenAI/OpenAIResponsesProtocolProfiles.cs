@@ -20,18 +20,15 @@ internal static class OpenAIResponsesReasoningWireMapping {
         CompletionReasoningEffort.ProviderDefault => null,
         CompletionReasoningEffort.Disabled =>
             new OpenAIResponsesReasoningConfig { Effort = "none" },
-        CompletionReasoningEffort.Low => Enabled("low"),
-        CompletionReasoningEffort.Medium => Enabled("medium"),
-        CompletionReasoningEffort.High => Enabled("high"),
-        CompletionReasoningEffort.XHigh => Enabled("xhigh"),
-        CompletionReasoningEffort.Max => Enabled("max"),
+        CompletionReasoningEffort.Low => new() { Effort = "low" },
+        CompletionReasoningEffort.Medium => new() { Effort = "medium" },
+        CompletionReasoningEffort.High => new() { Effort = "high" },
+        CompletionReasoningEffort.XHigh => new() { Effort = "xhigh" },
+        CompletionReasoningEffort.Max => new() { Effort = "max" },
         _ => throw new ArgumentOutOfRangeException(
             nameof(reasoningEffort),
             reasoningEffort,
             "Unknown reasoning effort."
         )
     };
-
-    private static OpenAIResponsesReasoningConfig Enabled(string effort) =>
-        new() { Effort = effort, Summary = "auto" };
 }

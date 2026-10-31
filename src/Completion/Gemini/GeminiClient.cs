@@ -68,7 +68,7 @@ public sealed class GeminiClient : ICompletionClient {
         );
 
         CompletionModelSpec? spec = _modelSpecs.Lookup(request.ModelId);
-        GeminiThinkingConfig? thinking = ResolveThinkingConfig(spec);
+        GeminiThinkingConfig? thinking = ResolveThinkingConfig(spec, invocationOptions.RequestReasoningText);
         var invocation = CompletionDescriptor.From(this, request);
         var apiRequest = GeminiMessageConverter.ProjectRequest(
             request,
@@ -140,9 +140,11 @@ public sealed class GeminiClient : ICompletionClient {
         return aggregator.Build();
     }
 
-    private GeminiThinkingConfig? ResolveThinkingConfig(CompletionModelSpec? spec) {
+    private GeminiThinkingConfig? ResolveThinkingConfig(CompletionModelSpec? spec, bool requestReasoningText) {
         ReasoningEffortMapping? mapping = ModelSpecReasoning.Resolve(_reasoningEffort, spec);
-        if (mapping is not { } resolved) { return null; }
+        if (mapping is not { } resolved) {
+            return requestReasoningText ? new GeminiThinkingConfig { IncludeThoughts = true } : null;
+        }
         if (spec?.ReasoningMapper is null) {
             throw new NotSupportedException(
                 "Explicit Gemini reasoning effort requires a model specification with a thinking-level mapper."
@@ -158,13 +160,17 @@ public sealed class GeminiClient : ICompletionClient {
                 nameof(spec)
             );
         }
-        return new GeminiThinkingConfig { ThinkingLevel = resolved.WireLevel };
+        return new GeminiThinkingConfig {
+            ThinkingLevel = resolved.WireLevel,
+            IncludeThoughts = requestReasoningText ? true : null
+        };
     }
 
     /// <summary>
     /// Gemini implicit caching is provider-managed and its explicit cache is a
-    /// separate resource lifecycle, so validated per-invocation hints are an
-    /// explicit no-op on this client surface.
+    /// separate resource lifecycle, so the prompt-cache reuse hint is an
+    /// explicit no-op. RequestReasoningText independently requests thought
+    /// summaries without changing the configured reasoning effort.
     /// </summary>
     public Task<CompletionResult> StreamCompletionAsync(
         CompletionRequest request,

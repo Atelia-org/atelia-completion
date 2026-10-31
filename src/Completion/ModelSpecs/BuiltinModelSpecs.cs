@@ -74,6 +74,7 @@ public static class BuiltinModelSpecs {
         // is not projected by this adapter. Do not infer this for the whole family.
         catalog = catalog.WithModels(["claude-opus-5-5", "claude-sonnet-5-5"], new() {
             OutputTokenLimit = 128_000,
+            AdaptiveThinkingEnabledByDefault = true,
             ReasoningMapper = ReasoningEffortMappers.ForSupportedLevels([
                 CompletionReasoningEffort.Low, CompletionReasoningEffort.Medium,
                 CompletionReasoningEffort.High, CompletionReasoningEffort.XHigh,
@@ -88,6 +89,7 @@ public static class BuiltinModelSpecs {
         // medium default, where disabled thinking is supported (not at xhigh/max).
         return catalog.WithModel("claude-haiku-5-5", new() {
             OutputTokenLimit = 128_000,
+            AdaptiveThinkingEnabledByDefault = true,
             ReasoningMapper = ReasoningEffortMappers.ForSupportedLevels([
                 CompletionReasoningEffort.Low, CompletionReasoningEffort.Medium,
                 CompletionReasoningEffort.High, CompletionReasoningEffort.XHigh,

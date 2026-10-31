@@ -162,7 +162,9 @@ public sealed class AnthropicClient : ICompletionClient {
             promptCacheTtl,
             invocation,
             hasReasoningMapper: spec?.ReasoningMapper is not null,
-            spec?.ForcedToolChoiceSupported
+            spec?.ForcedToolChoiceSupported,
+            invocationOptions.RequestReasoningText,
+            spec?.AdaptiveThinkingEnabledByDefault
         );
         using var response = await SendStreamingRequestAsync(apiRequest, cancellationToken);
 

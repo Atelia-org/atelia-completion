@@ -87,7 +87,8 @@ internal sealed class OpenAIResponsesProtocolClientCore {
                 invocation,
                 _apiSpecId,
                 _mapReasoningEffort,
-                _supportsNativeRequiredNamedToolChoice
+                _supportsNativeRequiredNamedToolChoice,
+                invocationOptions.RequestReasoningText
             );
         using HttpResponseMessage response = await sendRequestAsync(
             apiRequest,

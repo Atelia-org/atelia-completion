@@ -46,7 +46,7 @@ internal sealed class OpenAIResponsesNamedToolChoice {
 
 internal sealed class OpenAIResponsesReasoningConfig {
     [JsonPropertyName("effort")]
-    public required string Effort { get; set; }
+    public string? Effort { get; set; }
 
     [JsonPropertyName("summary")]
     public string? Summary { get; set; }

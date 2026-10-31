@@ -25,6 +25,22 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReasoningTextPreference_IsForwardedAndRecorded(bool requestText) {
+        var inner = new YieldingCompletionClient("reasoning-text");
+        var client = CreateLoggingClient(inner);
+        var options = new CompletionInvocationOptions { RequestReasoningText = requestText };
+
+        _ = await client.StreamCompletionAsync(CreateRequest(), options, observer: null);
+
+        Assert.Same(options, inner.LastInvocationOptions);
+        using var document = JsonDocument.Parse(File.ReadAllText(Assert.Single(client.WrittenCallLogPaths)));
+        Assert.Equal(requestText, document.RootElement.GetProperty("invocationOptions")
+            .GetProperty("requestReasoningText").GetBoolean());
+    }
+
     [Fact]
     public async Task TextTools_LogRawHistoryAndGrammarUsingV11() {
         const string input = " \r\n\ttext\n";
@@ -38,7 +54,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
                 ToolTextFormat.Grammar("regex", "(?s).*"))]), []), [new ObservationMessage("run")]);
         _ = await client.StreamCompletionAsync(request, null);
         using var json = JsonDocument.Parse(File.ReadAllText(Assert.Single(client.WrittenCallLogPaths)));
-        Assert.Equal("atelia.completion.call-log.v11", json.RootElement.GetProperty("schema").GetString());
+        Assert.Equal("atelia.completion.call-log.v12", json.RootElement.GetProperty("schema").GetString());
         var definition = json.RootElement.GetProperty("request").GetProperty("promptPrefix")
             .GetProperty("outputContract").GetProperty("tools")[0];
         Assert.Equal("text", definition.GetProperty("inputKind").GetString());
@@ -379,7 +395,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
             );
             using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
             Assert.Equal(
-                "atelia.completion.call-log.v11",
+                "atelia.completion.call-log.v12",
                 document.RootElement.GetProperty("schema").GetString()
             );
             Assert.Equal(
@@ -389,6 +405,8 @@ public sealed class LoggingCompletionClientTests : IDisposable {
                     .GetString()
             );
             Assert.Equal(filenameCallId, document.RootElement.GetProperty("callId").GetInt32());
+            Assert.True(document.RootElement.GetProperty("invocationOptions")
+                .GetProperty("requestReasoningText").GetBoolean());
         }
     }
 
@@ -411,7 +429,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         );
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v11",
+            "atelia.completion.call-log.v12",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -546,7 +564,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
         JsonElement root = document.RootElement;
         Assert.Equal(
-            "atelia.completion.call-log.v11",
+            "atelia.completion.call-log.v12",
             root.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -631,7 +649,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         ));
         using JsonDocument document = JsonDocument.Parse(json);
         Assert.Equal(
-            "atelia.completion.call-log.v11",
+            "atelia.completion.call-log.v12",
             document.RootElement.GetProperty("schema").GetString()
         );
         Assert.DoesNotContain(
@@ -752,6 +770,8 @@ public sealed class LoggingCompletionClientTests : IDisposable {
     private sealed class YieldingCompletionClient(string name) : ICompletionClient {
         public string Name { get; } = name;
 
+        public CompletionInvocationOptions? LastInvocationOptions { get; private set; }
+
         public string ApiSpecId => "test-api-v1";
 
         public async Task<CompletionResult> StreamCompletionAsync(
@@ -776,6 +796,7 @@ public sealed class LoggingCompletionClientTests : IDisposable {
         ) {
             ArgumentNullException.ThrowIfNull(invocationOptions);
             invocationOptions.Validate();
+            LastInvocationOptions = invocationOptions;
             CompletionResult result = await StreamCompletionAsync(
                 request,
                 observer,

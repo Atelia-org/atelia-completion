@@ -9,6 +9,85 @@ namespace Atelia.Completion.Anthropic.Tests;
 
 public sealed class AnthropicModelSpecsTests {
     [Theory]
+    [InlineData(null, true, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, true)]
+    [InlineData(null, false, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    public async Task DefaultEffort_RequestsSummaryOnlyWhenAdaptiveThinkingIsKnownToBeOn(
+        bool? adaptiveDefault, bool requestText, bool expectThinkingConfig
+    ) {
+        var mapper = new FixedMapper(new(CompletionReasoningEffort.High, "high"));
+        var catalog = CompletionModelSpecCatalog.Empty.WithModel("alias", new() {
+            OutputTokenLimit = 80_000,
+            ReasoningMapper = mapper,
+            AdaptiveThinkingEnabledByDefault = adaptiveDefault
+        });
+        using var handler = new RecordingHandler();
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient, modelSpecs: catalog);
+
+        _ = await client.StreamCompletionAsync(Request("alias"),
+            new CompletionInvocationOptions { RequestReasoningText = requestText }, null);
+
+        using var body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+        if (expectThinkingConfig) {
+            var thinking = body.RootElement.GetProperty("thinking");
+            Assert.Equal("adaptive", thinking.GetProperty("type").GetString());
+            Assert.Equal("summarized", thinking.GetProperty("display").GetString());
+        }
+        else { Assert.False(body.RootElement.TryGetProperty("thinking", out _)); }
+        Assert.False(body.RootElement.TryGetProperty("output_config", out _));
+        Assert.Equal(0, mapper.CallCount);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SummaryPreference_DoesNotAddForcedToolRestrictionsForDefaultThinking(bool requestText) {
+        var catalog = CompletionModelSpecCatalog.Empty.WithModel("alias", new() {
+            OutputTokenLimit = 80_000,
+            AdaptiveThinkingEnabledByDefault = true
+        });
+        using var handler = new RecordingHandler();
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient, modelSpecs: catalog);
+
+        CompletionResult result = await client.StreamCompletionAsync(Request("alias", forcedToolChoice: true),
+            new CompletionInvocationOptions { RequestReasoningText = requestText }, null);
+
+        Assert.True(result.Termination.IsSuccess);
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("claude-haiku-5-5", CompletionReasoningEffort.ProviderDefault, null, null)]
+    [InlineData("claude-haiku-5-5", CompletionReasoningEffort.High, "adaptive", "high")]
+    [InlineData("claude-haiku-5-5", CompletionReasoningEffort.Disabled, "disabled", null)]
+    [InlineData("claude-opus-5-5", CompletionReasoningEffort.Disabled, "adaptive", "low")]
+    public async Task FalseTextPreference_DoesNotChangeThinkingStateOrEffort(
+        string modelId, CompletionReasoningEffort effort, string? thinkingType, string? wireEffort
+    ) {
+        using var handler = new RecordingHandler();
+        using var httpClient = CreateHttpClient(handler);
+        var client = new AnthropicClient(null, httpClient, reasoningEffort: effort);
+
+        _ = await client.StreamCompletionAsync(Request(modelId),
+            new CompletionInvocationOptions { RequestReasoningText = false }, null);
+
+        using var body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+        if (thinkingType is null) { Assert.False(body.RootElement.TryGetProperty("thinking", out _)); }
+        else {
+            var thinking = body.RootElement.GetProperty("thinking");
+            Assert.Equal(thinkingType, thinking.GetProperty("type").GetString());
+            Assert.False(thinking.TryGetProperty("display", out _));
+        }
+        if (wireEffort is null) { Assert.False(body.RootElement.TryGetProperty("output_config", out _)); }
+        else { Assert.Equal(wireEffort, body.RootElement.GetProperty("output_config").GetProperty("effort").GetString()); }
+    }
+
+    [Theory]
     [MemberData(nameof(Claude55Efforts))]
     public async Task Claude55_UsesBuiltInLimitAndMapsAllEfforts(
         string modelId, CompletionReasoningEffort effort, string? expectedThinkingType, string? expectedWireLevel
@@ -79,7 +158,7 @@ public sealed class AnthropicModelSpecsTests {
 
     public static IEnumerable<object?[]> Claude55Efforts() {
         foreach (string modelId in new[] { "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5" }) {
-            yield return [modelId, CompletionReasoningEffort.ProviderDefault, null, null];
+            yield return [modelId, CompletionReasoningEffort.ProviderDefault, "adaptive", null];
             yield return modelId == "claude-haiku-5-5"
                 ? [modelId, CompletionReasoningEffort.Disabled, "disabled", null]
                 : [modelId, CompletionReasoningEffort.Disabled, "adaptive", "low"];
